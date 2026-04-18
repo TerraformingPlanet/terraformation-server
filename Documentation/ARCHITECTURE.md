@@ -9,7 +9,7 @@
 | Moteur | Unity 6 LTS (3D URP) | Stable, bien documenté, large communauté |
 | Langage | C# | Natif Unity |
 | Réseau | Mirror Networking | Open source, mature, serveur autoritaire, supporte TCP/UDP |
-| Persistance | Firebase Firestore | Cloud gratuit (tier de base), SDK Unity officiel |
+| Persistance (serveur) | PostgreSQL 16 + SQLAlchemy Core 2.x | Write-through depuis `InMemorySimulationRuntime`, restauration au démarrage |
 | Caméra | CameraController (custom) | Pan/zoom/orbit new Input System, 3 modes selon la vue active (ortho solaire, orbit planétaire, ortho local) |
 | Grille | Mesh procédural (axial coordinates) | Inspiré Catlike Coding Hex Map, un seul mesh, vertex colors, zéro gap |
 | Build | Desktop (Windows / Mac / Linux) | Pas de contrainte réseau (WebGL écarté) |
@@ -82,8 +82,10 @@ Le client Unity commence aussi à être repositionné comme **adaptateur de snap
 
 ### Monde Persistant
 - Le serveur tourne **en continu**, même sans joueurs connectés
-- Sauvegardes Firebase toutes les **5 minutes**
-- Au redémarrage serveur, l'état est rechargé depuis Firebase
+- **Write-through PostgreSQL** : chaque mutation (tile, corps, région, pending action) est écrite immédiatement en base
+- `tickCount` persisté toutes les 10 ticks
+- Au redémarrage du container, l'état est rechargé depuis PostgreSQL via `_hydrate_from_saved()`
+- Mode `in-memory` disponible via `SERVER_MODE=in-memory` (zéro base de données, backward-compatible)
 
 ### Pas de WebGL
 - WebGL interdit les sockets IP directs → incompatible avec Mirror Networking sans transport custom
@@ -113,19 +115,20 @@ Implémenté dans une seule scène `Game.unity` — 3 racines de GameObject acti
 - `OrbitPerspective` : right-drag = rotation azimut/élévation autour d'un pivot, scroll = distance
 - Events : `Action OnZoomedToMin`, `Action OnZoomedToMax` → déclenchés aux bornes de zoom
 
-**Texture planétaire** :
-- Grille Mercator basse résolution générée par `PlanetaryHexGrid` sur toute la surface de la planète
-- Les dimensions `cols/rows` sont calculées depuis `OrbitalBody.radius`, normalisé contre un rayon de référence maximal du design
-- Le plus gros astre supporté définit le plafond de résolution ; des bornes min/max garantissent une grille lisible pour les petits corps et stable pour les gros
-- `PlanetTextureGenerator` produit une `Texture2D` 512×256 (chaque pixel → cellule Mercator la plus proche par UV)
-- La sphère `PlanetSphere` reçoit un raycast sur click → `hit.textureCoord` → lat/lon → `ViewManager.LoadRegion(lat, lon)`
+**Couleur planétaire (H3 server tiles)** :
+- Les tuiles de la sphère Goldberg sont colorisées depuis les données H3 autoritatives du `DedicatedServer` (`GET /bodies/{id}/tiles`)
+- `GoldbergFaceColorizer.ColorizeFromServerTiles()` mappe chaque face GP vers la tuile H3 la plus proche par lat/lon (nearest-neighbor)
+- Le `colorByType` est construit depuis `OrbitalBody.layers[].biomes` (tous les `TerrainType` déclarés)
+- `PlanetaryHexGrid` n'est **plus** impliqué dans la colorisation des vues planétaires — ses constantes `MaxCols/MaxRows` restent utilisées uniquement par `GoldbergSphereGenerator` pour calibrer la résolution de la sphère
+- La sphère `PlanetSphereGoldberg` déclenche `OnH3TilesReady(GoldbergTileState[], Dictionary<TerrainType, Color>)` après chaque fetch réussi — `ViewManager` distribue ce résultat à `PlanetFlatView` et `PlanetTangentView`
+- Clic → `OnRegionClicked` → coroutine `GET /bodies/{id}/tiles/at` → `OnH3TileResolved(GoldbergTileState)` → HUD
 
 **Cohérence des données entre vues** :
 - `OrbitalBody` contient les paramètres source du monde, pas une persistance exhaustive de tous les hexes.
-- `PlanetaryHexGrid` produit une approximation globale basse résolution du globe complet.
+- Les tuiles H3 du `DedicatedServer` sont la **source de vérité** des couleurs pour Globe, FlatView et TangentView.
 - `MapRegion` capture la zone cliquée (`latitude`, `longitude`, `solarSystem`, `planet`) et sert de source à la génération locale.
-- `HexGrid.LoadRegion()` doit régénérer la vue locale depuis `MapRegion` pour conserver le contexte régional et orbital.
-- La case cliquée sur la projection porte aussi une contrainte macro (`eau / aride / gelé`) qui doit guider, mais non entièrement écraser, la génération locale.
+- `HexGrid.LoadRegion()` régénère la vue locale depuis `MapRegion` pour conserver le contexte régional et orbital.
+- La tuile H3 cliquée (`GoldbergTileState`) porte la contrainte macro (`terrainType`, `waterRatio`, `temperature`) qui guide, sans écraser, la génération locale.
 
 ---
 
@@ -153,9 +156,9 @@ Assets/
 │   │   ├── PlanetaryWeatherState.cs
 │   │   ├── MapGenerator.cs
 │   │   ├── MapGenParameters.cs
-│   │   ├── PlanetaryHexGrid.cs       # Grille Mercator basse rés pour la vue planétaire
+│   │   ├── PlanetaryHexGrid.cs       # Grille Mercator — vue locale (HexGrid) + constantes résolution sphère GP
 │   │   ├── PlanetSphere.cs           # Archivé — remplacé par PlanetSphereGoldberg
-│   │   ├── PlanetTextureGenerator.cs # Archivé — remplacé par GoldbergFaceColorizer
+│   │   ├── PlanetTextureGenerator.cs # Archivé — remplacé par GoldbergFaceColorizer.ColorizeFromServerTiles
 │   │   └── Systems/      # Pipeline IHexSystem (Phase 4)
 │   │       ├── IHexSystem.cs
 │   │       ├── GenerationContext.cs
@@ -301,15 +304,30 @@ Le `DedicatedServer` expose 14 endpoints HTTP. Il fonctionne sans Unity.
 | `/events/last` | GET | — | dernier `SimulationEvent` |
 | `/actions/definitions` | GET | — | `TerraformActionDefinition[]` |
 | `/actions/catalog` | GET | — | `SimulationActionCatalog` |
-| `/commands/bootstrap-demo` | POST | `planet_name`, `projection_override`, `projection_water_level` | `WorldState` |
+| `/commands/bootstrap-demo` | POST | `planet_name`, `projection_override`, `projection_water_level` | `WorldState` — monde fictif paramétrable |
+| `/commands/bootstrap-sol` | POST | — | `WorldState` — système Sol complet (Soleil + 8 planètes + 5 lunes, Terre active, Kepler-442 caché) |
 | `/commands/open-region` | POST | `latitude`, `longitude` | `RegionState` avec `cells[]` |
 | `/commands/queue-action` | POST | `action_type`, `q?`, `r?` | `WorldState` mis à jour |
 | `/commands/apply-cell-delta` | POST | `water_delta`, `temp_delta`, `q?`, `r?` | `WorldState` mis à jour |
+| `/commands/set-projection` | POST | `projection_override`, `water_level` | `WorldState` mis à jour |
 | `/tick/advance` | POST | `steps` (défaut 1) | `WorldState` |
 | `/tick/pause` | POST | — | `WorldState` |
 | `/tick/resume` | POST | — | `WorldState` |
+| `/tick/status` | GET | — | `{ tickCount, tickRunning, tickIntervalSeconds }` |
+| `/bodies` | GET | — | liste de corps sans tiles |
+| `/bodies/{id}` | GET | — | métadonnées du corps |
+| `/bodies/{id}/tiles` | GET | `page`, `size` | `GoldbergTileState[]` paginé |
+| `/bodies/{id}/tiles/at` | GET | `lat`, `lon` | `GoldbergTileState` — tuile H3 contenant la coordonnée |
+| `/bodies/{id}/tiles/{tile_id}` | GET | — | `GoldbergTileState` (`tile_id` = index H3 string) |
+| `/bodies/{id}/tiles/{tile_id}/neighbors` | GET | — | `GoldbergTileState[]` voisins directs (≤6) |
+| `/bodies/{id}/tiles/{tile_id}/delta` | POST | `water_delta`, `temperature_delta` | `GoldbergTileState` |
+| `/bodies/{id}/tiles/{tile_id}/action` | POST | `action_type` | `GoldbergTileState` |
+| `/bodies/{id}/cells` | GET | `page`, `size` | `SimulationCellState[]` (zones intérieures) |
+| `/bodies/{id}/zones` | POST | `zone_type`, `cols`, `rows`, `parent_tile_id?`, `seed?` | `InteriorZoneState` |
 
-**Runtime** : `InMemorySimulationRuntime` — daemon thread, tick configurable (défaut 5s), état protégé par lock. Consomme `SimulationCore/terraformation_sim/` (models, logic, runtime Python partagé).
+**Runtime** : `InMemorySimulationRuntime` — daemon thread, tick configurable (défaut 5s), état protégé par `threading.RLock`. Consomme `SimulationCore/terraformation_sim/` (models, logic, runtime, persistence Python partagé).
+
+**Persistance** : `StateRepository` (ABC) → `InMemoryRepository` (no-op) | `PostgresRepository` (SQLAlchemy Core + psycopg2). Sélectionné par `SERVER_MODE` (`in-memory` ou `postgres`). `PostgresRepository` crée les tables au démarrage (`CREATE TABLE IF NOT EXISTS`) — 5 tables : `world_state`, `bodies`, `tile_mutations`, `cell_mutations`, `pending_actions`.
 
 ### Phase transitoire possible — Unity Dedicated Server dans Docker
 
@@ -344,7 +362,7 @@ Tick (toutes les 10 secondes) :
   4. Tirer un événement aléatoire (probabilité configurée)
   5. Exécuter les décisions des bots IA
   6. Broadcaster le nouvel état aux clients connectés
-  7. (Toutes les 5 min) Sauvegarder sur Firebase
+  7. (Toutes les 10 ticks) Persister `world_state` dans PostgreSQL
 ```
 
 ---
@@ -598,22 +616,31 @@ Avant d'introduire les corporations, le monde local doit cesser d'être purement
 
 ---
 
-## Firebase — Structure Firestore
+## PostgreSQL — Structure des tables
 
 ```
-worlds/
-  {worldId}/
-    metadata        (seed, date création, tick actuel)
-    hexes/
-      {hexId}       (type, propriétés, ownerId, buildings[])
-    corporations/
-      {corpoId}     (nom, solde, score, stratégie)
-    market/
-      prices        (prix actuels par ressource)
-      orders[]      (ordres en attente)
-    events/
-      log[]         (historique des événements déclenchés)
+world_state       -- 1 ligne (id=1, upserted)
+  tick_count, tick_running, tick_interval_seconds,
+  active_planet_name, projection_override, projection_water_level,
+  has_region, region_lat, region_lon
+
+bodies            -- 1 ligne par corps enregistré
+  body_id PK, body_json TEXT  ← Pydantic model_dump_json (sans tiles/cells)
+
+tile_mutations    -- sparse : seulement les tuiles mutées par des actions joueur
+  body_id, tile_id  → UNIQUE
+  water_ratio, temperature, toxin_level
+  (tile_id = index H3 string, ex : "820007fffffffff")
+
+cell_mutations    -- sparse : cellules de région modifiées
+  body_id, cell_q, cell_r  → UNIQUE
+  cell_json TEXT
+
+pending_actions   -- queue terraform en vol
+  action_id PK, action_json TEXT
 ```
+
+Les tiles H3 complètes **ne sont pas stockées** — elles sont recalculées de façon déterministe depuis la résolution H3 (`h3Resolution`, dépend du rayon du corps), les paramètres de bruit (`waterLevel`, `seed`, `projectionOverride`). Seules les mutations joueur sont persistées (table `tile_mutations`).
 
 ---
 

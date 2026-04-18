@@ -1,7 +1,9 @@
 # Plan de migration — Serveur Dédié Autoritaire
 
-> État au 18 avril 2026  
+> Mis à jour le 18 avril 2026  
 > Concerne : `DedicatedServer/`, `SimulationCore/`, `Game/Assets/Scripts/Simulation/`
+
+> ⚠️ **ARCHIVÉ** — Tous les items serveur sont implémentés (§3.1 et §3.3 ✅). §3.2 (hydrologie) reporté en Phase 3. Items Unity (§4) délégués à l'agent Unity.
 
 ---
 
@@ -11,17 +13,15 @@
 Unity Client           DedicatedServer (Python / FastAPI)
 ─────────────────      ─────────────────────────────────
 Rendu / Input          Tick autoritaire
-Génération locale*     Génération canonique  ← migration
+                       Génération canonique  ✅ fait
 Actions joueur    ───► Queue + validation
-Snapshot local*   ◄─── WorldState / RegionState / ProjectionState
+                  ◄─── WorldState / RegionState / ProjectionState / GoldbergTiles
 Fallback offline       Source de vérité
 ```
 
-`*` = existe des deux côtés aujourd'hui, doit migrer vers le serveur.
-
 ---
 
-## 2. État actuel des contrats (stable, NE PAS casser)
+## 2. Contrats stables (NE PAS casser)
 
 ### Modèles partagés (`SimulationContracts.cs` ↔ `models.py`)
 
@@ -34,8 +34,10 @@ Fallback offline       Source de vérité
 | `SimulationCellAddress` | `SimulationCellAddress` | ✅ stable |
 | `HexGridDebugSummary` | `HexGridDebugSummary` | ✅ stable |
 | `TerrainType`, `WaterClassification`, `WorldLayer` | idem | ✅ stable |
+| — | `GoldbergTileState` | ✅ nouveau — pas encore de pendant C# |
+| — | `SphericalBodyState`, `InteriorZoneState` | ✅ nouveau — pas encore de pendant C# |
 
-### Routes HTTP (DedicatedServer — déjà implémentées)
+### Routes HTTP live
 
 | Route | Statut |
 |---|---|
@@ -45,113 +47,85 @@ Fallback offline       Source de vérité
 | `GET /region` | ✅ live |
 | `GET /events/last` | ✅ live |
 | `GET /actions/definitions` | ✅ live |
+| `GET /actions/catalog` | ✅ live |
 | `POST /commands/bootstrap-demo` | ✅ live |
 | `POST /commands/open-region` | ✅ live |
 | `POST /commands/queue-action` | ✅ live |
 | `POST /commands/apply-cell-delta` | ✅ live |
 | `POST /tick/advance` | ✅ live |
 | `POST /tick/pause` / `/resume` | ✅ live |
+| `GET /bodies` | ✅ live |
+| `GET /bodies/{id}` | ✅ live |
+| `GET /bodies/{id}/tiles` | ✅ live — paginé, max 200/page |
+| `GET /bodies/{id}/tiles/{tile_id}` | ✅ live |
+| `POST /bodies/{id}/tiles/{tile_id}/delta` | ✅ live |
+| `POST /bodies/{id}/tiles/{tile_id}/action` | ✅ live |
+| `GET /bodies/{id}/cells` | ✅ live — zones intérieures |
+| `POST /bodies/{id}/zones` | ✅ live |
 
 ---
 
-## 3. Ce qui tourne encore uniquement dans Unity (à migrer)
+## 3. Travaux restants côté serveur
 
-### 3.1 Génération de région locale — **priorité haute**
+### 3.1 `GET /tick/status` — ✅ IMPLÉMENTÉ
 
-**Où** : `MapGenerator.cs`, `HexGrid.cs`, `TerraformSimulationSession.cs`  
-**Quoi** : génération procédurale d'une région hex (altitude, biome, hydrologie)  
-**Problème** : Unity génère sa propre région localement. Le serveur génère la sienne indépendamment depuis `InMemorySimulationRuntime._build_region_state()`. Les deux peuvent diverger.
-
-**Migration cible** :
-```
-POST /commands/open-region → renvoie RegionState avec cells[] complets
-Unity reçoit le RegionState et l'applique directement à HexGrid (déjà en place via SynchronizeAuthoritativeRegionState)
-Unity supprime sa génération locale (MapGenerator) comme path principal
-```
-**Effort** : Moyen. `SynchronizeAuthoritativeRegionState` existe déjà dans Unity. Il faut que `runtime._build_region_state()` produise des cellules aussi riches que `MapGenerator`.
+Retourne `{ tickCount, tickRunning, tickIntervalSeconds }`. Disponible dans `DedicatedServer/app/server.py` et MCP tool `get_tick_status()`.
 
 ---
 
-### 3.2 Pipeline hydrologie — **priorité moyenne**
+### 3.2 Pipeline hydrologie complet — **priorité moyenne**
 
-**Où** : `Systems/BiomeSystem.cs`, `Systems/HydrologySystem.cs`, `Systems/RiverSystem.cs`, `Systems/WaterClassificationSystem.cs`  
-**Quoi** : classification eau (OpenOcean / Coast / InlandWater / Frozen / Dry), rivières, flux  
-**Problème** : implémenté en C# côté Unity. `logic.py` a la logique de classification mais pas le pipeline complet de génération.
+`logic.py` classe déjà `WaterClassification` sur les tuiles et cellules. Ce qui manque est le **pipeline de rivières et flux** (équivalent de `RiverSystem.cs` + `HydrologySystem.cs`) pour que les cellules de région aient des valeurs `hasRiver`, `flowAccumulation`, `downstream` cohérentes avec la géographie plutôt que générées par bruit.
 
-**Migration cible** :
-```python
-# SimulationCore/terraformation_sim/hydrology.py  (à créer)
-def apply_hydrology_pass(cells: list[SimulationCellState]) -> list[SimulationCellState]:
-    # Porter BiomeSystem + HydrologySystem + RiverSystem
-```
-**Effort** : Élevé (logique complexe). Peut se faire incrémentalement : la classification `WaterClassification` est déjà dans `models.py`.
+Cible : `apply_hydrology_pass(cells)` dans `SimulationCore` branché dans `_build_region_state()`.
+
+**Effort** : Élevé. Peut se faire incrémentalement.
 
 ---
 
-### 3.3 Simulation de terraformation locale — **priorité haute**
+### 3.3 `POST /commands/set-projection` — ✅ IMPLÉMENTÉ
 
-**Où** : `TerraformSimulationSession.cs`  
-**Quoi** : queue d'actions (`_pending`), `ProcessTick()`, `ApplyModifier()`, réévaluation de biome  
-**Problème** : Unity exécute le tick localement. Le serveur a son propre tick dans `runtime.py`. Risque de désynchronisation.
-
-**Migration cible** :
-```
-Unity : quand tick serveur → recevoir WorldState mis à jour → appliquer à HexGrid
-Unity : ne plus appeler TerraformSimulationSession.ProcessTick() si isContextAuthoritative=true
-Serveur : process_pending_actions() gère déjà la queue (logic.py)
-```
-**Effort** : Faible. `_isContextAuthoritative` existe dans ViewManager. Il faut un event serveur → Unity pour pousser les updates de tick (ou polling sur `GET /world`).
+Change l'override de cohérence (Ocean=1 / Arid=2 / Frozen=3 / Coast=4 / Basin=5) et le `water_level` sans relancer `bootstrap-demo`. Invalide le cache de tuiles du body actif. Disponible dans `DedicatedServer/app/server.py` et MCP tool `set_projection()`.
 
 ---
 
-### 3.4 Génération planétaire (projection) — **priorité basse**
+## 4. Travaux restants côté Unity
 
-**Où** : `GoldbergSphereGenerator.cs`, `PlanetaryHexGrid.cs`, `GoldbergFaceColorizer.cs`  
-**Quoi** : génération de la sphère Goldberg, grille planétaire, colorisation biomes  
-**Problème** : 100% Unity, pas de pendant serveur.  
-**Note** : cette partie est du rendu pur (mesh 3D). Elle N'A PAS à migrer vers le serveur. Seules les données de projection (`ProjectionState.summary`) doivent être autoritatives côté serveur.
+### 4.1 Polling tick — **priorité haute**
 
-**Migration cible** :
+Unity ne reçoit pas les mises à jour de tick automatiquement. **Recommandation : Option A — polling `GET /world` toutes les 5s.**
+
 ```
-Serveur expose : GET /projection → ProjectionState avec summary global (déjà fait)
-Unity garde   : génération mesh Goldberg, colorisation (rendu seulement)
+Coroutine Unity : GET /world → si tickCount > local → ApplyWorldState()
 ```
-**Effort** : Quasi nul. Déjà séparé.
+
+`GET /events/last` retourne le dernier événement unique, ce n'est **pas** du long-polling. L'utiliser uniquement pour des événements ponctuels, pas pour le suivi de tick.
+
+Option WebSocket (`WS /events/stream`) en Phase 2 uniquement, quand multijoueur réel.
 
 ---
 
-### 3.5 Sync tick Unity → Serveur — **priorité haute**
+### 4.2 Désactiver le tick local — **priorité haute**
 
-**Où** : `ViewManager.SynchronizeRegionStateFromServer()` (polling sur open-region)  
-**Problème** : Unity ne reçoit pas les mises à jour de tick serveur automatiquement. Il faut un appel explicite.
-
-**Migration cible (3 options)** :
-
-| Option | Complexité | Temps réel |
-|---|---|---|
-| **A. Polling** `GET /world` toutes les N secondes | Faible | Non |
-| **B. Long-polling** `GET /events/last` | Moyenne | Partiel |
-| **C. WebSocket** push depuis serveur | Élevée | Oui |
-
-**Recommandation** : Option A pour la Phase 1 (polling 5s = intervalle tick), Option C quand multijoueur réel.
-
-**Endpoint à ajouter** :
-```python
-# server.py
-GET /tick/status → { tickCount, tickRunning, nextTickIn }
-```
+`TerraformSimulationSession.ProcessTick()` s'exécute encore localement. Quand `_isContextAuthoritative = true`, ce tick doit être inhibé. `process_pending_actions()` côté serveur (`logic.py`) gère déjà la queue.
 
 ---
 
-## 4. Endpoints manquants à implémenter côté serveur
+### 4.3 `MapGenerator` en fallback seulement — **priorité moyenne**
 
-| Endpoint | Utilité | Priorité |
-|---|---|---|
-| `GET /tick/status` | Unity sait quand le prochain tick aura lieu | Haute |
-| `POST /commands/set-projection` | Changer override de cohérence depuis Unity | Moyenne |
-| `GET /snapshot/full` | ClientSnapshot complet (WorldState + RegionState) en un appel | Moyenne |
-| `POST /commands/sync-cell-selection` | Notifier le serveur de la cellule sélectionnée | Basse |
-| `WS /events/stream` | Push WebSocket pour mises à jour temps réel | Phase 2 |
+`POST /commands/open-region` renvoie déjà un `RegionState` avec `cells[]` complets. `SynchronizeAuthoritativeRegionState()` existe dans Unity et les applique à `HexGrid`. Il reste à désactiver `MapGenerator` comme path principal et ne le conserver qu'en fallback offline.
+
+---
+
+### 4.4 Colorisation Goldberg depuis les tuiles serveur — **priorité moyenne, opportunité nouvelle**
+
+`GET /bodies/{id}/tiles` retourne maintenant `terrainType`, `waterClassification` et `temperature` pour chaque tuile de surface. `GoldbergFaceColorizer` peut consommer ces données au lieu de les recalculer localement, garantissant une cohérence entre la vue planétaire Unity et les données serveur.
+
+Mapping : `tileId = row * cols + col`. `latDeg` / `lonDeg` permettent de retrouver la face GP par proximité — même logique que `GoldbergFaceColorizer.Colorize()` actuel.
+
+---
+
+## 5. Ce qui N'A PAS à migrer (reste Unity)
 
 ---
 
@@ -164,7 +138,7 @@ GET /tick/status → { tickCount, tickRunning, nextTickIn }
 | `HexMesh`, `HexMetrics` | Rendu pur |
 | `CameraController`, `ViewManager` | Input / navigation |
 | `TerraformHUD` | UI |
-| `GoldbergFaceColorizer` | Colorisation biome (données viennent du serveur) |
+| `GoldbergFaceColorizer` | Colorisation biome — les *données* viennent du serveur, le *rendu* reste Unity |
 | Shaders, Materials | Rendu |
 
 ---
@@ -172,28 +146,28 @@ GET /tick/status → { tickCount, tickRunning, nextTickIn }
 ## 6. Ordre de migration recommandé
 
 ```
-Phase 1 — Simulation autoritaire (tick serveur → Unity)
-  ├── 1a. Polling tick : Unity GET /world toutes les 5s → ApplyWorldState()
-  ├── 1b. Désactiver TerraformSimulationSession.ProcessTick() si isContextAuthoritative
-  └── 1c. Ajouter GET /tick/status
+Phase 1 — Simulation autoritaire (tick serveur → Unity)          ✅ CÔTÉ SERVEUR COMPLET
+  ├── 1a. [Serveur] GET /tick/status                              ✅
+  ├── 1b. [Unity]   Polling GET /world toutes les 5s             (Unity agent)
+  └── 1c. [Unity]   Désactiver ProcessTick() si isContextAuthoritative (Unity agent)
 
-Phase 2 — Génération de région autoritaire
-  ├── 2a. Enrichir runtime._build_region_state() pour produire des cellules complètes
-  ├── 2b. Supprimer MapGenerator comme path principal (garder en fallback offline)
-  └── 2c. Implémenter GET /snapshot/full
+Phase 2 — Génération de région et colorisation planétaire autoritaires  ✅ CÔTÉ SERVEUR COMPLET
+  ├── 2a. [Unity]   Désactiver MapGenerator comme path principal  (Unity agent)
+  ├── 2b. [Unity]   Brancher GoldbergFaceColorizer sur /bodies tiles (Unity agent)
+  └── 2c. [Serveur] POST /commands/set-projection                ✅
 
 Phase 3 — Hydrologie serveur
-  ├── 3a. Porter HydrologySystem + RiverSystem en Python (SimulationCore)
-  └── 3b. Brancher dans _build_region_state()
+  ├── 3a. [Serveur] Porter HydrologySystem + RiverSystem en Python (SimulationCore)
+  └── 3b. [Serveur] Brancher apply_hydrology_pass() dans _build_region_state()
 
 Phase 4 — Multijoueur (futur)
-  ├── 4a. WebSocket push
-  └── 4b. Autorisation actions par joueur
+  ├── 4a. [Serveur] WebSocket push WS /events/stream
+  └── 4b. [Serveur] Autorisation actions par joueur
 ```
 
 ---
 
-## 7. Couplage actuel Unity ↔ Serveur (résumé)
+## 7. Couplage actuel Unity ↔ Serveur
 
 ```
 ViewManager.SynchronizeRegionStateFromServer()

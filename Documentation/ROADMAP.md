@@ -6,6 +6,69 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 
 ---
 
+## Terminé : Phase 6.9 — Migration H3 Client Unity (vues planétaires)
+
+**Complété** :
+- [x] `GoldbergFaceColorizer.cs` — suppression de `Colorize(faces, GridData)` ; seule `ColorizeFromServerTiles()` subsiste
+- [x] `PlanetFlatMesh.cs` — ajout `TriangulateH3(GoldbergTileState[], colorByType)` ; Mercator conservé uniquement pour vue locale
+- [x] `PlanetFlatView.cs` — migration complète vers H3 : `LoadPlanetFromH3()`, `GetH3Tile()`, `IsLoaded` via `_h3Tiles`
+- [x] `PlanetFlatInput.cs` — hover/clic via `GetH3Tile()` → `ShowH3TileInfo()`
+- [x] `PlanetTangentView.cs` — suppression param `GridData`, ajout `RefreshColorsFromH3()`
+- [x] `PlanetSphereGoldberg.cs` — suppression `_planetGrid`, `CachedSphere.Grid`, `Colorize(Mercator)` ; event `OnH3TilesReady` fire après fetch serveur ; stubs `GetProjectedCell` / `TryBuildProjectionSummary`
+- [x] `ViewManager.cs` — abonnement `OnH3TilesReady` → `LoadPlanetFromH3` + `RefreshColorsFromH3` ; suppression `PlanetaryHexGrid.ActiveGrid` de `ShowProjectedPlanet` ; `OpenRegion` simplifié
+- [x] `FlatDebugOverlay.cs` — désabonnement Mercator, labels désactivés (avertissement console)
+- [x] `TerraformHUD.cs` — `ShowH3TileInfo(GoldbergTileState)` pour affichage HUD globe/flat
+- [x] `SimulationContracts.cs` — structs `GoldbergTileState` et `BodyListEntry`
+
+**Résultat** :
+> `PlanetaryHexGrid` ne pilote plus aucune vue planétaire. Globe, FlatView et TangentView sont colorisés exclusivement depuis les tuiles H3 autoritatives du `DedicatedServer`. `PlanetaryHexGrid` reste utilisé uniquement pour la génération de la vue locale hexagonale et ses constantes de résolution.
+
+---
+
+## Terminé : Phase 6.8 — Migration H3 (Uber H3 hexagonal hiérarchique)
+
+**Complété** :
+- [x] `SimulationCore/terraformation_sim/models.py` — `GoldbergTileState.tileId: str`, `neighborIds: list[str]`, `boundaryLatLons`, `h3Resolution`, `GENERATION_VERSION = "v2"`
+- [x] `SimulationCore/terraformation_sim/logic.py` — génération H3 (`uncompact_cells`, `grid_disk`, `cell_to_boundary`), résolutions 0/1/2 selon rayon
+- [x] `SimulationCore/terraformation_sim/persistence.py` — `tile_id: str`, colonne `String(20)`
+- [x] `SimulationCore/terraformation_sim/runtime.py` — `h3Resolution`, lookup par tileId string, `/neighbors`, `/at`
+- [x] `DedicatedServer/app/server.py` — endpoints `/tiles/at` et `/tiles/{tile_id}/neighbors`, tile_id str
+- [x] `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` — `tileId: string`, `neighborIds: string[]`
+- [x] `Mcp/server.py` — `tile_id: str`, outils `get_body_tile_at`, `get_body_tile_neighbors`
+- [x] Docker build + validation (5882 tuiles H3 res=2, genVersion=v2, neighbors, /at, delta)
+
+---
+
+## Terminé : Phase 6.9 — bootstrap-sol (système solaire complet)
+
+**Complété** :
+- [x] `SimulationCore/terraformation_sim/runtime.py` — `bootstrap_sol()` + `_bootstrap_sol_galaxy_locked()` : wipe état existant puis crée Sol complet
+- [x] `DedicatedServer/app/server.py` — `POST /commands/bootstrap-sol`
+- [x] Validation : 16 corps générés (Soleil, 8 planètes, 5 lunes, Kepler-442 star + Kepler-442b), résolutions H3 correctes (Luna/Io/Europa res=1=842 tiles, reste res=2=5882 tiles)
+
+**Corps générés** :
+
+| Corps | Type | Radius (km) | H3 | Override | Water |
+|---|---|---|---|---|---|
+| Sun | Star | 695 700 | res=2 | — | — |
+| Mercury | Planet | 2 440 | res=2 | Arid | 0.00 |
+| Venus | Planet | 6 051 | res=2 | Arid | 0.00 |
+| **Earth** | Planet | 6 371 | res=2 | Coast | **0.71** |
+| Mars | Planet | 3 390 | res=2 | Arid | 0.02 |
+| Jupiter | Planet | 69 911 | res=2 | None_ | 0.00 |
+| Saturn | Planet | 58 232 | res=2 | None_ | 0.00 |
+| Uranus | Planet | 25 362 | res=2 | Frozen | 0.00 |
+| Neptune | Planet | 24 622 | res=2 | Frozen | 0.00 |
+| Luna | Moon | 1 737 | res=1 | Arid | 0.01 |
+| Io | Moon | 1 821 | res=1 | Arid | 0.00 |
+| Europa | Moon | 1 560 | res=1 | Ocean | 0.70 |
+| Ganymede | Moon | 2 634 | res=2 | Frozen | 0.30 |
+| Titan | Moon | 2 575 | res=2 | Arid | 0.10 |
+| Kepler-442 | Star | 513 000 | res=2 | — | — |
+| Kepler-442b | Planet | 7 600 | res=2 | Ocean | 0.55 |
+
+---
+
 ## En cours : Phase 6.75 — Split Simulation / Client / MCP
 
 **Restant (1 tâche)** :
@@ -52,8 +115,9 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 **Backlog** :
 - [ ] Étendre `MapRegion.ComputeCoherence()` avec signaux de rugosité, accumulation et structure de relief
 - [ ] Enrichir `CoherenceValidationSystem` pour utiliser ces signaux comme biais progressifs plutôt que des overrides trop binaires
-- [ ] Ajouter une hydrologie simplifiée côté `PlanetaryHexGrid` pour améliorer océan/côte/aride/gel côté projection
-- [ ] Rendre les zones côtières projetées plus robustes via une logique de connectivité ou de voisinage enrichi
+- [ ] ~~Ajouter une hydrologie simplifiée côté `PlanetaryHexGrid` pour améliorer océan/côte/aride/gel côté projection~~ *(obsolète — la projection est maintenant H3 serveur)*
+- [ ] Rendre les zones côtières projetées plus robustes via une logique de connectivité ou de voisinage enrichi (côté serveur `logic.py`)
+- [ ] Remplacer le bonus transitoire `Basin` par une vraie connectivité hydrologique H3 côté serveur (`logic.py`) : voisinage, exutoires, distinction lac/côte et accumulation cohérente
 - [ ] Vérifier que les presets debug (Ocean, Arid, Frozen, Basin, Coast) restent cohérents après enrichissement de la projection
 - [ ] Mettre à jour le HUD/debug pour comparer clairement projection et local sur les nouveaux signaux si nécessaire
 
@@ -61,7 +125,7 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 - `Game/Assets/Scripts/World/MapRegion.cs`
 - `Game/Assets/Scripts/World/GenerationContext.cs`
 - `Game/Assets/Scripts/World/Systems/CoherenceValidationSystem.cs`
-- `Game/Assets/Scripts/World/PlanetaryHexGrid.cs`
+- ~~`Game/Assets/Scripts/World/PlanetaryHexGrid.cs`~~ *(projection maintenant côté serveur H3)*
 - `Game/Assets/Scripts/UI/ViewManager.cs`
 
 **Critères de sortie** :
@@ -87,7 +151,7 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 **Fichiers** :
 - `Game/Assets/Scripts/UI/ViewManager.cs`
 - `Game/Assets/Scripts/World/PlanetSphereGoldberg.cs`
-- `Game/Assets/Scripts/World/PlanetaryHexGrid.cs`
+- ~~`Game/Assets/Scripts/World/PlanetaryHexGrid.cs`~~ *(persistance régionale : côté serveur via `/tiles/{id}/delta`)*
 - `Game/Assets/Scripts/HexGrid/HexGrid.cs`
 - `Game/Assets/Scripts/World/MapRegion.cs`
 
@@ -158,6 +222,8 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 - [ ] Implémenter la séquence `launch_preset → get_local_summary → comparer checklist → get_console_errors → take_screenshot` pour chaque preset
 - [ ] Archiver les résultats JSON par preset dans `Artifacts/<PresetName>/`
 - [ ] Produire un rapport de delta entre deux runs (régression / amélioration)
+- [ ] Durcir `Tools/Test-GenerationQuality.ps1` et l'équivalent MCP (`run_generation_quality_suite`) comme garde-fou de tuning serveur : seuils par preset, faux positifs et lecture plus robuste des régressions
+- [ ] Brancher cette suite dans un smoke Docker automatisé (`docker compose up -d --build` → exécution → code retour exploitable CI) pour verrouiller les régressions de génération sans Unity
 
 **Critères de sortie** :
 - [ ] Un seul appel déclenche la validation complète des 5 presets et produit un rapport lisible
@@ -231,8 +297,8 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 - [ ] Serveur dédié autoritaire (client-serveur, pas P2P)
 - [ ] Synchroniser hexes, corpos, marché entre clients
 - [ ] Authentification joueur (Unity Authentication)
-- [ ] Firebase Firestore pour la persistance monde
-- [ ] Sauvegardes toutes les X minutes
+- [x] Persistance serveur — PostgreSQL + SQLAlchemy Core (write-through, ✅ Phase 2 terminée)
+- [ ] Synchronisation Firebase ou autre pour la persistance client/cloud multi-instances
 - [ ] Test avec 2 joueurs simultanés
 
 ---

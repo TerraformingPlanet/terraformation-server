@@ -529,13 +529,17 @@ Usage:
 
 Tools exposes actuellement:
 
-- `get_current_view_state`
+- `get_view_state`
 - `launch_preset`
 - `get_projection_summary`
 - `open_region`
 - `get_local_summary`
-- `get_recent_console_errors`
-- `capture_scene_screenshot`
+- `get_console_errors`
+- `take_screenshot`
+- `get_generation_stats`
+- `get_generation_noise_distribution`
+- `run_generation_quality_suite`
+- `compare_generation_profiles`
 - `run_preset_smoke_test`
 - `compare_presets`
 - `diagnose_hydrology_mismatch`
@@ -549,6 +553,50 @@ Contraintes actuelles:
 
 ### Tool compose disponible
 
+`get_generation_stats` permet d'interroger directement le `DedicatedServer` pour lire la signature d'un preset/profil de generation sans lancer Unity.
+
+Sorties utiles:
+
+- distribution `terrain`
+- distribution `terrain_class`
+- distribution `water_classification`
+- metriques `quality` (`dry_pct`, `humid_pct`, `saturated_pct`, `habitable_pct`, `cold_pct`, `hot_pct`)
+- temperature moyenne/min/max
+
+Usage recommande:
+
+1. utiliser `get_generation_stats` avant toute retouche de `logic.py`
+2. comparer explicitement Coast, Ocean, Arid, Frozen et Basin apres chaque changement serveur
+3. n'utiliser Unity qu'en confirmation visuelle, pas comme premier oracle de tuning
+
+`get_generation_noise_distribution` permet d'inspecter la distribution du bruit H3/hash quand un seuil ou un preset semble se comporter de maniere contre-intuitive.
+
+Usage recommande:
+
+1. l'utiliser quand un preset repond mal a un changement de seuil sans explication evidente
+2. verifier si la distribution est plate ou biaisee avant de retoucher les classifications
+
+`run_generation_quality_suite` est l'equivalent MCP de `Tools/Test-GenerationQuality.ps1`.
+Il execute les 5 profils de reference cote serveur et retourne un verdict structure avec checks et failures.
+
+Usage recommande:
+
+1. le lancer juste apres une modification de `SimulationCore/terraformation_sim/logic.py`
+2. traiter le resultat comme garde-fou de tuning avant les smoke tests Unity
+3. s'en servir comme base pour une future automatisation Docker/CI
+
+`compare_generation_profiles` permet de comparer deux profils serveur directement sur les metriques de qualite sans passer par Unity ni par les smoke tests visuels.
+
+Sorties utiles:
+
+- `resultA` et `resultB`
+- `delta` par metrique (`dryPct`, `openOceanPct`, `vegetationPct`, `basinPct`, etc.)
+
+Usage recommande:
+
+1. l'utiliser quand deux presets semblent trop proches ou mal differencies
+2. s'en servir avant `compare_presets` pour savoir si le probleme est deja visible cote serveur
+
 `run_preset_smoke_test` permet de lancer un scenario complet de validation preset et de recuperer:
 
 - le succes global
@@ -561,8 +609,10 @@ Contraintes actuelles:
 Usage recommande:
 
 1. utiliser les tools unitaires pour le debug interactif
-2. utiliser `run_preset_smoke_test` pour une verification reproductible Ocean, Coast, Basin, Arid ou Frozen
-3. s'appuyer sur `verdict` avant de conclure qu'un preset est sain
+2. utiliser `run_generation_quality_suite` pour valider rapidement la projection serveur sans Unity
+3. utiliser `compare_generation_profiles` si deux presets doivent etre contrastes cote serveur
+4. utiliser `run_preset_smoke_test` pour une verification reproductible Ocean, Coast, Basin, Arid ou Frozen
+5. s'appuyer sur `verdict` avant de conclure qu'un preset est sain
 
 `compare_presets` permet de lancer deux smoke tests et de recuperer un delta structure entre deux presets.
 

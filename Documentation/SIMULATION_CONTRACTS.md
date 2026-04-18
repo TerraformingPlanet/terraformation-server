@@ -49,12 +49,33 @@ Toute modification d'un type partagé doit être appliquée **dans les deux fich
 | `SimulationCellState` | `struct SimulationCellState` | Voir détail ci-dessous |
 | `SimulationWeatherState` | `struct SimulationWeatherState` | 5 champs identiques |
 | `SimulationCoherenceState` | `struct SimulationCoherenceState` | 8 champs identiques |
+| `AtmosphericState` | `struct AtmosphericState` | 6 champs identiques — voir détail ci-dessous |
 | `ProjectionState` | `struct ProjectionState` | 5 champs identiques |
-| `RegionState` | `struct RegionState` | 11 champs + `cells[]` |
+| `RegionState` | `struct RegionState` | 12 champs + `cells[]` (inclut `atmosphericState`) |
 | `WorldState` | `struct WorldState` | 11 champs identiques |
 | `ClientSnapshot` | `struct ClientSnapshot` | 10 champs identiques |
 | `SimulationCommand` | `struct SimulationCommand` | 8 champs identiques |
 | `SimulationEvent` | `struct SimulationEvent` | 7 champs identiques |
+
+---
+
+## Détail : `AtmosphericState`
+
+Dérivé en fin de `_build_region_state()` depuis l'état des cellules par `compute_atmospheric_state(cells)` — jamais saisi manuellement.
+
+| Champ Python | Champ C# | Type | Notes |
+|---|---|---|---|
+| `co2Ratio` | `co2Ratio` | `float` | Fraction CO₂ [0..1] — Terre ≈ 0.0004 |
+| `o2Ratio` | `o2Ratio` | `float` | Fraction O₂ [0..1] — Terre ≈ 0.21 |
+| `atmosphericPressure` | `atmosphericPressure` | `float` | kPa — Mars initial ≈ 0.6, Terre ≈ 101.3 |
+| `averageTemperature` | `averageTemperature` | `float` | °C avec correction effet de serre |
+| `toxinRatio` | `toxinRatio` | `float` | Moyenne toxines cellulaires [0..1] |
+| `habitabilityScore` | `habitabilityScore` | `float` | Score pondéré multi-param [0..1] |
+
+**Utilisation** :
+- `TerraformHUD.SetAuthoritativeRegionState()` utilise `habitabilityScore` comme progrès principal si `> 0`
+- `TerraformHUD.RefreshHexInfo()` affiche O₂%, CO₂%, pression, score dans le panel région autoritatif
+- MCP tool `get_atmospheric_state(lat, lon)` retourne directement ce dict
 
 ---
 
