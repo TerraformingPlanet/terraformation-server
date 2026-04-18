@@ -7,7 +7,7 @@ from noise import snoise3 as _snoise3
 # Bump this string whenever the tile generation algorithm changes.
 # Bodies that were modified under a different version will have their
 # tiles regenerated lazily on next access (mutations are preserved).
-GENERATION_VERSION: str = "v7"
+GENERATION_VERSION: str = "v8"
 
 from .models import (
     AnyBodyState,
@@ -521,9 +521,6 @@ def _assign_spherical_tile(
         atmo_factor = 0.25 + atmosphere_density * 0.75
     water_ratio = min(1.0, water_ratio * atmo_factor)
 
-    if coherence == DebugCoherenceOverride.Basin and not is_water:
-        water_ratio = min(1.0, water_ratio + 0.05 * (1.0 - altitude_norm))
-
     # Evaporation at extreme heat; below -20°C water stays as ice (terrain, not lost)
     if temperature > 80.0:
         evap = min(1.0, (temperature - 80.0) / 60.0)
@@ -569,19 +566,184 @@ def _assign_spherical_tile(
     else:
         water_class = WaterClassification.Dry
 
-    # ── Terrain class (scatter, hash-based) ──────────────────────────────
-    if noise_c > 0.75:
+    # TerrainClass is refined later by the hydrology/topology pass.
+    if noise_c > 0.82:
         terrain_class = TerrainClass.Ridge
-    elif noise_c > 0.50:
-        terrain_class = TerrainClass.Basin
-    elif noise_c > 0.30:
+    elif noise_c > 0.56:
         terrain_class = TerrainClass.Channel
-    elif noise_c > 0.15:
+    elif noise_c > 0.28:
         terrain_class = TerrainClass.Source
     else:
         terrain_class = TerrainClass.Slope
 
     return terrain_type, water_class, terrain_class, water_ratio, temperature, toxin_level
+
+
+def _is_water_like_tile(tile: GoldbergTileState) -> bool:
+    return (
+        tile.terrainType in (TerrainType.Eau, TerrainType.Glace)
+        or tile.waterRatio >= 0.52
+        or tile.waterClassification in (
+            WaterClassification.InlandWater,
+            WaterClassification.OpenOcean,
+            WaterClassification.FrozenWater,
+        )
+    )
+
+
+def _find_water_components(
+    tiles: list[GoldbergTileState],
+) -> tuple[list[set[str]], set[str], dict[str, int]]:
+    tile_by_id = {tile.tileId: tile for tile in tiles}
+    water_ids = {tile.tileId for tile in tiles if _is_water_like_tile(tile)}
+    components: list[set[str]] = []
+    component_index: dict[str, int] = {}
+
+    for tile_id in water_ids:
+        if tile_id in component_index:
+            continue
+        stack = [tile_id]
+        component: set[str] = set()
+        while stack:
+            current = stack.pop()
+            if current in component:
+                continue
+            component.add(current)
+            component_index[current] = len(components)
+            tile = tile_by_id[current]
+            for neighbor_id in tile.neighborIds:
+                if neighbor_id in water_ids and neighbor_id not in component:
+                    stack.append(neighbor_id)
+        components.append(component)
+
+    total = max(len(tiles), 1)
+    ocean_component: set[str] = set()
+    if components:
+        largest = max(components, key=len)
+        if len(largest) >= max(12, int(total * 0.04)):
+            ocean_component = largest
+
+    return components, ocean_component, component_index
+
+
+def _apply_spherical_hydrology(
+    tiles: list[GoldbergTileState],
+    cell_heights: dict[str, float],
+    sea_level: float,
+) -> None:
+    tile_by_id = {tile.tileId: tile for tile in tiles}
+    _, ocean_component, _ = _find_water_components(tiles)
+
+    downhill_target: dict[str, str] = {}
+    upstream_count: dict[str, int] = {tile.tileId: 0 for tile in tiles}
+    for tile in tiles:
+        current_height = cell_heights[tile.tileId]
+        lower_neighbors = [
+            neighbor_id
+            for neighbor_id in tile.neighborIds
+            if neighbor_id in cell_heights and cell_heights[neighbor_id] + 0.01 < current_height
+        ]
+        if not lower_neighbors:
+            continue
+        target = min(lower_neighbors, key=lambda neighbor_id: cell_heights[neighbor_id])
+        downhill_target[tile.tileId] = target
+        upstream_count[target] += 1
+
+    for tile in tiles:
+        current_height = cell_heights[tile.tileId]
+        neighbors = [tile_by_id[neighbor_id] for neighbor_id in tile.neighborIds if neighbor_id in tile_by_id]
+        neighbor_heights = [cell_heights[neighbor.tileId] for neighbor in neighbors]
+        lower_neighbors = [neighbor for neighbor in neighbors if cell_heights[neighbor.tileId] + 0.01 < current_height]
+        higher_neighbors = [neighbor for neighbor in neighbors if cell_heights[neighbor.tileId] > current_height + 0.01]
+        adjacent_ocean = any(neighbor.tileId in ocean_component for neighbor in neighbors)
+        adjacent_water = any(_is_water_like_tile(neighbor) for neighbor in neighbors)
+        adjacent_land = any(not _is_water_like_tile(neighbor) for neighbor in neighbors)
+        near_sea_level = abs(current_height - sea_level) < 0.045
+        is_local_min = bool(neighbor_heights) and not lower_neighbors and bool(higher_neighbors)
+        is_local_max = bool(neighbor_heights) and not higher_neighbors and bool(lower_neighbors)
+        is_frozen_water = tile.temperature < -18.0 and (tile.waterRatio >= 0.14 or _is_water_like_tile(tile))
+        is_ocean_water = tile.tileId in ocean_component
+        is_basin_candidate = (
+            not is_ocean_water
+            and (
+                (is_local_min and tile.waterRatio >= 0.10)
+                or (not lower_neighbors and current_height <= sea_level + 0.07)
+                or (
+                    adjacent_water
+                    and current_height <= sea_level + 0.055
+                    and len(lower_neighbors) <= 1
+                    and tile.waterRatio >= 0.18
+                )
+            )
+        )
+        is_actual_water_surface = tile.terrainType in (TerrainType.Eau, TerrainType.Glace)
+
+        if is_basin_candidate:
+            tile.terrainClass = TerrainClass.Basin
+        elif is_local_max:
+            tile.terrainClass = TerrainClass.Ridge
+        elif lower_neighbors and upstream_count[tile.tileId] >= 2:
+            tile.terrainClass = TerrainClass.Channel
+        elif lower_neighbors and upstream_count[tile.tileId] == 0 and tile.waterRatio >= 0.12:
+            tile.terrainClass = TerrainClass.Source
+        else:
+            tile.terrainClass = TerrainClass.Slope
+
+        if is_frozen_water:
+            tile.terrainType = TerrainType.Glace
+            tile.waterClassification = WaterClassification.FrozenWater
+            tile.waterRatio = max(tile.waterRatio, 0.18)
+        elif is_ocean_water:
+            tile.terrainType = TerrainType.Eau
+            if adjacent_land or near_sea_level or tile.waterRatio < 0.58:
+                tile.waterClassification = WaterClassification.Coast
+                tile.waterRatio = max(tile.waterRatio, 0.28)
+            else:
+                tile.waterClassification = WaterClassification.OpenOcean
+                tile.waterRatio = max(tile.waterRatio, 0.68)
+        elif is_basin_candidate and (is_actual_water_surface or tile.waterRatio >= 0.22):
+            tile.terrainType = TerrainType.Eau
+            tile.waterClassification = WaterClassification.InlandWater
+            tile.waterRatio = max(tile.waterRatio, 0.40)
+        elif is_actual_water_surface and not is_ocean_water:
+            tile.terrainType = TerrainType.Eau
+            tile.waterClassification = WaterClassification.InlandWater
+            tile.waterRatio = max(tile.waterRatio, 0.40)
+        elif adjacent_ocean and tile.waterRatio >= 0.16:
+            tile.waterClassification = WaterClassification.Coast
+        elif adjacent_water and tile.waterRatio >= 0.22 and adjacent_land:
+            tile.waterClassification = WaterClassification.Coast
+        else:
+            tile.waterClassification = WaterClassification.Dry
+
+        tile.isHabitable = is_tile_habitable(tile.terrainType, tile.temperature, tile.waterRatio)
+
+
+def summarize_spherical_hydrology(tiles: list[GoldbergTileState]) -> dict:
+    components, ocean_component, _ = _find_water_components(tiles)
+    water_tile_count = sum(1 for tile in tiles if _is_water_like_tile(tile))
+    inland_components = [component for component in components if component != ocean_component]
+    coast_tiles = [tile for tile in tiles if tile.waterClassification == WaterClassification.Coast]
+    basin_tiles = [tile for tile in tiles if tile.terrainClass == TerrainClass.Basin]
+    channel_tiles = [tile for tile in tiles if tile.terrainClass == TerrainClass.Channel]
+    total = max(len(tiles), 1)
+    return {
+        "water_components": len(components),
+        "largest_water_component_tiles": max((len(component) for component in components), default=0),
+        "largest_water_component_pct": round(max((len(component) for component in components), default=0) / total * 100, 1),
+        "ocean_connected_tiles": len(ocean_component),
+        "ocean_connected_pct": round(len(ocean_component) / total * 100, 1),
+        "enclosed_water_components": len(inland_components),
+        "enclosed_water_tiles": sum(len(component) for component in inland_components),
+        "enclosed_water_pct": round(sum(len(component) for component in inland_components) / total * 100, 1),
+        "shoreline_tiles": len(coast_tiles),
+        "shoreline_pct": round(len(coast_tiles) / total * 100, 1),
+        "basin_floor_tiles": len(basin_tiles),
+        "basin_floor_pct": round(len(basin_tiles) / total * 100, 1),
+        "channel_tiles": len(channel_tiles),
+        "channel_pct": round(len(channel_tiles) / total * 100, 1),
+        "water_tile_pct": round(water_tile_count / total * 100, 1),
+    }
 
 
 def generate_spherical_tiles(
@@ -667,6 +829,8 @@ def generate_spherical_tiles(
             neighborIds=neighbors,
             boundaryLatLons=boundary,
         ))
+
+    _apply_spherical_hydrology(tiles, cell_heights, sea_level)
 
     return tiles
 
