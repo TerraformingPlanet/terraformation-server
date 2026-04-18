@@ -383,6 +383,58 @@ j'ai ajouté [ChampY] à [TypeX] en Python — mets à jour SIMULATION_CONTRACTS
 - On ne crée pas un agent par sous-projet — les changements sont presque toujours cross-projet.
 - On ne reporte pas la mise à jour à "plus tard" après une décision d'architecture — le drift commence là.
 
+---
+
+## Structure des repos Git
+
+Le projet est divisé en **2 repos GitHub distincts**. Chaque agent travaille dans le bon repo.
+
+| Repo | Remote | Contenu | Agent concerné |
+|---|---|---|---|
+| `Wafhi3n/Game-unity-terra` | `e:\terraformation\Game\` | Client Unity — scripts C#, scènes, assets, ScriptableObjects | **Terraformation Dev** |
+| `Wafhi3n/terraformation-server` | `e:\terraformation\` | Backend — `SimulationCore/`, `DedicatedServer/`, `Mcp/`, `Documentation/`, `Tools/` | **Terraformation Dev** · **Doc Terraformation** |
+
+`Game/` est exclu du repo racine via `.gitignore`. Pas de submodule, pas de repo imbriqué.
+
+---
+
+## Règle de commit pour les agents
+
+**Tout changement effectué par un agent doit être commité avant la fin de la session.**
+
+Un changement non commité est un changement perdu si le contexte est coupé.
+
+### Règle par type de changement
+
+| Type de changement | Repo à commiter | Message de commit recommandé |
+|---|---|---|
+| Modification de code Unity (`Game/`) | `e:\terraformation\Game\` | `feat(\|fix\|chore)(scope): description` |
+| Modification Python (`SimulationCore/`, `DedicatedServer/`, `Mcp/`) | `e:\terraformation\` | `feat(\|fix\|chore)(scope): description` |
+| Modification de documentation | `e:\terraformation\` | `docs: description` |
+| Mise à jour `SIMULATION_CONTRACTS.md` | `e:\terraformation\` | `docs(contracts): description` |
+
+### Séquence de fin de tâche agent
+
+```
+# Repo backend (SimulationCore, DedicatedServer, Mcp, Documentation)
+cd e:\terraformation
+git add -A
+git commit -m "docs|feat|fix(scope): description"
+git push
+
+# Repo Unity (si des fichiers Game/ ont changé)
+cd e:\terraformation\Game
+git add -A
+git commit -m "feat|fix|chore(scope): description"
+git push
+```
+
+### Ce qu'on ne fait pas
+
+- On ne laisse pas de fichiers modifiés non commités à la fin d'une session agent.
+- On ne fait pas un seul gros commit fourre-tout — un commit par sujet logique.
+- On ne push pas sans commit message explicite.
+
 ## Definition de done pour une passe de debug AI
 
 Une passe de debug est consideree utile si elle produit:
