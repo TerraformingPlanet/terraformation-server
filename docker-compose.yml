@@ -1,0 +1,42 @@
+services:
+
+  # -------------------------------------------------------------------------
+  # FastMCP — AI agent bridge for the Terraformation game
+  # Phase 2: connects to Unity running on the Docker host (port 48621)
+  # Phase 3: change GAME_BRIDGE_URL to http://unity-server:48621 once
+  #          the Unity dedicated server is containerised
+  # -------------------------------------------------------------------------
+  terraformation-mcp:
+    build:
+      context: ./Mcp
+      dockerfile: Dockerfile
+    container_name: terraformation-mcp
+    depends_on:
+      - terraformation-dedicated-server
+    ports:
+      - "8000:8000"
+    environment:
+      MCP_TRANSPORT: http
+      MCP_PORT: "8000"
+      # host.docker.internal resolves to the Windows host on Docker Desktop
+      GAME_BRIDGE_URL: http://host.docker.internal:48621
+      SIMULATION_SERVER_URL: ${SIMULATION_SERVER_URL:-http://terraformation-dedicated-server:8080}
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Dedicated simulation host.
+  # Canonical stack: docker compose up -d
+  # -------------------------------------------------------------------------
+  terraformation-dedicated-server:
+    build:
+      context: .
+      dockerfile: DedicatedServer/Dockerfile
+    container_name: terraformation-dedicated-server
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_MODE: in-memory
+      SERVER_TICK_INTERVAL: "5.0"
+      SERVER_AUTO_RESUME: "0"
+    restart: unless-stopped
+

@@ -1,0 +1,63 @@
+# Documentation — Terraformation
+
+Index d'entrée pour le projet. Commence ici si tu découvres le dépôt.
+
+---
+
+## Ordre de lecture recommandé
+
+| # | Fichier | Intention |
+|---|---------|-----------|
+| 1 | [GDD.md](GDD.md) | Vision du jeu, concept central, système de vues, navigation |
+| 2 | [ARCHITECTURE.md](ARCHITECTURE.md) | Stack technique, décisions d'architecture, structure cible des couches |
+| 3 | [REPOSITORY_STRUCTURE.md](REPOSITORY_STRUCTURE.md) | Découpage monorepo en sous-projets (`Game/`, `Mcp/`, `DedicatedServer/`, `SimulationCore/`) |
+| 4 | [ROADMAP.md](ROADMAP.md) | **Backlog actif uniquement** — phases et sprints en cours ou à venir |
+| 5 | [CHANGELOG.md](CHANGELOG.md) | Historique des phases complétées (Phase 0 → 6.9) |
+
+---
+
+## Référence technique
+
+| Fichier | Intention |
+|---------|-----------|
+| [SIMULATION_CONTRACTS.md](SIMULATION_CONTRACTS.md) | Convention de synchronisation des contrats Python ↔ C# (`models.py` ↔ `SimulationContracts.cs`) |
+| [BODY_HIERARCHY.md](BODY_HIERARCHY.md) | Architecture des corps célestes côté serveur Python — modèles, génération de tuiles, zones intérieures, endpoints REST |
+| [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md) | Architecture des tools MCP, endpoints HTTP, bridge Unity, état par tool |
+| [AI_DEBUG_WORKFLOW.md](AI_DEBUG_WORKFLOW.md) | Workflow AI/debug : comment utiliser Copilot pour débugger sans improviser |
+| [TEST_PRESETS_CHECKLIST.md](TEST_PRESETS_CHECKLIST.md) | Checklist de validation pour les presets Ocean, Arid, Frozen, Coast, Basin |
+| [MapGeneration_rule.md](MapGeneration_rule.md) | Règles de génération de carte et de cohérence projection → local |
+
+---
+
+## Plans de migration
+
+| Fichier | Intention |
+|---------|-----------|
+| [SERVER_MIGRATION_PLAN.md](SERVER_MIGRATION_PLAN.md) | Plan de migration vers le serveur dédié autoritaire |
+| [UNITY_AI_ASSISTANT_MCP_PLAN.md](UNITY_AI_ASSISTANT_MCP_PLAN.md) | Plan initial MCP (historique — voir MCP_TOOLS_ARCHITECTURE.md pour l'état actuel) |
+
+---
+
+## Doc externe MCP (FastMCP)
+
+| Dossier | Intention |
+|---------|-----------|
+| [mcp/README.md](mcp/README.md) | Patterns FastMCP utilisés dans ce projet + liens vers la doc officielle |
+
+---
+
+## Archive
+
+| Dossier | Intention |
+|---------|-----------|
+| [Archive/](Archive/) | Notes de recherche et scratchpads — pas de la documentation de projet active |
+
+---
+
+## Règles de contribution
+
+- **Nouvelles décisions d'architecture** → `ARCHITECTURE.md` (section "Décisions d'Architecture")
+- **Nouveau type de contrat partagé Python ↔ C#** → `SIMULATION_CONTRACTS.md` (mettre à jour les deux colonnes)
+- **Nouveau tool MCP** → `MCP_TOOLS_ARCHITECTURE.md`
+- **Phase terminée** → déplacer de `ROADMAP.md` vers `CHANGELOG.md`
+- **Doc spécifique à une brique** → `{Brique}/README.md` (co-localisé avec le code, pas ici)

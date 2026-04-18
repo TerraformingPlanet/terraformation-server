@@ -1,0 +1,14 @@
+﻿{
+    "isValid":  true,
+    "activePlanetName":  "Kepler-442b",
+    "regionLatitude":  0.5,
+    "regionLongitude":  0.5,
+    "coherenceOceanicity":  0.7038090825080872,
+    "coherenceDeserticity":  0.26163530349731448,
+    "coherenceFrigidity":  0.0,
+    "projectedWaterRatio":  0.7038090825080872,
+    "terraformationProgress":  1.0,
+    "hasSelectedCell":  false,
+    "selectedCellQ":  0,
+    "selectedCellR":  0
+}

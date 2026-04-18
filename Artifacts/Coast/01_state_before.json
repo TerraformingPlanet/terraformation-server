@@ -1,0 +1,14 @@
+﻿{
+    "currentView":  "Local",
+    "activePlanetName":  "Kepler-442b",
+    "activeProjectionOverride":  "Ocean",
+    "activeProjectionWaterLevel":  0.0,
+    "hasRegion":  true,
+    "regionLatitude":  0.6249998807907105,
+    "regionLongitude":  0.4305037260055542,
+    "hasSelectedCell":  false,
+    "selectedCellQ":  0,
+    "selectedCellR":  0,
+    "terraformationProgress":  0.0,
+    "localCellCount":  91
+}

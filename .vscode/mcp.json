@@ -1,0 +1,15 @@
+{
+	"servers": {
+		"unity-mcp": {
+			"type": "stdio",
+			"command": "C:\\Users\\wafhi\\.unity\\relay\\relay_win.exe",
+			"args": [
+				"--mcp"
+			]
+		},
+		"terraformation-debug": {
+			"type": "http",
+			"url": "http://localhost:8000/mcp"
+		}
+	}
+}

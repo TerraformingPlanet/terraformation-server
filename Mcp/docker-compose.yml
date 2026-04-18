@@ -1,0 +1,9 @@
+services:
+  terraformation-dedicated-server:
+    extends:
+      file: ../docker-compose.yml
+      service: terraformation-dedicated-server
+  terraformation-mcp:
+    extends:
+      file: ../docker-compose.yml
+      service: terraformation-mcp
