@@ -1,0 +1,165 @@
+{
+  "baseUrl": "http://127.0.0.1:8080",
+  "h3Resolution": 2,
+  "ok": true,
+  "results": [
+    {
+      "preset": "Coast",
+      "seed": 1004,
+      "atmosphereDensity": 0.7,
+      "waterLevel": 0.71,
+      "dryPct": 0.7,
+      "humidPct": 10.3,
+      "saturatedPct": 2.1,
+      "habitablePct": 99.4,
+      "coldPct": 0.1,
+      "hotPct": 0.0,
+      "vegetationPct": 7.6,
+      "openOceanPct": 51.7,
+      "frozenPct": 0.2,
+      "coastPct": 34.8,
+      "inlandPct": 2.7,
+      "basinPct": 2.6,
+      "temperatureAvg": 5.6
+    },
+    {
+      "preset": "Ocean",
+      "seed": 1011,
+      "atmosphereDensity": 0.65,
+      "waterLevel": 0.85,
+      "dryPct": 0.6,
+      "humidPct": 2.6,
+      "saturatedPct": 5.3,
+      "habitablePct": 99.9,
+      "coldPct": 0.0,
+      "hotPct": 0.0,
+      "vegetationPct": 0.4,
+      "openOceanPct": 74.5,
+      "frozenPct": 0.0,
+      "coastPct": 18.0,
+      "inlandPct": 1.2,
+      "basinPct": 1.1,
+      "temperatureAvg": 11.5
+    },
+    {
+      "preset": "Arid",
+      "seed": 1021,
+      "atmosphereDensity": 0.12,
+      "waterLevel": 0.03,
+      "dryPct": 90.3,
+      "humidPct": 0.6,
+      "saturatedPct": 0.0,
+      "habitablePct": 36.0,
+      "coldPct": 27.2,
+      "hotPct": 0.0,
+      "vegetationPct": 0.0,
+      "openOceanPct": 0.0,
+      "frozenPct": 0.0,
+      "coastPct": 0.0,
+      "inlandPct": 3.1,
+      "basinPct": 2.2,
+      "temperatureAvg": -2.2
+    },
+    {
+      "preset": "Frozen",
+      "seed": 1031,
+      "atmosphereDensity": 0.3,
+      "waterLevel": 0.35,
+      "dryPct": 34.2,
+      "humidPct": 0.0,
+      "saturatedPct": 0.0,
+      "habitablePct": 16.5,
+      "coldPct": 66.1,
+      "hotPct": 0.0,
+      "vegetationPct": 0.0,
+      "openOceanPct": 10.9,
+      "frozenPct": 31.4,
+      "coastPct": 5.2,
+      "inlandPct": 0.3,
+      "basinPct": 2.2,
+      "temperatureAvg": -31.9
+    },
+    {
+      "preset": "Basin",
+      "seed": 1041,
+      "atmosphereDensity": 0.45,
+      "waterLevel": 0.18,
+      "dryPct": 22.4,
+      "humidPct": 2.9,
+      "saturatedPct": 0.0,
+      "habitablePct": 76.4,
+      "coldPct": 8.1,
+      "hotPct": 0.0,
+      "vegetationPct": 0.0,
+      "openOceanPct": 3.9,
+      "frozenPct": 2.1,
+      "coastPct": 13.2,
+      "inlandPct": 11.3,
+      "basinPct": 9.8,
+      "temperatureAvg": -3.6
+    }
+  ],
+  "checks": [
+    {
+      "preset": "Coast",
+      "check": "coast-band-present",
+      "passed": true,
+      "message": "Coast should keep at least 5% coastal tiles, got 34.8%."
+    },
+    {
+      "preset": "Coast",
+      "check": "vegetation-present",
+      "passed": true,
+      "message": "Coast should keep at least 5% vegetation, got 7.6%."
+    },
+    {
+      "preset": "Ocean",
+      "check": "ocean-dominant",
+      "passed": true,
+      "message": "Ocean should have at least 45% open ocean, got 74.5%."
+    },
+    {
+      "preset": "Ocean",
+      "check": "not-overdry",
+      "passed": true,
+      "message": "Ocean should not be dry above 25%, got 0.6%."
+    },
+    {
+      "preset": "Arid",
+      "check": "dry-dominant",
+      "passed": true,
+      "message": "Arid should have at least 60% dry tiles, got 90.3%."
+    },
+    {
+      "preset": "Arid",
+      "check": "limited-vegetation",
+      "passed": true,
+      "message": "Arid should keep vegetation under 15%, got 0.0%."
+    },
+    {
+      "preset": "Frozen",
+      "check": "cold-dominant",
+      "passed": true,
+      "message": "Frozen should have at least 40% cold tiles, got 66.1%."
+    },
+    {
+      "preset": "Frozen",
+      "check": "ice-present",
+      "passed": true,
+      "message": "Frozen should have at least 5% frozen water, got 31.4%."
+    },
+    {
+      "preset": "Basin",
+      "check": "inland-water-present",
+      "passed": true,
+      "message": "Basin should have at least 5% inland water, got 11.3%."
+    },
+    {
+      "preset": "Basin",
+      "check": "basin-shapes-present",
+      "passed": true,
+      "message": "Basin should keep at least 9.5% terrainClass Basin, got 9.8%."
+    }
+  ],
+  "failures": []
+}

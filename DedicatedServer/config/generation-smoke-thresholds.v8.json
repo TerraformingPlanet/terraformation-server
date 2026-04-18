@@ -1,0 +1,37 @@
+{
+  "defaults": {
+    "dryPct": 2.5,
+    "humidPct": 2.5,
+    "saturatedPct": 2.0,
+    "habitablePct": 2.5,
+    "coldPct": 3.0,
+    "hotPct": 2.0,
+    "vegetationPct": 2.5,
+    "openOceanPct": 3.5,
+    "frozenPct": 3.5,
+    "coastPct": 4.0,
+    "inlandPct": 3.0,
+    "basinPct": 3.0,
+    "temperatureAvg": 2.0
+  },
+  "presets": {
+    "Coast": {
+      "vegetationPct": 3.0,
+      "coastPct": 5.0,
+      "openOceanPct": 5.0
+    },
+    "Ocean": {
+      "openOceanPct": 4.5,
+      "coastPct": 3.5
+    },
+    "Frozen": {
+      "frozenPct": 5.0,
+      "temperatureAvg": 3.0
+    },
+    "Basin": {
+      "inlandPct": 4.0,
+      "basinPct": 4.0,
+      "coastPct": 4.0
+    }
+  }
+}

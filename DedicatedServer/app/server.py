@@ -525,7 +525,7 @@ def debug_generation_stats(
     Returns per-terrain-type counts and percentages, plus climate-oriented metrics
     to iterate on generation without Unity.
     """
-    from terraformation_sim.logic import generate_spherical_tiles
+    from terraformation_sim.logic import generate_spherical_tiles, summarize_spherical_hydrology
 
     h3_resolution = min(max(0, h3_resolution), 2)
     atmosphere_density = min(max(0.0, atmosphere_density), 1.0)
@@ -571,6 +571,7 @@ def debug_generation_stats(
         terrain_class_labels.get(k, str(k)): {"count": v, "pct": round(v / total * 100, 1)}
         for k, v in sorted(terrain_class_counts.items())
     }
+    hydrology = summarize_spherical_hydrology(tiles)
 
     return {
         "params": {
@@ -584,6 +585,7 @@ def debug_generation_stats(
         "terrain": terrain_stats,
         "terrain_class": terrain_class_stats,
         "water_classification": water_stats,
+        "hydrology": hydrology,
         "water_ratio": {
             "min": round(min(water_ratios), 3),
             "max": round(max(water_ratios), 3),
