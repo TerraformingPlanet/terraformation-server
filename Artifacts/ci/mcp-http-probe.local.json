@@ -1,0 +1,701 @@
+{
+  "baseUrl": "http://127.0.0.1:8000/mcp",
+  "sessionId": "1cab677114064dd3af3c042eca09c1b0",
+  "initialize": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "protocolVersion": "2025-03-26",
+      "capabilities": {
+        "experimental": {},
+        "logging": {},
+        "prompts": {
+          "listChanged": true
+        },
+        "resources": {
+          "subscribe": false,
+          "listChanged": true
+        },
+        "tools": {
+          "listChanged": true
+        },
+        "extensions": {
+          "io.modelcontextprotocol/ui": {}
+        }
+      },
+      "serverInfo": {
+        "name": "terraformation-debug",
+        "version": "3.2.4"
+      }
+    }
+  },
+  "qualityToolCall": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"h3Resolution\":2,\"profiles\":{\"Coast\":{\"coherence\":4,\"water_level\":0.71,\"atmosphere_density\":0.7,\"seed\":1004},\"Ocean\":{\"coherence\":1,\"water_level\":0.85,\"atmosphere_density\":0.65,\"seed\":1011},\"Arid\":{\"coherence\":2,\"water_level\":0.03,\"atmosphere_density\":0.12,\"seed\":1021},\"Frozen\":{\"coherence\":3,\"water_level\":0.35,\"atmosphere_density\":0.3,\"seed\":1031},\"Basin\":{\"coherence\":5,\"water_level\":0.18,\"atmosphere_density\":0.45,\"seed\":1041}},\"results\":[{\"preset\":\"Coast\",\"seed\":1004,\"atmosphereDensity\":0.7,\"waterLevel\":0.71,\"dryPct\":0.7,\"humidPct\":9.3,\"saturatedPct\":2.1,\"habitablePct\":99.4,\"coldPct\":0.1,\"hotPct\":0.0,\"vegetationPct\":8.5,\"openOceanPct\":71.9,\"frozenPct\":0.9,\"coastPct\":19.8,\"inlandPct\":0.0,\"basinPct\":24.6,\"temperatureAvg\":5.6},{\"preset\":\"Ocean\",\"seed\":1011,\"atmosphereDensity\":0.65,\"waterLevel\":0.85,\"dryPct\":0.6,\"humidPct\":1.9,\"saturatedPct\":5.3,\"habitablePct\":99.9,\"coldPct\":0.0,\"hotPct\":0.0,\"vegetationPct\":0.4,\"openOceanPct\":85.9,\"frozenPct\":0.2,\"coastPct\":8.0,\"inlandPct\":0.0,\"basinPct\":25.6,\"temperatureAvg\":11.5},{\"preset\":\"Arid\",\"seed\":1021,\"atmosphereDensity\":0.12,\"waterLevel\":0.03,\"dryPct\":90.7,\"humidPct\":0.0,\"saturatedPct\":0.0,\"habitablePct\":35.8,\"coldPct\":27.2,\"hotPct\":0.0,\"vegetationPct\":0.0,\"openOceanPct\":0.0,\"frozenPct\":0.6,\"coastPct\":0.0,\"inlandPct\":2.5,\"basinPct\":25.1,\"temperatureAvg\":-2.2},{\"preset\":\"Frozen\",\"seed\":1031,\"atmosphereDensity\":0.3,\"waterLevel\":0.35,\"dryPct\":34.2,\"humidPct\":0.0,\"saturatedPct\":0.0,\"habitablePct\":36.9,\"coldPct\":66.1,\"hotPct\":0.0,\"vegetationPct\":0.0,\"openOceanPct\":15.2,\"frozenPct\":8.7,\"coastPct\":0.0,\"inlandPct\":19.7,\"basinPct\":24.7,\"temperatureAvg\":-31.9},{\"preset\":\"Basin\",\"seed\":1041,\"atmosphereDensity\":0.45,\"waterLevel\":0.18,\"dryPct\":10.9,\"humidPct\":2.1,\"saturatedPct\":0.0,\"habitablePct\":76.6,\"coldPct\":8.1,\"hotPct\":0.0,\"vegetationPct\":0.0,\"openOceanPct\":9.0,\"frozenPct\":4.1,\"coastPct\":14.8,\"inlandPct\":6.8,\"basinPct\":25.9,\"temperatureAvg\":-3.6}],\"passed\":true,\"checks\":[{\"preset\":\"Coast\",\"check\":\"coast-band-present\",\"passed\":true,\"message\":\"Coast should keep at least 5% coastal tiles, got 19.8%.\"},{\"preset\":\"Coast\",\"check\":\"vegetation-present\",\"passed\":true,\"message\":\"Coast should keep at least 5% vegetation, got 8.5%.\"},{\"preset\":\"Ocean\",\"check\":\"ocean-dominant\",\"passed\":true,\"message\":\"Ocean should have at least 45% open ocean, got 85.9%.\"},{\"preset\":\"Ocean\",\"check\":\"not-overdry\",\"passed\":true,\"message\":\"Ocean should not be dry above 25%, got 0.6%.\"},{\"preset\":\"Arid\",\"check\":\"dry-dominant\",\"passed\":true,\"message\":\"Arid should have at least 60% dry tiles, got 90.7%.\"},{\"preset\":\"Arid\",\"check\":\"limited-vegetation\",\"passed\":true,\"message\":\"Arid should keep vegetation under 15%, got 0.0%.\"},{\"preset\":\"Frozen\",\"check\":\"cold-dominant\",\"passed\":true,\"message\":\"Frozen should have at least 40% cold tiles, got 66.1%.\"},{\"preset\":\"Frozen\",\"check\":\"ice-present\",\"passed\":true,\"message\":\"Frozen should have at least 5% frozen water, got 8.7%.\"},{\"preset\":\"Basin\",\"check\":\"inland-water-present\",\"passed\":true,\"message\":\"Basin should have at least 5% inland water, got 6.8%.\"},{\"preset\":\"Basin\",\"check\":\"basin-shapes-present\",\"passed\":true,\"message\":\"Basin should keep at least 10% terrainClass Basin, got 25.9%.\"}],\"failures\":[]}"
+        }
+      ],
+      "structuredContent": {
+        "h3Resolution": 2,
+        "profiles": {
+          "Coast": {
+            "coherence": 4,
+            "water_level": 0.71,
+            "atmosphere_density": 0.7,
+            "seed": 1004
+          },
+          "Ocean": {
+            "coherence": 1,
+            "water_level": 0.85,
+            "atmosphere_density": 0.65,
+            "seed": 1011
+          },
+          "Arid": {
+            "coherence": 2,
+            "water_level": 0.03,
+            "atmosphere_density": 0.12,
+            "seed": 1021
+          },
+          "Frozen": {
+            "coherence": 3,
+            "water_level": 0.35,
+            "atmosphere_density": 0.3,
+            "seed": 1031
+          },
+          "Basin": {
+            "coherence": 5,
+            "water_level": 0.18,
+            "atmosphere_density": 0.45,
+            "seed": 1041
+          }
+        },
+        "results": [
+          {
+            "preset": "Coast",
+            "seed": 1004,
+            "atmosphereDensity": 0.7,
+            "waterLevel": 0.71,
+            "dryPct": 0.7,
+            "humidPct": 9.3,
+            "saturatedPct": 2.1,
+            "habitablePct": 99.4,
+            "coldPct": 0.1,
+            "hotPct": 0.0,
+            "vegetationPct": 8.5,
+            "openOceanPct": 71.9,
+            "frozenPct": 0.9,
+            "coastPct": 19.8,
+            "inlandPct": 0.0,
+            "basinPct": 24.6,
+            "temperatureAvg": 5.6
+          },
+          {
+            "preset": "Ocean",
+            "seed": 1011,
+            "atmosphereDensity": 0.65,
+            "waterLevel": 0.85,
+            "dryPct": 0.6,
+            "humidPct": 1.9,
+            "saturatedPct": 5.3,
+            "habitablePct": 99.9,
+            "coldPct": 0.0,
+            "hotPct": 0.0,
+            "vegetationPct": 0.4,
+            "openOceanPct": 85.9,
+            "frozenPct": 0.2,
+            "coastPct": 8.0,
+            "inlandPct": 0.0,
+            "basinPct": 25.6,
+            "temperatureAvg": 11.5
+          },
+          {
+            "preset": "Arid",
+            "seed": 1021,
+            "atmosphereDensity": 0.12,
+            "waterLevel": 0.03,
+            "dryPct": 90.7,
+            "humidPct": 0.0,
+            "saturatedPct": 0.0,
+            "habitablePct": 35.8,
+            "coldPct": 27.2,
+            "hotPct": 0.0,
+            "vegetationPct": 0.0,
+            "openOceanPct": 0.0,
+            "frozenPct": 0.6,
+            "coastPct": 0.0,
+            "inlandPct": 2.5,
+            "basinPct": 25.1,
+            "temperatureAvg": -2.2
+          },
+          {
+            "preset": "Frozen",
+            "seed": 1031,
+            "atmosphereDensity": 0.3,
+            "waterLevel": 0.35,
+            "dryPct": 34.2,
+            "humidPct": 0.0,
+            "saturatedPct": 0.0,
+            "habitablePct": 36.9,
+            "coldPct": 66.1,
+            "hotPct": 0.0,
+            "vegetationPct": 0.0,
+            "openOceanPct": 15.2,
+            "frozenPct": 8.7,
+            "coastPct": 0.0,
+            "inlandPct": 19.7,
+            "basinPct": 24.7,
+            "temperatureAvg": -31.9
+          },
+          {
+            "preset": "Basin",
+            "seed": 1041,
+            "atmosphereDensity": 0.45,
+            "waterLevel": 0.18,
+            "dryPct": 10.9,
+            "humidPct": 2.1,
+            "saturatedPct": 0.0,
+            "habitablePct": 76.6,
+            "coldPct": 8.1,
+            "hotPct": 0.0,
+            "vegetationPct": 0.0,
+            "openOceanPct": 9.0,
+            "frozenPct": 4.1,
+            "coastPct": 14.8,
+            "inlandPct": 6.8,
+            "basinPct": 25.9,
+            "temperatureAvg": -3.6
+          }
+        ],
+        "passed": true,
+        "checks": [
+          {
+            "preset": "Coast",
+            "check": "coast-band-present",
+            "passed": true,
+            "message": "Coast should keep at least 5% coastal tiles, got 19.8%."
+          },
+          {
+            "preset": "Coast",
+            "check": "vegetation-present",
+            "passed": true,
+            "message": "Coast should keep at least 5% vegetation, got 8.5%."
+          },
+          {
+            "preset": "Ocean",
+            "check": "ocean-dominant",
+            "passed": true,
+            "message": "Ocean should have at least 45% open ocean, got 85.9%."
+          },
+          {
+            "preset": "Ocean",
+            "check": "not-overdry",
+            "passed": true,
+            "message": "Ocean should not be dry above 25%, got 0.6%."
+          },
+          {
+            "preset": "Arid",
+            "check": "dry-dominant",
+            "passed": true,
+            "message": "Arid should have at least 60% dry tiles, got 90.7%."
+          },
+          {
+            "preset": "Arid",
+            "check": "limited-vegetation",
+            "passed": true,
+            "message": "Arid should keep vegetation under 15%, got 0.0%."
+          },
+          {
+            "preset": "Frozen",
+            "check": "cold-dominant",
+            "passed": true,
+            "message": "Frozen should have at least 40% cold tiles, got 66.1%."
+          },
+          {
+            "preset": "Frozen",
+            "check": "ice-present",
+            "passed": true,
+            "message": "Frozen should have at least 5% frozen water, got 8.7%."
+          },
+          {
+            "preset": "Basin",
+            "check": "inland-water-present",
+            "passed": true,
+            "message": "Basin should have at least 5% inland water, got 6.8%."
+          },
+          {
+            "preset": "Basin",
+            "check": "basin-shapes-present",
+            "passed": true,
+            "message": "Basin should keep at least 10% terrainClass Basin, got 25.9%."
+          }
+        ],
+        "failures": []
+      },
+      "isError": false
+    }
+  },
+  "qualityStructuredContent": {
+    "h3Resolution": 2,
+    "profiles": {
+      "Coast": {
+        "coherence": 4,
+        "water_level": 0.71,
+        "atmosphere_density": 0.7,
+        "seed": 1004
+      },
+      "Ocean": {
+        "coherence": 1,
+        "water_level": 0.85,
+        "atmosphere_density": 0.65,
+        "seed": 1011
+      },
+      "Arid": {
+        "coherence": 2,
+        "water_level": 0.03,
+        "atmosphere_density": 0.12,
+        "seed": 1021
+      },
+      "Frozen": {
+        "coherence": 3,
+        "water_level": 0.35,
+        "atmosphere_density": 0.3,
+        "seed": 1031
+      },
+      "Basin": {
+        "coherence": 5,
+        "water_level": 0.18,
+        "atmosphere_density": 0.45,
+        "seed": 1041
+      }
+    },
+    "results": [
+      {
+        "preset": "Coast",
+        "seed": 1004,
+        "atmosphereDensity": 0.7,
+        "waterLevel": 0.71,
+        "dryPct": 0.7,
+        "humidPct": 9.3,
+        "saturatedPct": 2.1,
+        "habitablePct": 99.4,
+        "coldPct": 0.1,
+        "hotPct": 0.0,
+        "vegetationPct": 8.5,
+        "openOceanPct": 71.9,
+        "frozenPct": 0.9,
+        "coastPct": 19.8,
+        "inlandPct": 0.0,
+        "basinPct": 24.6,
+        "temperatureAvg": 5.6
+      },
+      {
+        "preset": "Ocean",
+        "seed": 1011,
+        "atmosphereDensity": 0.65,
+        "waterLevel": 0.85,
+        "dryPct": 0.6,
+        "humidPct": 1.9,
+        "saturatedPct": 5.3,
+        "habitablePct": 99.9,
+        "coldPct": 0.0,
+        "hotPct": 0.0,
+        "vegetationPct": 0.4,
+        "openOceanPct": 85.9,
+        "frozenPct": 0.2,
+        "coastPct": 8.0,
+        "inlandPct": 0.0,
+        "basinPct": 25.6,
+        "temperatureAvg": 11.5
+      },
+      {
+        "preset": "Arid",
+        "seed": 1021,
+        "atmosphereDensity": 0.12,
+        "waterLevel": 0.03,
+        "dryPct": 90.7,
+        "humidPct": 0.0,
+        "saturatedPct": 0.0,
+        "habitablePct": 35.8,
+        "coldPct": 27.2,
+        "hotPct": 0.0,
+        "vegetationPct": 0.0,
+        "openOceanPct": 0.0,
+        "frozenPct": 0.6,
+        "coastPct": 0.0,
+        "inlandPct": 2.5,
+        "basinPct": 25.1,
+        "temperatureAvg": -2.2
+      },
+      {
+        "preset": "Frozen",
+        "seed": 1031,
+        "atmosphereDensity": 0.3,
+        "waterLevel": 0.35,
+        "dryPct": 34.2,
+        "humidPct": 0.0,
+        "saturatedPct": 0.0,
+        "habitablePct": 36.9,
+        "coldPct": 66.1,
+        "hotPct": 0.0,
+        "vegetationPct": 0.0,
+        "openOceanPct": 15.2,
+        "frozenPct": 8.7,
+        "coastPct": 0.0,
+        "inlandPct": 19.7,
+        "basinPct": 24.7,
+        "temperatureAvg": -31.9
+      },
+      {
+        "preset": "Basin",
+        "seed": 1041,
+        "atmosphereDensity": 0.45,
+        "waterLevel": 0.18,
+        "dryPct": 10.9,
+        "humidPct": 2.1,
+        "saturatedPct": 0.0,
+        "habitablePct": 76.6,
+        "coldPct": 8.1,
+        "hotPct": 0.0,
+        "vegetationPct": 0.0,
+        "openOceanPct": 9.0,
+        "frozenPct": 4.1,
+        "coastPct": 14.8,
+        "inlandPct": 6.8,
+        "basinPct": 25.9,
+        "temperatureAvg": -3.6
+      }
+    ],
+    "passed": true,
+    "checks": [
+      {
+        "preset": "Coast",
+        "check": "coast-band-present",
+        "passed": true,
+        "message": "Coast should keep at least 5% coastal tiles, got 19.8%."
+      },
+      {
+        "preset": "Coast",
+        "check": "vegetation-present",
+        "passed": true,
+        "message": "Coast should keep at least 5% vegetation, got 8.5%."
+      },
+      {
+        "preset": "Ocean",
+        "check": "ocean-dominant",
+        "passed": true,
+        "message": "Ocean should have at least 45% open ocean, got 85.9%."
+      },
+      {
+        "preset": "Ocean",
+        "check": "not-overdry",
+        "passed": true,
+        "message": "Ocean should not be dry above 25%, got 0.6%."
+      },
+      {
+        "preset": "Arid",
+        "check": "dry-dominant",
+        "passed": true,
+        "message": "Arid should have at least 60% dry tiles, got 90.7%."
+      },
+      {
+        "preset": "Arid",
+        "check": "limited-vegetation",
+        "passed": true,
+        "message": "Arid should keep vegetation under 15%, got 0.0%."
+      },
+      {
+        "preset": "Frozen",
+        "check": "cold-dominant",
+        "passed": true,
+        "message": "Frozen should have at least 40% cold tiles, got 66.1%."
+      },
+      {
+        "preset": "Frozen",
+        "check": "ice-present",
+        "passed": true,
+        "message": "Frozen should have at least 5% frozen water, got 8.7%."
+      },
+      {
+        "preset": "Basin",
+        "check": "inland-water-present",
+        "passed": true,
+        "message": "Basin should have at least 5% inland water, got 6.8%."
+      },
+      {
+        "preset": "Basin",
+        "check": "basin-shapes-present",
+        "passed": true,
+        "message": "Basin should keep at least 10% terrainClass Basin, got 25.9%."
+      }
+    ],
+    "failures": []
+  },
+  "compareToolCall": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"profiles\":[\"Coast\",\"Ocean\"],\"h3Resolution\":2,\"resultA\":{\"preset\":\"Coast\",\"seed\":1004,\"atmosphereDensity\":0.7,\"waterLevel\":0.71,\"dryPct\":0.7,\"humidPct\":9.3,\"saturatedPct\":2.1,\"habitablePct\":99.4,\"coldPct\":0.1,\"hotPct\":0.0,\"vegetationPct\":8.5,\"openOceanPct\":71.9,\"frozenPct\":0.9,\"coastPct\":19.8,\"inlandPct\":0.0,\"basinPct\":24.6,\"temperatureAvg\":5.6},\"resultB\":{\"preset\":\"Ocean\",\"seed\":1011,\"atmosphereDensity\":0.65,\"waterLevel\":0.85,\"dryPct\":0.6,\"humidPct\":1.9,\"saturatedPct\":5.3,\"habitablePct\":99.9,\"coldPct\":0.0,\"hotPct\":0.0,\"vegetationPct\":0.4,\"openOceanPct\":85.9,\"frozenPct\":0.2,\"coastPct\":8.0,\"inlandPct\":0.0,\"basinPct\":25.6,\"temperatureAvg\":11.5},\"delta\":[{\"field\":\"dryPct\",\"Coast\":0.7,\"Ocean\":0.6,\"delta\":-0.1},{\"field\":\"humidPct\",\"Coast\":9.3,\"Ocean\":1.9,\"delta\":-7.4},{\"field\":\"saturatedPct\",\"Coast\":2.1,\"Ocean\":5.3,\"delta\":3.2},{\"field\":\"habitablePct\",\"Coast\":99.4,\"Ocean\":99.9,\"delta\":0.5},{\"field\":\"coldPct\",\"Coast\":0.1,\"Ocean\":0.0,\"delta\":-0.1},{\"field\":\"hotPct\",\"Coast\":0.0,\"Ocean\":0.0,\"delta\":0.0},{\"field\":\"vegetationPct\",\"Coast\":8.5,\"Ocean\":0.4,\"delta\":-8.1},{\"field\":\"openOceanPct\",\"Coast\":71.9,\"Ocean\":85.9,\"delta\":14.0},{\"field\":\"frozenPct\",\"Coast\":0.9,\"Ocean\":0.2,\"delta\":-0.7},{\"field\":\"coastPct\",\"Coast\":19.8,\"Ocean\":8.0,\"delta\":-11.8},{\"field\":\"inlandPct\",\"Coast\":0.0,\"Ocean\":0.0,\"delta\":0.0},{\"field\":\"basinPct\",\"Coast\":24.6,\"Ocean\":25.6,\"delta\":1.0},{\"field\":\"temperatureAvg\",\"Coast\":5.6,\"Ocean\":11.5,\"delta\":5.9}]}"
+        }
+      ],
+      "structuredContent": {
+        "profiles": [
+          "Coast",
+          "Ocean"
+        ],
+        "h3Resolution": 2,
+        "resultA": {
+          "preset": "Coast",
+          "seed": 1004,
+          "atmosphereDensity": 0.7,
+          "waterLevel": 0.71,
+          "dryPct": 0.7,
+          "humidPct": 9.3,
+          "saturatedPct": 2.1,
+          "habitablePct": 99.4,
+          "coldPct": 0.1,
+          "hotPct": 0.0,
+          "vegetationPct": 8.5,
+          "openOceanPct": 71.9,
+          "frozenPct": 0.9,
+          "coastPct": 19.8,
+          "inlandPct": 0.0,
+          "basinPct": 24.6,
+          "temperatureAvg": 5.6
+        },
+        "resultB": {
+          "preset": "Ocean",
+          "seed": 1011,
+          "atmosphereDensity": 0.65,
+          "waterLevel": 0.85,
+          "dryPct": 0.6,
+          "humidPct": 1.9,
+          "saturatedPct": 5.3,
+          "habitablePct": 99.9,
+          "coldPct": 0.0,
+          "hotPct": 0.0,
+          "vegetationPct": 0.4,
+          "openOceanPct": 85.9,
+          "frozenPct": 0.2,
+          "coastPct": 8.0,
+          "inlandPct": 0.0,
+          "basinPct": 25.6,
+          "temperatureAvg": 11.5
+        },
+        "delta": [
+          {
+            "field": "dryPct",
+            "Coast": 0.7,
+            "Ocean": 0.6,
+            "delta": -0.1
+          },
+          {
+            "field": "humidPct",
+            "Coast": 9.3,
+            "Ocean": 1.9,
+            "delta": -7.4
+          },
+          {
+            "field": "saturatedPct",
+            "Coast": 2.1,
+            "Ocean": 5.3,
+            "delta": 3.2
+          },
+          {
+            "field": "habitablePct",
+            "Coast": 99.4,
+            "Ocean": 99.9,
+            "delta": 0.5
+          },
+          {
+            "field": "coldPct",
+            "Coast": 0.1,
+            "Ocean": 0.0,
+            "delta": -0.1
+          },
+          {
+            "field": "hotPct",
+            "Coast": 0.0,
+            "Ocean": 0.0,
+            "delta": 0.0
+          },
+          {
+            "field": "vegetationPct",
+            "Coast": 8.5,
+            "Ocean": 0.4,
+            "delta": -8.1
+          },
+          {
+            "field": "openOceanPct",
+            "Coast": 71.9,
+            "Ocean": 85.9,
+            "delta": 14.0
+          },
+          {
+            "field": "frozenPct",
+            "Coast": 0.9,
+            "Ocean": 0.2,
+            "delta": -0.7
+          },
+          {
+            "field": "coastPct",
+            "Coast": 19.8,
+            "Ocean": 8.0,
+            "delta": -11.8
+          },
+          {
+            "field": "inlandPct",
+            "Coast": 0.0,
+            "Ocean": 0.0,
+            "delta": 0.0
+          },
+          {
+            "field": "basinPct",
+            "Coast": 24.6,
+            "Ocean": 25.6,
+            "delta": 1.0
+          },
+          {
+            "field": "temperatureAvg",
+            "Coast": 5.6,
+            "Ocean": 11.5,
+            "delta": 5.9
+          }
+        ]
+      },
+      "isError": false
+    }
+  },
+  "compareStructuredContent": {
+    "profiles": [
+      "Coast",
+      "Ocean"
+    ],
+    "h3Resolution": 2,
+    "resultA": {
+      "preset": "Coast",
+      "seed": 1004,
+      "atmosphereDensity": 0.7,
+      "waterLevel": 0.71,
+      "dryPct": 0.7,
+      "humidPct": 9.3,
+      "saturatedPct": 2.1,
+      "habitablePct": 99.4,
+      "coldPct": 0.1,
+      "hotPct": 0.0,
+      "vegetationPct": 8.5,
+      "openOceanPct": 71.9,
+      "frozenPct": 0.9,
+      "coastPct": 19.8,
+      "inlandPct": 0.0,
+      "basinPct": 24.6,
+      "temperatureAvg": 5.6
+    },
+    "resultB": {
+      "preset": "Ocean",
+      "seed": 1011,
+      "atmosphereDensity": 0.65,
+      "waterLevel": 0.85,
+      "dryPct": 0.6,
+      "humidPct": 1.9,
+      "saturatedPct": 5.3,
+      "habitablePct": 99.9,
+      "coldPct": 0.0,
+      "hotPct": 0.0,
+      "vegetationPct": 0.4,
+      "openOceanPct": 85.9,
+      "frozenPct": 0.2,
+      "coastPct": 8.0,
+      "inlandPct": 0.0,
+      "basinPct": 25.6,
+      "temperatureAvg": 11.5
+    },
+    "delta": [
+      {
+        "field": "dryPct",
+        "Coast": 0.7,
+        "Ocean": 0.6,
+        "delta": -0.1
+      },
+      {
+        "field": "humidPct",
+        "Coast": 9.3,
+        "Ocean": 1.9,
+        "delta": -7.4
+      },
+      {
+        "field": "saturatedPct",
+        "Coast": 2.1,
+        "Ocean": 5.3,
+        "delta": 3.2
+      },
+      {
+        "field": "habitablePct",
+        "Coast": 99.4,
+        "Ocean": 99.9,
+        "delta": 0.5
+      },
+      {
+        "field": "coldPct",
+        "Coast": 0.1,
+        "Ocean": 0.0,
+        "delta": -0.1
+      },
+      {
+        "field": "hotPct",
+        "Coast": 0.0,
+        "Ocean": 0.0,
+        "delta": 0.0
+      },
+      {
+        "field": "vegetationPct",
+        "Coast": 8.5,
+        "Ocean": 0.4,
+        "delta": -8.1
+      },
+      {
+        "field": "openOceanPct",
+        "Coast": 71.9,
+        "Ocean": 85.9,
+        "delta": 14.0
+      },
+      {
+        "field": "frozenPct",
+        "Coast": 0.9,
+        "Ocean": 0.2,
+        "delta": -0.7
+      },
+      {
+        "field": "coastPct",
+        "Coast": 19.8,
+        "Ocean": 8.0,
+        "delta": -11.8
+      },
+      {
+        "field": "inlandPct",
+        "Coast": 0.0,
+        "Ocean": 0.0,
+        "delta": 0.0
+      },
+      {
+        "field": "basinPct",
+        "Coast": 24.6,
+        "Ocean": 25.6,
+        "delta": 1.0
+      },
+      {
+        "field": "temperatureAvg",
+        "Coast": 5.6,
+        "Ocean": 11.5,
+        "delta": 5.9
+      }
+    ]
+  },
+  "ok": true
+}

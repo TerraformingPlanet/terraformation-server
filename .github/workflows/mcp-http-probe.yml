@@ -1,0 +1,47 @@
+name: mcp-http-probe
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  mcp-streamable-http-probe:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare artifact directory
+        run: mkdir -p Artifacts/ci Artifacts/ci/logs
+
+      - name: Build and start dedicated stack with MCP
+        run: docker compose up -d --build postgres terraformation-dedicated-server terraformation-mcp
+
+      - name: Probe MCP initialize and run_generation_quality_suite
+        run: python Mcp/ci_mcp_http_probe.py --base-url http://127.0.0.1:8000/mcp --output Artifacts/ci/mcp-http-probe.json
+
+      - name: Capture MCP logs on failure
+        if: failure()
+        run: docker compose logs terraformation-mcp > Artifacts/ci/logs/mcp.log
+
+      - name: Capture dedicated server logs on failure
+        if: failure()
+        run: docker compose logs terraformation-dedicated-server > Artifacts/ci/logs/dedicated-server.log
+
+      - name: Upload MCP probe artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-http-probe-results
+          path: |
+            Artifacts/ci/mcp-http-probe.json
+            Artifacts/ci/logs/*.log
+          if-no-files-found: warn
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v

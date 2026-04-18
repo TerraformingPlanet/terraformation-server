@@ -1,0 +1,163 @@
+{
+  "checks": [
+    {
+      "check": "dry-dominant",
+      "message": "Arid should have at least 60% dry tiles, got 90.7%.",
+      "passed": true,
+      "preset": "Arid"
+    },
+    {
+      "check": "limited-vegetation",
+      "message": "Arid should keep vegetation under 15%, got 0.0%.",
+      "passed": true,
+      "preset": "Arid"
+    },
+    {
+      "check": "basin-shapes-present",
+      "message": "Basin should keep at least 10% terrainClass Basin, got 25.9%.",
+      "passed": true,
+      "preset": "Basin"
+    },
+    {
+      "check": "inland-water-present",
+      "message": "Basin should have at least 5% inland water, got 6.8%.",
+      "passed": true,
+      "preset": "Basin"
+    },
+    {
+      "check": "coast-band-present",
+      "message": "Coast should keep at least 5% coastal tiles, got 19.8%.",
+      "passed": true,
+      "preset": "Coast"
+    },
+    {
+      "check": "vegetation-present",
+      "message": "Coast should keep at least 5% vegetation, got 8.5%.",
+      "passed": true,
+      "preset": "Coast"
+    },
+    {
+      "check": "cold-dominant",
+      "message": "Frozen should have at least 40% cold tiles, got 66.1%.",
+      "passed": true,
+      "preset": "Frozen"
+    },
+    {
+      "check": "ice-present",
+      "message": "Frozen should have at least 5% frozen water, got 8.7%.",
+      "passed": true,
+      "preset": "Frozen"
+    },
+    {
+      "check": "not-overdry",
+      "message": "Ocean should not be dry above 25%, got 0.6%.",
+      "passed": true,
+      "preset": "Ocean"
+    },
+    {
+      "check": "ocean-dominant",
+      "message": "Ocean should have at least 45% open ocean, got 85.9%.",
+      "passed": true,
+      "preset": "Ocean"
+    }
+  ],
+  "h3Resolution": 2,
+  "ok": true,
+  "results": [
+    {
+      "atmosphereDensity": 0.12,
+      "basinPct": 25.1,
+      "coastPct": 0.0,
+      "coldPct": 27.2,
+      "dryPct": 90.7,
+      "frozenPct": 0.6,
+      "habitablePct": 35.8,
+      "hotPct": 0.0,
+      "humidPct": 0.0,
+      "inlandPct": 2.5,
+      "openOceanPct": 0.0,
+      "preset": "Arid",
+      "saturatedPct": 0.0,
+      "seed": 1021,
+      "temperatureAvg": -2.2,
+      "vegetationPct": 0.0,
+      "waterLevel": 0.03
+    },
+    {
+      "atmosphereDensity": 0.45,
+      "basinPct": 25.9,
+      "coastPct": 14.8,
+      "coldPct": 8.1,
+      "dryPct": 10.9,
+      "frozenPct": 4.1,
+      "habitablePct": 76.6,
+      "hotPct": 0.0,
+      "humidPct": 2.1,
+      "inlandPct": 6.8,
+      "openOceanPct": 9.0,
+      "preset": "Basin",
+      "saturatedPct": 0.0,
+      "seed": 1041,
+      "temperatureAvg": -3.6,
+      "vegetationPct": 0.0,
+      "waterLevel": 0.18
+    },
+    {
+      "atmosphereDensity": 0.7,
+      "basinPct": 24.6,
+      "coastPct": 19.8,
+      "coldPct": 0.1,
+      "dryPct": 0.7,
+      "frozenPct": 0.9,
+      "habitablePct": 99.4,
+      "hotPct": 0.0,
+      "humidPct": 9.3,
+      "inlandPct": 0.0,
+      "openOceanPct": 71.9,
+      "preset": "Coast",
+      "saturatedPct": 2.1,
+      "seed": 1004,
+      "temperatureAvg": 5.6,
+      "vegetationPct": 8.5,
+      "waterLevel": 0.71
+    },
+    {
+      "atmosphereDensity": 0.3,
+      "basinPct": 24.7,
+      "coastPct": 0.0,
+      "coldPct": 66.1,
+      "dryPct": 34.2,
+      "frozenPct": 8.7,
+      "habitablePct": 36.9,
+      "hotPct": 0.0,
+      "humidPct": 0.0,
+      "inlandPct": 19.7,
+      "openOceanPct": 15.2,
+      "preset": "Frozen",
+      "saturatedPct": 0.0,
+      "seed": 1031,
+      "temperatureAvg": -31.9,
+      "vegetationPct": 0.0,
+      "waterLevel": 0.35
+    },
+    {
+      "atmosphereDensity": 0.65,
+      "basinPct": 25.6,
+      "coastPct": 8.0,
+      "coldPct": 0.0,
+      "dryPct": 0.6,
+      "frozenPct": 0.2,
+      "habitablePct": 99.9,
+      "hotPct": 0.0,
+      "humidPct": 1.9,
+      "inlandPct": 0.0,
+      "openOceanPct": 85.9,
+      "preset": "Ocean",
+      "saturatedPct": 5.3,
+      "seed": 1011,
+      "temperatureAvg": 11.5,
+      "vegetationPct": 0.4,
+      "waterLevel": 0.85
+    }
+  ]
+}

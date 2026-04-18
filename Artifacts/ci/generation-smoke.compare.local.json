@@ -1,0 +1,463 @@
+{
+  "baseline": "e:\\terraformation\\Artifacts\\ci\\generation-smoke.local.json",
+  "baselineOk": true,
+  "candidate": "e:\\terraformation\\Artifacts\\ci\\generation-smoke.local.json",
+  "candidateOk": true,
+  "deltas": [
+    {
+      "baseline": 90.7,
+      "candidate": 90.7,
+      "delta": 0.0,
+      "field": "dryPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "humidPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "saturatedPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 35.8,
+      "candidate": 35.8,
+      "delta": 0.0,
+      "field": "habitablePct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 27.2,
+      "candidate": 27.2,
+      "delta": 0.0,
+      "field": "coldPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "hotPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "vegetationPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "openOceanPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 0.6,
+      "candidate": 0.6,
+      "delta": 0.0,
+      "field": "frozenPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "coastPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 2.5,
+      "candidate": 2.5,
+      "delta": 0.0,
+      "field": "inlandPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 25.1,
+      "candidate": 25.1,
+      "delta": 0.0,
+      "field": "basinPct",
+      "preset": "Arid"
+    },
+    {
+      "baseline": -2.2,
+      "candidate": -2.2,
+      "delta": 0.0,
+      "field": "temperatureAvg",
+      "preset": "Arid"
+    },
+    {
+      "baseline": 10.9,
+      "candidate": 10.9,
+      "delta": 0.0,
+      "field": "dryPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 2.1,
+      "candidate": 2.1,
+      "delta": 0.0,
+      "field": "humidPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "saturatedPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 76.6,
+      "candidate": 76.6,
+      "delta": 0.0,
+      "field": "habitablePct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 8.1,
+      "candidate": 8.1,
+      "delta": 0.0,
+      "field": "coldPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "hotPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "vegetationPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 9.0,
+      "candidate": 9.0,
+      "delta": 0.0,
+      "field": "openOceanPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 4.1,
+      "candidate": 4.1,
+      "delta": 0.0,
+      "field": "frozenPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 14.8,
+      "candidate": 14.8,
+      "delta": 0.0,
+      "field": "coastPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 6.8,
+      "candidate": 6.8,
+      "delta": 0.0,
+      "field": "inlandPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 25.9,
+      "candidate": 25.9,
+      "delta": 0.0,
+      "field": "basinPct",
+      "preset": "Basin"
+    },
+    {
+      "baseline": -3.6,
+      "candidate": -3.6,
+      "delta": 0.0,
+      "field": "temperatureAvg",
+      "preset": "Basin"
+    },
+    {
+      "baseline": 0.7,
+      "candidate": 0.7,
+      "delta": 0.0,
+      "field": "dryPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 9.3,
+      "candidate": 9.3,
+      "delta": 0.0,
+      "field": "humidPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 2.1,
+      "candidate": 2.1,
+      "delta": 0.0,
+      "field": "saturatedPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 99.4,
+      "candidate": 99.4,
+      "delta": 0.0,
+      "field": "habitablePct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 0.1,
+      "candidate": 0.1,
+      "delta": 0.0,
+      "field": "coldPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "hotPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 8.5,
+      "candidate": 8.5,
+      "delta": 0.0,
+      "field": "vegetationPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 71.9,
+      "candidate": 71.9,
+      "delta": 0.0,
+      "field": "openOceanPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 0.9,
+      "candidate": 0.9,
+      "delta": 0.0,
+      "field": "frozenPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 19.8,
+      "candidate": 19.8,
+      "delta": 0.0,
+      "field": "coastPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "inlandPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 24.6,
+      "candidate": 24.6,
+      "delta": 0.0,
+      "field": "basinPct",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 5.6,
+      "candidate": 5.6,
+      "delta": 0.0,
+      "field": "temperatureAvg",
+      "preset": "Coast"
+    },
+    {
+      "baseline": 34.2,
+      "candidate": 34.2,
+      "delta": 0.0,
+      "field": "dryPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "humidPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "saturatedPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 36.9,
+      "candidate": 36.9,
+      "delta": 0.0,
+      "field": "habitablePct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 66.1,
+      "candidate": 66.1,
+      "delta": 0.0,
+      "field": "coldPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "hotPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "vegetationPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 15.2,
+      "candidate": 15.2,
+      "delta": 0.0,
+      "field": "openOceanPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 8.7,
+      "candidate": 8.7,
+      "delta": 0.0,
+      "field": "frozenPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "coastPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 19.7,
+      "candidate": 19.7,
+      "delta": 0.0,
+      "field": "inlandPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 24.7,
+      "candidate": 24.7,
+      "delta": 0.0,
+      "field": "basinPct",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": -31.9,
+      "candidate": -31.9,
+      "delta": 0.0,
+      "field": "temperatureAvg",
+      "preset": "Frozen"
+    },
+    {
+      "baseline": 0.6,
+      "candidate": 0.6,
+      "delta": 0.0,
+      "field": "dryPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 1.9,
+      "candidate": 1.9,
+      "delta": 0.0,
+      "field": "humidPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 5.3,
+      "candidate": 5.3,
+      "delta": 0.0,
+      "field": "saturatedPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 99.9,
+      "candidate": 99.9,
+      "delta": 0.0,
+      "field": "habitablePct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "coldPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "hotPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 0.4,
+      "candidate": 0.4,
+      "delta": 0.0,
+      "field": "vegetationPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 85.9,
+      "candidate": 85.9,
+      "delta": 0.0,
+      "field": "openOceanPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 0.2,
+      "candidate": 0.2,
+      "delta": 0.0,
+      "field": "frozenPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 8.0,
+      "candidate": 8.0,
+      "delta": 0.0,
+      "field": "coastPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 0.0,
+      "candidate": 0.0,
+      "delta": 0.0,
+      "field": "inlandPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 25.6,
+      "candidate": 25.6,
+      "delta": 0.0,
+      "field": "basinPct",
+      "preset": "Ocean"
+    },
+    {
+      "baseline": 11.5,
+      "candidate": 11.5,
+      "delta": 0.0,
+      "field": "temperatureAvg",
+      "preset": "Ocean"
+    }
+  ]
+}

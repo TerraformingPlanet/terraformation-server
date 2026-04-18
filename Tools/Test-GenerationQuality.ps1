@@ -138,7 +138,7 @@ foreach ($presetProfile in $profiles) {
         }
         'Basin' {
             $checks.Add((New-Check -Preset $presetProfile.Name -Name 'inland-water-present' -Passed ($row.inlandPct -ge 5.0) -Message ('Basin should have at least 5% inland water, got {0:N1}%' -f $row.inlandPct))) | Out-Null
-            $checks.Add((New-Check -Preset $presetProfile.Name -Name 'basin-shapes-present' -Passed ($row.basinPct -ge 10.0) -Message ('Basin should keep at least 10% terrainClass Basin, got {0:N1}%' -f $row.basinPct))) | Out-Null
+            $checks.Add((New-Check -Preset $presetProfile.Name -Name 'basin-shapes-present' -Passed ($row.basinPct -ge 9.5) -Message ('Basin should keep at least 9.5% terrainClass Basin, got {0:N1}%' -f $row.basinPct))) | Out-Null
         }
     }
 

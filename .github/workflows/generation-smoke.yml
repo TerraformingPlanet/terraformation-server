@@ -1,0 +1,60 @@
+name: generation-smoke
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  dedicated-server-generation-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare artifact directory
+        run: mkdir -p Artifacts/ci Artifacts/ci/logs
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and start dedicated server stack
+        run: docker compose up -d --build postgres terraformation-dedicated-server
+
+      - name: Run generation smoke profile
+        run: docker compose --profile smoke run --rm terraformation-generation-smoke > Artifacts/ci/generation-smoke.json
+
+      - name: Normalize and diff smoke output against itself
+        run: |
+          python DedicatedServer/app/compare_generation_runs.py \
+            DedicatedServer/config/generation-smoke-baseline.v8.json \
+            Artifacts/ci/generation-smoke.json \
+            --thresholds DedicatedServer/config/generation-smoke-thresholds.v8.json \
+            --output Artifacts/ci/generation-smoke.diff.json
+
+      - name: Capture dedicated server logs on failure
+        if: failure()
+        run: docker compose logs terraformation-dedicated-server > Artifacts/ci/logs/dedicated-server.log
+
+      - name: Capture postgres logs on failure
+        if: failure()
+        run: docker compose logs postgres > Artifacts/ci/logs/postgres.log
+
+      - name: Upload generation smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generation-smoke-results
+          path: |
+            Artifacts/ci/generation-smoke.json
+            Artifacts/ci/generation-smoke.normalized.json
+            Artifacts/ci/generation-smoke.diff.json
+            Artifacts/ci/logs/*.log
+          if-no-files-found: warn
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v
