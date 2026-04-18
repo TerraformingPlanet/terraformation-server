@@ -1,22 +1,27 @@
 from __future__ import annotations
 
+import json
 import math
 import threading
 from uuid import uuid4
 
-from .logic import apply_modifier_to_cell, apply_region_progress, can_apply_action, compute_goldberg_divisions, generate_interior_cells, generate_spherical_tiles, process_pending_actions, queue_action, summarize_region_cells, summarize_spherical_tiles, terraform_action_definitions, _goldberg_grid_dims
+from .logic import apply_modifier_to_cell, apply_region_progress, can_apply_action, compute_atmospheric_state, compute_body_position_at_tick, _body_h3_resolution, generate_interior_cells, generate_spherical_tiles, GENERATION_VERSION, process_pending_actions, queue_action, summarize_region_cells, summarize_spherical_tiles, terraform_action_definitions
 from .models import (
     AnyBodyState,
+    AtmosphericState,
     BodyBase,
     BodyType,
     DebugCoherenceOverride,
+    GalacticPosition,
     HexGridDebugSummary,
     HexStateModifier,
     InteriorZoneState,
+    OrbitalParameters,
     PendingTerraformAction,
     ProjectionDebugSummary,
     ProjectionState,
     RegionState,
+    RouteStatus,
     SimulationCellAddress,
     SimulationCellState,
     SimulationCoherenceState,
@@ -26,16 +31,22 @@ from .models import (
     SimulationSoilState,
     SimulationVector2State,
     SimulationWeatherState,
+    SolarSystemState,
+    SpaceTravel,
     SphericalBodyState,
+    StellarRoute,
     TerraformAction,
     TerraformActionDefinition,
     TerrainClass,
     TerrainType,
+    TICKS_PER_LIGHT_YEAR,
+    TravelStatus,
     WaterClassification,
     WorldLayer,
     WorldState,
     ZoneType,
 )
+from .persistence import CellMutation, InMemoryRepository, SavedState, StateRepository, TileMutation
 
 
 def _clamp01(value: float) -> float:
@@ -43,7 +54,12 @@ def _clamp01(value: float) -> float:
 
 
 class InMemorySimulationRuntime:
-    def __init__(self, tick_interval_seconds: float = 5.0, auto_resume: bool = False) -> None:
+    def __init__(
+        self,
+        tick_interval_seconds: float = 5.0,
+        auto_resume: bool = False,
+        repository: StateRepository | None = None,
+    ) -> None:
         self._tick_interval_seconds = max(0.1, tick_interval_seconds)
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -56,7 +72,23 @@ class InMemorySimulationRuntime:
         # Body registry: body_id → SphericalBodyState | InteriorZoneState
         self._bodies: dict[str, AnyBodyState] = {}
         self._active_body_id: str = ""
-        self.bootstrap_demo()
+        # Galaxy registry
+        self._solar_systems: dict[str, SolarSystemState] = {}
+        self._stellar_routes: dict[str, StellarRoute] = {}
+        self._space_travels: dict[str, SpaceTravel] = {}
+        self._repo: StateRepository = repository or InMemoryRepository()
+        # LOD tile cache: (body_id, h3_resolution) → list[GoldbergTileState] (never persisted)
+        self._lod_tile_cache: dict = {}
+        # Atmospheric event tracking (Phase 3 — SDK climate events)
+        self._last_habitability_bucket: int = -1   # 0=<25% 1=<50% 2=<75% 3=100%
+        self._atmosphere_formed_fired: bool = False
+        self._prev_avg_temp: float = 0.0
+        self._temp_stable_ticks: int = 0
+        saved = self._repo.load()
+        if saved.has_data:
+            self._hydrate_from_saved(saved)
+        else:
+            self.bootstrap_demo()
         self._thread = threading.Thread(target=self._tick_loop, name="SimulationRuntime", daemon=True)
         self._thread.start()
 
@@ -71,6 +103,7 @@ class InMemorySimulationRuntime:
                 "status": "ok",
                 "tickCount": self._tick_count,
                 "tickRunning": self._tick_running,
+                "tickIntervalSeconds": self._tick_interval_seconds,
                 "activePlanetName": self._world_state.activePlanetName,
                 "hasProjection": self._world_state.hasProjection,
                 "hasRegion": self._world_state.hasRegion,
@@ -113,7 +146,307 @@ class InMemorySimulationRuntime:
                 hasRegion=True,
                 coordinates=region.coordinates,
             )
+            self._repo.save_world_state(self._world_state, self._tick_interval_seconds)
+            for body in self._bodies.values():
+                self._repo.save_body(body)
+            self._bootstrap_galaxy_locked()
             return self._world_state.model_copy(deep=True)
+
+    def bootstrap_sol(self) -> WorldState:
+        """Bootstrap the Sol solar system as the player's home system.
+        Wipes all existing bodies and galaxy state first.
+        Earth is the active planet. All 8 planets + key moons are registered.
+        Kepler-442 is created as a hidden distant system.
+        """
+        with self._lock:
+            # ── Wipe existing state ───────────────────────────────────────
+            for bid in list(self._bodies):
+                self._repo.delete_tile_mutations(bid)
+                self._repo.delete_body(bid)
+            self._bodies = {}
+            self._active_body_id = ""
+            for sid in list(self._solar_systems):
+                self._repo.delete_solar_system(sid)
+            for rid in list(self._stellar_routes):
+                self._repo.delete_stellar_route(rid)
+            for tid in list(self._space_travels):
+                self._repo.delete_space_travel(tid)
+            self._solar_systems = {}
+            self._stellar_routes = {}
+            self._space_travels = {}
+
+            # ── Bootstrap Sol ───────────────────────────────────────
+            earth_name = "Earth"
+            earth_water = 0.71
+            earth_override = DebugCoherenceOverride.Coast
+            earth_seed = 1004
+
+            projection = self._build_projection_state(earth_name, earth_override, earth_water)
+            region = self._build_region_state(
+                earth_name, SimulationCoordinates(latitude=0.47, longitude=0.18), self._tick_count
+            )
+            self._world_state = WorldState(
+                isValid=True,
+                tickCount=self._tick_count,
+                tickRunning=self._tick_running,
+                activePlanetName=earth_name,
+                projectionOverride=earth_override,
+                projectionWaterLevel=earth_water,
+                hasProjection=True,
+                projection=projection,
+                hasRegion=True,
+                region=region,
+            )
+            earth = self._register_spherical_body_locked(
+                body_id=None,
+                name=earth_name,
+                body_type=BodyType.Planet,
+                radius_km=6371.0,
+                coherence_override=earth_override,
+                water_level=earth_water,
+                seed=earth_seed,
+                atmosphere_density=0.70,
+            )
+            self._last_event = SimulationEvent(
+                eventId=str(uuid4()),
+                type=SimulationEventType.ProjectionLoaded,
+                tickCount=self._tick_count,
+                message="Sol system bootstrapped — playing as Earth colonist",
+                hasRegion=True,
+                coordinates=region.coordinates,
+            )
+            self._repo.save_world_state(self._world_state, self._tick_interval_seconds)
+            for body in self._bodies.values():
+                self._repo.save_body(body)
+            self._bootstrap_sol_galaxy_locked(earth)
+            return self._world_state.model_copy(deep=True)
+
+    def _bootstrap_sol_galaxy_locked(self, active_earth: SphericalBodyState) -> None:
+        """Create the Sol system (home) and Kepler-442 (hidden target) and link them.
+        Lock must be held.
+        """
+
+        def _make_system(name: str, x: float, y: float, z: float) -> SolarSystemState:
+            sid = str(uuid4())
+            system = SolarSystemState(
+                systemId=sid, name=name,
+                position=GalacticPosition(x=x, y=y, z=z),
+            )
+            self._solar_systems[sid] = system
+            self._repo.save_solar_system(system)
+            return system
+
+        def _add_star(system: SolarSystemState, name: str, radius_km: float,
+                      spectral: str, seed: int) -> SphericalBodyState:
+            body = self._register_spherical_body_locked(
+                body_id=None, name=name, body_type=BodyType.Star,
+                radius_km=radius_km, coherence_override=DebugCoherenceOverride.None_,
+                water_level=0.0, seed=seed,
+            )
+            body.spectralType = spectral
+            body.systemId = system.systemId
+            if system.rootBodyId == "":
+                system.rootBodyId = body.bodyId
+            system.bodyIds.append(body.bodyId)
+            self._repo.save_body(body)
+            self._repo.save_solar_system(system)
+            return body
+
+        def _add_body(
+            system: SolarSystemState,
+            name: str,
+            body_type: BodyType,
+            radius_km: float,
+            water_level: float,
+            seed: int,
+            semi_major_au: float,
+            period_ticks: int,
+            parent_id: str | None = None,
+            override: DebugCoherenceOverride | None = None,
+            atmosphere_density: float | None = None,
+        ) -> SphericalBodyState:
+            if override is None:
+                if water_level > 0.5:
+                    override = DebugCoherenceOverride.Ocean
+                elif water_level < 0.05:
+                    override = DebugCoherenceOverride.Arid
+                else:
+                    override = DebugCoherenceOverride.Coast
+            body = self._register_spherical_body_locked(
+                body_id=None, name=name, body_type=body_type,
+                radius_km=radius_km, coherence_override=override,
+                water_level=water_level, seed=seed, parent_id=parent_id,
+                atmosphere_density=atmosphere_density,
+            )
+            body.systemId = system.systemId
+            body.orbitalParams = OrbitalParameters(
+                semiMajorAxisAU=semi_major_au, eccentricity=0.0, periodTicks=period_ticks,
+            )
+            system.bodyIds.append(body.bodyId)
+            self._repo.save_body(body)
+            self._repo.save_solar_system(system)
+            return body
+
+        # ── Système Sol (home) ────────────────────────────────────────────────
+        sol = _make_system("Sol", 0.0, 0.0, 0.0)
+        sun = _add_star(sol, "Sun", 695700.0, "G2V", 1001)
+
+        # Lier la Terre déjà enregistrée au système Sol
+        active_earth.systemId = sol.systemId
+        active_earth.orbitalParams = OrbitalParameters(
+            semiMajorAxisAU=1.0, eccentricity=0.017, periodTicks=365,
+        )
+        active_earth.parentId = sun.bodyId
+        sol.bodyIds.append(active_earth.bodyId)
+        self._repo.save_body(active_earth)
+        self._repo.save_solar_system(sol)
+
+        _add_body(sol, "Mercury", BodyType.Planet, 2440.0,  0.00, 1002, 0.387,  88,   sun.bodyId, atmosphere_density=0.00)
+        _add_body(sol, "Venus",   BodyType.Planet, 6051.0,  0.00, 1003, 0.723,  225,  sun.bodyId, atmosphere_density=0.95)
+        mars    = _add_body(sol, "Mars",    BodyType.Planet, 3390.0,  0.02, 1005, 1.524,  687,  sun.bodyId, atmosphere_density=0.02)
+
+        # Lune de la Terre
+        _add_body(sol, "Luna",    BodyType.Moon,   1737.0,  0.01, 2001, 0.00257, 27,  active_earth.bodyId, atmosphere_density=0.00)
+
+        # Planètes extérieures
+        jupiter = _add_body(sol, "Jupiter", BodyType.Planet, 69911.0, 0.00, 1006, 5.203,  4333,  sun.bodyId,
+                            DebugCoherenceOverride.None_, atmosphere_density=0.90)
+        saturn  = _add_body(sol, "Saturn",  BodyType.Planet, 58232.0, 0.00, 1007, 9.537,  10759, sun.bodyId,
+                            DebugCoherenceOverride.None_, atmosphere_density=0.85)
+        _add_body(sol, "Uranus",  BodyType.Planet, 25362.0, 0.00, 1008, 19.19,  30685, sun.bodyId,
+                  DebugCoherenceOverride.Frozen, atmosphere_density=0.75)
+        _add_body(sol, "Neptune", BodyType.Planet, 24622.0, 0.00, 1009, 30.07,  60190, sun.bodyId,
+                  DebugCoherenceOverride.Frozen, atmosphere_density=0.75)
+
+        # Lunes de Jupiter
+        _add_body(sol, "Io",       BodyType.Moon, 1821.0, 0.00, 2002, 0.00282, 2,  jupiter.bodyId, atmosphere_density=0.05)
+        _add_body(sol, "Europa",   BodyType.Moon, 1560.0, 0.70, 2003, 0.00449, 4,  jupiter.bodyId, atmosphere_density=0.02)
+        _add_body(sol, "Ganymede", BodyType.Moon, 2634.0, 0.30, 2004, 0.00716, 7,  jupiter.bodyId, atmosphere_density=0.01)
+
+        # Lune de Saturne
+        _add_body(sol, "Titan",    BodyType.Moon, 2575.0, 0.10, 2005, 0.00817, 16, saturn.bodyId, atmosphere_density=0.95)
+
+        # ── Système Kepler-442 (cible d'exploration cachée) ───────────────────
+        kepler = _make_system("Kepler-442", 1200.0, 0.0, 0.0)
+        kepler.isDiscovered = False
+        self._repo.save_solar_system(kepler)
+        kepler_star = _add_star(kepler, "Kepler-442", 513000.0, "K", 3001)
+        _add_body(kepler, "Kepler-442b", BodyType.Planet, 7600.0, 0.55, 3002,
+                  0.409, 112, kepler_star.bodyId, DebugCoherenceOverride.Ocean, atmosphere_density=0.65)
+
+        # Route cachée Sol → Kepler-442
+        self._create_stellar_route_locked(
+            from_system_id=sol.systemId,
+            to_system_id=kepler.systemId,
+            travel_time_modifier=1.0,
+            description="Signal interstellaire capté depuis l'orbite de Mars.",
+        )
+        _ = mars  # référencé pour future utilisation
+
+    def _hydrate_from_saved(self, saved: SavedState) -> None:
+        """Restore runtime state from a SavedState loaded from the repository."""
+        self._tick_count = saved.tick_count
+        self._tick_running = saved.tick_running
+        self._tick_interval_seconds = max(0.1, saved.tick_interval_seconds)
+
+        # Re-hydrate bodies from JSON (tiles regenerated lazily)
+        for body_json in saved.bodies_json:
+            data = json.loads(body_json)
+            surface_type = data.get("surfaceType", "goldberg")
+            if surface_type == "goldberg":
+                body = SphericalBodyState.model_validate(data)
+            else:
+                body = InteriorZoneState.model_validate(data)
+            self._bodies[body.bodyId] = body
+            if not self._active_body_id or body.bodyType == BodyType.Planet:
+                self._active_body_id = body.bodyId
+
+        # Apply tile mutations to in-memory bodies
+        for body_id, mutations in saved.tile_mutations.items():
+            body = self._bodies.get(body_id)
+            if body is None or not isinstance(body, SphericalBodyState):
+                continue
+            # If algo changed since last modification, discard cached tiles so they
+            # regenerate lazily on next access (mutations are re-applied on top)
+            if body.isModified and body.generationVersion != GENERATION_VERSION:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Body %s was modified under generation version %r but current is %r — "
+                    "tiles will regenerate on next access",
+                    body_id, body.generationVersion, GENERATION_VERSION,
+                )
+            if not body.tiles:
+                body.tiles = generate_spherical_tiles(
+                    body.h3Resolution, body.projectionOverride, body.waterLevel, body.seed,
+                    atmosphere_density=body.atmosphereDensity,
+                )
+            tile_by_id = {t.tileId: t for t in body.tiles}
+            for m in mutations:
+                tile = tile_by_id.get(m.tile_id)
+                if tile is not None:
+                    tile.waterRatio = m.water_ratio
+                    tile.temperature = m.temperature
+                    tile.toxinLevel = m.toxin_level
+
+        # Rebuild projection and region from saved parameters
+        active_name = saved.active_planet_name or "Astra-Prime"
+        override = DebugCoherenceOverride(saved.projection_override)
+        projection = self._build_projection_state(active_name, override, saved.projection_water_level)
+        coords = SimulationCoordinates(latitude=saved.region_lat, longitude=saved.region_lon)
+        region = self._build_region_state(active_name, coords, self._tick_count) if saved.has_region else RegionState()
+
+        self._world_state = WorldState(
+            isValid=True,
+            tickCount=self._tick_count,
+            tickRunning=self._tick_running,
+            activePlanetName=active_name,
+            projectionOverride=override,
+            projectionWaterLevel=saved.projection_water_level,
+            hasProjection=True,
+            projection=projection,
+            hasRegion=saved.has_region,
+            region=region,
+        )
+
+        # Re-hydrate pending actions
+        from .models import PendingTerraformAction
+        for action_json in saved.pending_actions_json:
+            try:
+                self._pending_actions.append(PendingTerraformAction.model_validate_json(action_json))
+            except Exception:
+                pass
+
+        # Re-hydrate galaxy layer
+        for system_json in saved.systems_json:
+            try:
+                system = SolarSystemState.model_validate_json(system_json)
+                self._solar_systems[system.systemId] = system
+            except Exception:
+                pass
+
+        for route_json in saved.routes_json:
+            try:
+                route = StellarRoute.model_validate_json(route_json)
+                self._stellar_routes[route.routeId] = route
+            except Exception:
+                pass
+
+        for travel_json in saved.travels_json:
+            try:
+                travel = SpaceTravel.model_validate_json(travel_json)
+                self._space_travels[travel.travelId] = travel
+            except Exception:
+                pass
+
+        # If no galaxy data yet (first run with new tables), seed the bootstrap systems
+        if not self._solar_systems:
+            self._bootstrap_galaxy_locked()
+
+        self._last_event = SimulationEvent(
+            eventId=str(uuid4()),
+            type=SimulationEventType.SnapshotCaptured,
+            message=f"State restored from persistence (tick={self._tick_count})",
+        )
 
     def world_state(self) -> WorldState:
         with self._lock:
@@ -130,6 +463,50 @@ class InMemorySimulationRuntime:
     def last_event(self) -> SimulationEvent:
         with self._lock:
             return self._last_event.model_copy(deep=True)
+
+    def tick_status(self) -> dict:
+        with self._lock:
+            return {
+                "tickCount": self._tick_count,
+                "tickRunning": self._tick_running,
+                "tickIntervalSeconds": self._tick_interval_seconds,
+            }
+
+    def set_projection(
+        self,
+        projection_override: DebugCoherenceOverride,
+        water_level: float,
+    ) -> WorldState:
+        """Change the active projection override without resetting the full world state.
+        Clears the active body's tile cache so tiles are regenerated on next access.
+        """
+        with self._lock:
+            planet_name = self._world_state.activePlanetName or "Astra-Prime"
+            water_level = max(0.0, min(1.0, water_level))
+            projection = self._build_projection_state(planet_name, projection_override, water_level)
+            self._world_state.projection = projection
+            self._world_state.hasProjection = True
+            self._world_state.projectionOverride = projection_override
+            self._world_state.projectionWaterLevel = water_level
+            # Update active body and invalidate tile cache
+            if self._active_body_id and self._active_body_id in self._bodies:
+                body = self._bodies[self._active_body_id]
+                if isinstance(body, SphericalBodyState):
+                    body.projectionOverride = projection_override
+                    body.waterLevel = water_level
+                    body.tiles = []  # force regeneration on next access
+            self._last_event = SimulationEvent(
+                eventId=str(uuid4()),
+                type=SimulationEventType.ProjectionLoaded,
+                tickCount=self._tick_count,
+                message=f"Projection changed to {projection_override.name}, waterLevel={water_level:.2f}",
+                hasRegion=self._world_state.hasRegion,
+                coordinates=self._world_state.region.coordinates if self._world_state.hasRegion else SimulationCoordinates(),
+            )
+            self._repo.save_world_state(self._world_state, self._tick_interval_seconds)
+            if self._active_body_id and self._active_body_id in self._bodies:
+                self._repo.save_body(self._bodies[self._active_body_id])
+            return self._world_state.model_copy(deep=True)
 
     def action_definitions(self) -> list[TerraformActionDefinition]:
         with self._lock:
@@ -150,6 +527,7 @@ class InMemorySimulationRuntime:
                 hasRegion=True,
                 coordinates=coordinates,
             )
+            self._repo.save_world_state(self._world_state, self._tick_interval_seconds)
             return region.model_copy(deep=True)
 
     def resume(self) -> WorldState:
@@ -192,6 +570,9 @@ class InMemorySimulationRuntime:
                 return self._world_state.model_copy(deep=True)
 
             queue_action(self._pending_actions, target, action)
+            # persist the newly added action
+            if self._pending_actions:
+                self._repo.save_pending_action(self._pending_actions[-1])
             if target_cell is not None:
                 self._world_state.region.hasSelectedCell = True
                 self._world_state.region.selectedCell = target_cell.model_copy(deep=True)
@@ -250,11 +631,18 @@ class InMemorySimulationRuntime:
             region = self._world_state.region
             self._region_cells, self._pending_actions = process_pending_actions(self._region_cells, self._pending_actions)
             if self._region_cells:
+                # Greenhouse thermal feedback (Phase 2 — SDK ClimateSimulator port)
+                # Apply 0.5% of current greenhouse delta per tick so temperature evolves visibly
+                co2 = region.atmosphericState.co2Ratio if region.atmosphericState.co2Ratio > 0 else 0.0004
+                greenhouse_k = co2 * 150.0 * 0.005  # simplified linear proxy, capped naturally by co2 ratio
                 for index, cell in enumerate(self._region_cells):
                     cell.temperature += 0.04 if index % 3 == 0 else 0.01
+                    cell.temperature += greenhouse_k
                     cell.waterRatio = _clamp01(cell.waterRatio + (0.004 if index % 4 == 0 else 0.001))
                     cell.flowAccumulation = min(999, cell.flowAccumulation + (1 if index == 0 else 0))
                     self._region_cells[index] = cell
+            else:
+                pass
 
             if region.hasSelectedCell and self._region_cells:
                 cell = self._region_cells[0]
@@ -264,16 +652,88 @@ class InMemorySimulationRuntime:
                 self._region_cells[0] = cell
 
             region = apply_region_progress(region, self._region_cells)
+            # Recalculate atmospheric state from evolved cells (Phase 2)
+            region.atmosphericState = compute_atmospheric_state(self._region_cells)
             self._world_state.region = region
 
-        self._last_event = SimulationEvent(
-            eventId=str(uuid4()),
-            type=SimulationEventType.TickAdvanced,
-            tickCount=self._tick_count,
-            message="Tick advanced",
-            hasRegion=self._world_state.hasRegion,
-            coordinates=self._world_state.region.coordinates if self._world_state.hasRegion else SimulationCoordinates(),
-        )
+            # Emit climate threshold events (Phase 3 — SDK climate events)
+            self._last_event = self._check_climate_events(region) or SimulationEvent(
+                eventId=str(uuid4()),
+                type=SimulationEventType.TickAdvanced,
+                tickCount=self._tick_count,
+                message="Tick advanced",
+                hasRegion=True,
+                coordinates=region.coordinates,
+            )
+        else:
+            self._last_event = SimulationEvent(
+                eventId=str(uuid4()),
+                type=SimulationEventType.TickAdvanced,
+                tickCount=self._tick_count,
+                message="Tick advanced",
+                hasRegion=False,
+            )
+        # Persist every 10 ticks to avoid per-tick overhead
+        if self._tick_count % 10 == 0:
+            self._repo.save_world_state(self._world_state, self._tick_interval_seconds)
+
+        # Check space travel arrivals
+        for travel in list(self._space_travels.values()):
+            if travel.status == TravelStatus.InTransit and self._tick_count >= travel.arrivalTick:
+                travel.status = TravelStatus.Arrived
+                self._repo.save_space_travel(travel)
+
+    def _check_climate_events(self, region: "RegionState") -> "SimulationEvent | None":
+        """Emit climate threshold events (Phase 3 — ported from SDK ClimateEvents)."""
+        atm = region.atmosphericState
+
+        # AtmosphereFormed: first time pressure > 10 kPa (one-shot)
+        if not self._atmosphere_formed_fired and atm.atmosphericPressure > 10.0:
+            self._atmosphere_formed_fired = True
+            return SimulationEvent(
+                eventId=str(uuid4()),
+                type=SimulationEventType.AtmosphereFormed,
+                tickCount=self._tick_count,
+                message=f"Atmosphere formed — pressure {atm.atmosphericPressure:.1f} kPa",
+                hasRegion=True,
+                coordinates=region.coordinates,
+            )
+
+        # HabitabilityThreshold: score crosses 0.25 / 0.50 / 0.75 / 1.0
+        score = atm.habitabilityScore
+        bucket = 0 if score < 0.25 else (1 if score < 0.50 else (2 if score < 0.75 else (3 if score < 1.0 else 4)))
+        if bucket != self._last_habitability_bucket and self._last_habitability_bucket >= 0:
+            self._last_habitability_bucket = bucket
+            threshold = [0.25, 0.50, 0.75, 1.0][min(bucket, 3)]
+            return SimulationEvent(
+                eventId=str(uuid4()),
+                type=SimulationEventType.HabitabilityThreshold,
+                tickCount=self._tick_count,
+                message=f"Habitability crossed {threshold * 100:.0f}% — score {score:.3f}",
+                hasRegion=True,
+                coordinates=region.coordinates,
+            )
+        if self._last_habitability_bucket < 0:
+            self._last_habitability_bucket = bucket
+
+        # ThermalEquilibrium: avg temp stable ±0.5°C for 10 consecutive ticks
+        avg_temp = atm.averageTemperature
+        if abs(avg_temp - self._prev_avg_temp) < 0.5:
+            self._temp_stable_ticks += 1
+        else:
+            self._temp_stable_ticks = 0
+        self._prev_avg_temp = avg_temp
+        if self._temp_stable_ticks == 10:  # emit once per equilibrium episode
+            return SimulationEvent(
+                eventId=str(uuid4()),
+                type=SimulationEventType.ThermalEquilibrium,
+                tickCount=self._tick_count,
+                message=f"Thermal equilibrium reached — avg {avg_temp:.1f}°C",
+                hasRegion=True,
+                coordinates=region.coordinates,
+            )
+
+        return None
 
     def _build_projection_state(self,
                                 planet_name: str,
@@ -401,7 +861,9 @@ class InMemorySimulationRuntime:
             hasSelectedCell=True,
             selectedCell=selected_cell,
         )
-        return apply_region_progress(region, self._region_cells)
+        region = apply_region_progress(region, self._region_cells)
+        region.atmosphericState = compute_atmospheric_state(self._region_cells)
+        return region
 
     def _build_region_cells(self,
                             selected_cell: SimulationCellState,
@@ -459,11 +921,24 @@ class InMemorySimulationRuntime:
         water_level: float,
         seed: int,
         parent_id: str | None = None,
+        atmosphere_density: float | None = None,
     ) -> SphericalBodyState:
-        """Create and store a SphericalBodyState; tiles generated lazily on first request."""
-        divisions = compute_goldberg_divisions(radius_km)
-        cols, rows = _goldberg_grid_dims(divisions)
-        tile_count = cols * rows
+        """Create and store a SphericalBodyState; tiles generated lazily on first request.
+        atmosphere_density: [0,1]. None = auto-derive from coherence_override preset.
+        """
+        if atmosphere_density is None:
+            # Default atmosphere density per coherence preset
+            _atmo_defaults = {
+                DebugCoherenceOverride.Ocean:  0.65,
+                DebugCoherenceOverride.Arid:   0.15,
+                DebugCoherenceOverride.Frozen: 0.30,
+                DebugCoherenceOverride.Coast:  0.70,
+                DebugCoherenceOverride.Basin:  0.50,
+                DebugCoherenceOverride.None_:  0.50,
+            }
+            atmosphere_density = _atmo_defaults.get(coherence_override, 0.50)
+        h3_res = _body_h3_resolution(radius_km)
+        tile_count = 2 + 120 * (7 ** h3_res)  # H3 formula: c(r) = 2 + 120*7^r
         bid = body_id or str(uuid4())
         body = SphericalBodyState(
             bodyId=bid,
@@ -472,14 +947,16 @@ class InMemorySimulationRuntime:
             parentId=parent_id,
             seed=seed,
             radiusKm=radius_km,
-            divisions=divisions,
+            h3Resolution=h3_res,
             tileCount=tile_count,
             projectionOverride=coherence_override,
             waterLevel=water_level,
+            atmosphereDensity=atmosphere_density,
         )
         self._bodies[bid] = body
         if not self._active_body_id or body_type == BodyType.Planet:
             self._active_body_id = bid
+        self._repo.save_body(body)
         return body
 
     def list_bodies(self) -> list[BodyBase]:
@@ -507,16 +984,47 @@ class InMemorySimulationRuntime:
                 raise TypeError(f"Body {body_id} is not a spherical body")
             if not body.tiles:
                 tiles = generate_spherical_tiles(
-                    body.divisions, body.projectionOverride, body.waterLevel, body.seed
+                    body.h3Resolution, body.projectionOverride, body.waterLevel, body.seed,
+                    atmosphere_density=body.atmosphereDensity,
                 )
-                cols, rows = _goldberg_grid_dims(body.divisions)
-                body.summary = summarize_spherical_tiles(tiles, cols=cols, rows=rows)
+                body.summary = summarize_spherical_tiles(tiles)
                 body.tiles = tiles
             start = page * size
             return [t.model_copy(deep=True) for t in body.tiles[start:start + size]]
 
-    def get_body_tile(self, body_id: str, tile_id: int):
-        """Return a single GoldbergTileState by tile_id."""
+    def get_body_tiles_lod(self, body_id: str, h3_resolution: int, page: int = 0, size: int = 200) -> list:
+        """Return tiles at a different H3 resolution than the stored one (LOD support).
+        Generated in-memory, not persisted. resolution is clamped to [0, 3].
+        Results are cached so the first call is slow (2s for res=3) but subsequent calls are instant.
+        """
+        h3_resolution = min(max(0, h3_resolution), 3)
+        with self._lock:
+            body = self._bodies.get(body_id)
+            if body is None:
+                raise KeyError(f"Body not found: {body_id}")
+            if not isinstance(body, SphericalBodyState):
+                raise TypeError(f"Body {body_id} is not a spherical body")
+            # If requesting the stored resolution, just delegate (uses body.tiles cache)
+            if h3_resolution == body.h3Resolution:
+                return self.get_body_tiles(body_id, page=page, size=size)
+            cache_key = (body_id, h3_resolution)
+            cached = self._lod_tile_cache.get(cache_key)
+            if cached is not None:
+                start = page * size
+                return [t.model_copy(deep=True) for t in cached[start:start + size]]
+            # Save params before releasing lock
+            override, water, seed, atmo = body.projectionOverride, body.waterLevel, body.seed, body.atmosphereDensity
+        # Generate outside the lock — can be slow for res=3 (~2s)
+        tiles = generate_spherical_tiles(h3_resolution, override, water, seed, atmo)
+        with self._lock:
+            # Cache only if still relevant (body hasn't been replaced)
+            if body_id in self._bodies:
+                self._lod_tile_cache[(body_id, h3_resolution)] = tiles
+        start = page * size
+        return [t.model_copy(deep=True) for t in tiles[start:start + size]]
+
+    def get_body_tile(self, body_id: str, tile_id: str):
+        """Return a single GoldbergTileState by H3 tile_id string."""
         with self._lock:
             body = self._bodies.get(body_id)
             if body is None:
@@ -525,19 +1033,63 @@ class InMemorySimulationRuntime:
                 raise TypeError(f"Body {body_id} is not a spherical body")
             if not body.tiles:
                 tiles = generate_spherical_tiles(
-                    body.divisions, body.projectionOverride, body.waterLevel, body.seed
+                    body.h3Resolution, body.projectionOverride, body.waterLevel, body.seed,
+                    atmosphere_density=body.atmosphereDensity,
                 )
-                cols, rows = _goldberg_grid_dims(body.divisions)
-                body.summary = summarize_spherical_tiles(tiles, cols=cols, rows=rows)
+                body.summary = summarize_spherical_tiles(tiles)
                 body.tiles = tiles
-            if tile_id < 0 or tile_id >= len(body.tiles):
-                raise IndexError(f"tile_id {tile_id} out of range for body {body_id}")
-            return body.tiles[tile_id].model_copy(deep=True)
+            tile = next((t for t in body.tiles if t.tileId == tile_id), None)
+            if tile is None:
+                raise KeyError(f"Tile {tile_id} not found on body {body_id}")
+            return tile.model_copy(deep=True)
+
+    def get_body_tile_neighbors(self, body_id: str, tile_id: str) -> list:
+        """Return the neighboring GoldbergTileStates of a given H3 tile (up to 6)."""
+        with self._lock:
+            body = self._bodies.get(body_id)
+            if body is None:
+                raise KeyError(f"Body not found: {body_id}")
+            if not isinstance(body, SphericalBodyState):
+                raise TypeError(f"Body {body_id} is not a spherical body")
+            if not body.tiles:
+                tiles = generate_spherical_tiles(
+                    body.h3Resolution, body.projectionOverride, body.waterLevel, body.seed,
+                    atmosphere_density=body.atmosphereDensity,
+                )
+                body.summary = summarize_spherical_tiles(tiles)
+                body.tiles = tiles
+            tile = next((t for t in body.tiles if t.tileId == tile_id), None)
+            if tile is None:
+                raise KeyError(f"Tile {tile_id} not found on body {body_id}")
+            neighbor_ids = set(tile.neighborIds)
+            return [t.model_copy(deep=True) for t in body.tiles if t.tileId in neighbor_ids]
+
+    def get_body_tile_at(self, body_id: str, lat: float, lon: float):
+        """Return the tile whose H3 cell contains the given lat/lon coordinates."""
+        import h3 as _h3
+        with self._lock:
+            body = self._bodies.get(body_id)
+            if body is None:
+                raise KeyError(f"Body not found: {body_id}")
+            if not isinstance(body, SphericalBodyState):
+                raise TypeError(f"Body {body_id} is not a spherical body")
+            if not body.tiles:
+                tiles = generate_spherical_tiles(
+                    body.h3Resolution, body.projectionOverride, body.waterLevel, body.seed,
+                    atmosphere_density=body.atmosphereDensity,
+                )
+                body.summary = summarize_spherical_tiles(tiles)
+                body.tiles = tiles
+            cell = _h3.latlng_to_cell(lat, lon, body.h3Resolution)
+            tile = next((t for t in body.tiles if t.tileId == cell), None)
+            if tile is None:
+                raise KeyError(f"No tile at lat={lat}, lon={lon} on body {body_id}")
+            return tile.model_copy(deep=True)
 
     def apply_body_tile_delta(
         self,
         body_id: str,
-        tile_id: int,
+        tile_id: str,
         water_delta: float = 0.0,
         temperature_delta: float = 0.0,
     ):
@@ -550,18 +1102,29 @@ class InMemorySimulationRuntime:
                 raise TypeError(f"Body {body_id} is not a spherical body")
             if not body.tiles:
                 body.tiles = generate_spherical_tiles(
-                    body.divisions, body.projectionOverride, body.waterLevel, body.seed
+                    body.h3Resolution, body.projectionOverride, body.waterLevel, body.seed,
+                    atmosphere_density=body.atmosphereDensity,
                 )
-            if tile_id < 0 or tile_id >= len(body.tiles):
-                raise IndexError(f"tile_id {tile_id} out of range")
-            tile = body.tiles[tile_id]
+            tile = next((t for t in body.tiles if t.tileId == tile_id), None)
+            if tile is None:
+                raise KeyError(f"Tile {tile_id} not found on body {body_id}")
             tile.waterRatio = max(0.0, min(1.0, tile.waterRatio + water_delta))
             tile.temperature += temperature_delta
             from .logic import is_tile_habitable
             tile.isHabitable = is_tile_habitable(tile.terrainType, tile.temperature, tile.waterRatio)
+            if not body.isModified:
+                body.isModified = True
+                body.generationVersion = GENERATION_VERSION
+                self._repo.save_body(body)
+            self._repo.upsert_tile_mutation(body_id, TileMutation(
+                tile_id=tile_id,
+                water_ratio=tile.waterRatio,
+                temperature=tile.temperature,
+                toxin_level=tile.toxinLevel,
+            ))
             return tile.model_copy(deep=True)
 
-    def apply_body_tile_action(self, body_id: str, tile_id: int, action: TerraformAction):
+    def apply_body_tile_action(self, body_id: str, tile_id: str, action: TerraformAction):
         """Apply an immediate terraform action modifier to a surface tile."""
         with self._lock:
             body = self._bodies.get(body_id)
@@ -571,18 +1134,29 @@ class InMemorySimulationRuntime:
                 raise TypeError(f"Body {body_id} is not a spherical body")
             if not body.tiles:
                 body.tiles = generate_spherical_tiles(
-                    body.divisions, body.projectionOverride, body.waterLevel, body.seed
+                    body.h3Resolution, body.projectionOverride, body.waterLevel, body.seed,
+                    atmosphere_density=body.atmosphereDensity,
                 )
-            if tile_id < 0 or tile_id >= len(body.tiles):
-                raise IndexError(f"tile_id {tile_id} out of range")
+            tile = next((t for t in body.tiles if t.tileId == tile_id), None)
+            if tile is None:
+                raise KeyError(f"Tile {tile_id} not found on body {body_id}")
             definitions = terraform_action_definitions()
             modifier = definitions[action].modifier
-            tile = body.tiles[tile_id]
             tile.waterRatio = max(0.0, min(1.0, tile.waterRatio + modifier.waterDelta))
             tile.temperature += modifier.tempDelta
             tile.toxinLevel = max(0.0, min(1.0, tile.toxinLevel + modifier.toxinDelta))
             from .logic import is_tile_habitable
             tile.isHabitable = is_tile_habitable(tile.terrainType, tile.temperature, tile.waterRatio)
+            if not body.isModified:
+                body.isModified = True
+                body.generationVersion = GENERATION_VERSION
+                self._repo.save_body(body)
+            self._repo.upsert_tile_mutation(body_id, TileMutation(
+                tile_id=tile_id,
+                water_ratio=tile.waterRatio,
+                temperature=tile.temperature,
+                toxin_level=tile.toxinLevel,
+            ))
             return tile.model_copy(deep=True)
 
     def register_interior_zone(
@@ -591,7 +1165,7 @@ class InMemorySimulationRuntime:
         zone_type: ZoneType,
         cols: int,
         rows: int,
-        parent_tile_id: int | None = None,
+        parent_tile_id: str | None = None,
         seed: int | None = None,
     ) -> InteriorZoneState:
         """Create an interior zone attached to a body tile and populate its hex cells."""
@@ -619,8 +1193,15 @@ class InMemorySimulationRuntime:
             self._bodies[zone_id] = zone
             # Link zone to parent tile if applicable
             if parent_tile_id is not None and isinstance(parent, SphericalBodyState) and parent.tiles:
-                if 0 <= parent_tile_id < len(parent.tiles):
-                    parent.tiles[parent_tile_id].childZoneIds.append(zone_id)
+                tile = next((t for t in parent.tiles if t.tileId == parent_tile_id), None)
+                if tile is not None:
+                    tile.childZoneIds.append(zone_id)
+            # Mark parent body as modified (a zone was built on it)
+            if isinstance(parent, SphericalBodyState) and not parent.isModified:
+                parent.isModified = True
+                parent.generationVersion = GENERATION_VERSION
+                self._repo.save_body(parent)
+            self._repo.save_body(zone)
             return zone.model_copy(deep=True)
 
     def get_interior_zone(self, zone_id: str) -> InteriorZoneState:
@@ -632,3 +1213,401 @@ class InMemorySimulationRuntime:
             if not isinstance(body, InteriorZoneState):
                 raise TypeError(f"Body {zone_id} is not an interior zone")
             return body.model_copy(deep=True)
+
+    # ── Galaxy layer ───────────────────────────────────────────────────────────
+
+    def wipe_galaxy(self) -> dict:
+        """Destroy all galaxy bodies, systems, routes and travels, then re-run bootstrap.
+        Intended for testing and world-reset workflows.
+        Bodies that belong to the active WorldState (no systemId) are preserved.
+        Returns a summary dict with counts of deleted and recreated items.
+        """
+        with self._lock:
+            deleted_bodies = 0
+            deleted_systems = len(self._solar_systems)
+            deleted_routes = len(self._stellar_routes)
+            deleted_travels = len(self._space_travels)
+
+            # Delete all galaxy bodies (those with a systemId)
+            galaxy_body_ids = [
+                bid for bid, b in self._bodies.items()
+                if isinstance(b, SphericalBodyState) and b.systemId
+            ]
+            for bid in galaxy_body_ids:
+                self._repo.delete_tile_mutations(bid)
+                self._repo.delete_body(bid)
+                del self._bodies[bid]
+                deleted_bodies += 1
+
+            # Delete all systems, routes, travels from DB
+            for sid in list(self._solar_systems):
+                self._repo.delete_solar_system(sid)
+            for rid in list(self._stellar_routes):
+                self._repo.delete_stellar_route(rid)
+            for tid in list(self._space_travels):
+                self._repo.delete_space_travel(tid)
+
+            # Reset in-memory registries
+            self._solar_systems = {}
+            self._stellar_routes = {}
+            self._space_travels = {}
+
+            # Re-bootstrap
+            self._bootstrap_galaxy_locked()
+
+            return {
+                "deleted": {
+                    "bodies": deleted_bodies,
+                    "systems": deleted_systems,
+                    "routes": deleted_routes,
+                    "travels": deleted_travels,
+                },
+                "created": {
+                    "systems": len(self._solar_systems),
+                    "bodies": sum(
+                        1 for b in self._bodies.values()
+                        if isinstance(b, SphericalBodyState) and b.systemId
+                    ),
+                    "routes": len(self._stellar_routes),
+                },
+            }
+
+    def _bootstrap_galaxy_locked(self) -> None:
+        """Create the Kepler-442 home system and a distant Sol system as exploration target.
+        Called from bootstrap_demo() while the lock is already held.
+        Idempotent: skips if systems already exist.
+        """
+        if self._solar_systems:
+            return
+
+        def _make_system(name: str, x: float, y: float, z: float) -> SolarSystemState:
+            sid = str(uuid4())
+            system = SolarSystemState(
+                systemId=sid, name=name,
+                position=GalacticPosition(x=x, y=y, z=z),
+            )
+            self._solar_systems[sid] = system
+            self._repo.save_solar_system(system)
+            return system
+
+        def _add_star(system: SolarSystemState, name: str, radius_km: float, spectral: str, seed: int,
+                      orbital: OrbitalParameters | None = None) -> SphericalBodyState:
+            body = self._register_spherical_body_locked(
+                body_id=None, name=name, body_type=BodyType.Star,
+                radius_km=radius_km, coherence_override=DebugCoherenceOverride.None_,
+                water_level=0.0, seed=seed,
+            )
+            body.spectralType = spectral
+            body.systemId = system.systemId
+            body.orbitalParams = orbital
+            if system.rootBodyId == "":
+                system.rootBodyId = body.bodyId
+            system.bodyIds.append(body.bodyId)
+            self._repo.save_body(body)
+            self._repo.save_solar_system(system)
+            return body
+
+        def _add_body(system: SolarSystemState, name: str, body_type: BodyType,
+                      radius_km: float, water_level: float, seed: int,
+                      orbital: OrbitalParameters, parent_id: str | None = None,
+                      spectral: str = "") -> SphericalBodyState:
+            body = self._register_spherical_body_locked(
+                body_id=None, name=name, body_type=body_type,
+                radius_km=radius_km,
+                coherence_override=(DebugCoherenceOverride.Ocean if water_level > 0.5
+                                    else DebugCoherenceOverride.Arid if water_level < 0.05
+                                    else DebugCoherenceOverride.Coast),
+                water_level=water_level, seed=seed, parent_id=parent_id,
+            )
+            body.systemId = system.systemId
+            body.orbitalParams = orbital
+            body.spectralType = spectral
+            system.bodyIds.append(body.bodyId)
+            self._repo.save_body(body)
+            self._repo.save_solar_system(system)
+            return body
+
+        # ── System Kepler-442 (système du joueur) ────────────────────
+        kepler = _make_system("Kepler-442", 0.0, 0.0, 0.0)
+        kepler_star = _add_star(kepler, "Kepler-442", 513000.0, "K", 3001)
+
+        # Lier le corps bootstrappé (Kepler-442b, Astra-Prime, ou autre) à ce système
+        active_planet = next(
+            (b for b in self._bodies.values()
+             if isinstance(b, SphericalBodyState) and b.bodyType == BodyType.Planet),
+            None,
+        )
+        if active_planet is not None:
+            active_planet.systemId = kepler.systemId
+            active_planet.orbitalParams = OrbitalParameters(
+                semiMajorAxisAU=0.409, eccentricity=0.0, periodTicks=112,
+            )
+            active_planet.parentId = kepler_star.bodyId
+            kepler.bodyIds.append(active_planet.bodyId)
+            self._repo.save_body(active_planet)
+            self._repo.save_solar_system(kepler)
+
+        # ── System Sol (cible d'exploration distante, cachée) ─────────
+        sol = _make_system("Sol", 1200.0, 0.0, 0.0)
+        sol.isDiscovered = False  # cachée jusqu'à l'exploration
+        self._repo.save_solar_system(sol)
+        sun = _add_star(sol, "Sun", 695700.0, "G2V", 1001)
+        _add_body(sol, "Earth", BodyType.Planet, 6371.0, 0.71, 1004,
+                  OrbitalParameters(semiMajorAxisAU=1.0, eccentricity=0.017, periodTicks=365),
+                  sun.bodyId)
+
+        # ── Route cachée Kepler-442 → Sol ────────────────────────────
+        route = self._create_stellar_route_locked(
+            from_system_id=kepler.systemId,
+            to_system_id=sol.systemId,
+            travel_time_modifier=1.0,
+            description="Signal interstellaire capté par les sondes de Kepler-442b.",
+        )
+        _ = route
+
+    def _create_stellar_route_locked(
+        self,
+        from_system_id: str,
+        to_system_id: str,
+        travel_time_modifier: float = 1.0,
+        description: str = "",
+        status: RouteStatus = RouteStatus.Hidden,
+    ) -> StellarRoute:
+        """Create a stellar route; distance calculated from system positions. Lock must be held."""
+        src = self._solar_systems.get(from_system_id)
+        dst = self._solar_systems.get(to_system_id)
+        if src is None:
+            raise KeyError(f"System not found: {from_system_id}")
+        if dst is None:
+            raise KeyError(f"System not found: {to_system_id}")
+        dx = src.position.x - dst.position.x
+        dy = src.position.y - dst.position.y
+        dz = src.position.z - dst.position.z
+        dist_ly = math.sqrt(dx * dx + dy * dy + dz * dz)
+        route = StellarRoute(
+            routeId=str(uuid4()),
+            fromSystemId=from_system_id,
+            toSystemId=to_system_id,
+            distanceLy=round(dist_ly, 4),
+            travelTimeModifier=travel_time_modifier,
+            status=status,
+            description=description,
+        )
+        self._stellar_routes[route.routeId] = route
+        self._repo.save_stellar_route(route)
+        return route
+
+    # ── Public galaxy API ─────────────────────────────────────────────
+
+    def create_solar_system(
+        self,
+        name: str,
+        x: float,
+        y: float,
+        z: float,
+        description: str = "",
+    ) -> SolarSystemState:
+        """Create a new solar system at the given galactic position (light-years)."""
+        with self._lock:
+            system = SolarSystemState(
+                systemId=str(uuid4()),
+                name=name,
+                position=GalacticPosition(x=x, y=y, z=z),
+                description=description,
+            )
+            self._solar_systems[system.systemId] = system
+            self._repo.save_solar_system(system)
+            return system.model_copy(deep=True)
+
+    def get_solar_system(self, system_id: str) -> SolarSystemState:
+        with self._lock:
+            system = self._solar_systems.get(system_id)
+            if system is None:
+                raise KeyError(f"System not found: {system_id}")
+            return system.model_copy(deep=True)
+
+    def list_solar_systems(self) -> list[SolarSystemState]:
+        with self._lock:
+            return [s.model_copy(deep=True) for s in self._solar_systems.values()]
+
+    def add_body_to_system(
+        self,
+        system_id: str,
+        body_type: BodyType,
+        name: str,
+        radius_km: float,
+        water_level: float = 0.0,
+        seed: int = 0,
+        parent_body_id: str | None = None,
+        orbital_semi_major_axis_au: float = 1.0,
+        orbital_eccentricity: float = 0.0,
+        orbital_inclination_deg: float = 0.0,
+        orbital_initial_phase_deg: float = 0.0,
+        orbital_period_ticks: int = 365,
+        spectral_type: str = "",
+        is_system_root: bool = False,
+    ) -> SphericalBodyState:
+        """Create a SphericalBodyState, attach orbital parameters, and register it in the system."""
+        with self._lock:
+            system = self._solar_systems.get(system_id)
+            if system is None:
+                raise KeyError(f"System not found: {system_id}")
+            coherence = (DebugCoherenceOverride.Ocean if water_level > 0.5
+                         else DebugCoherenceOverride.Arid if water_level < 0.05
+                         else DebugCoherenceOverride.Coast)
+            effective_seed = seed or (hash(f"{system_id}{name}") & 0x7FFFFFFF)
+            body = self._register_spherical_body_locked(
+                body_id=None, name=name, body_type=body_type,
+                radius_km=radius_km, coherence_override=coherence,
+                water_level=water_level, seed=effective_seed,
+                parent_id=parent_body_id,
+            )
+            body.systemId = system_id
+            body.spectralType = spectral_type
+            if not is_system_root:
+                body.orbitalParams = OrbitalParameters(
+                    semiMajorAxisAU=orbital_semi_major_axis_au,
+                    eccentricity=orbital_eccentricity,
+                    inclinationDeg=orbital_inclination_deg,
+                    initialPhaseDeg=orbital_initial_phase_deg,
+                    periodTicks=orbital_period_ticks,
+                )
+            if is_system_root or system.rootBodyId == "":
+                system.rootBodyId = body.bodyId
+            system.bodyIds.append(body.bodyId)
+            self._repo.save_body(body)
+            self._repo.save_solar_system(system)
+            return body.model_copy(deep=True, update={"tiles": [], "cells": []})
+
+    def remove_body_from_system(self, system_id: str, body_id: str) -> None:
+        """Remove a body from a system and from the body registry."""
+        with self._lock:
+            system = self._solar_systems.get(system_id)
+            if system is None:
+                raise KeyError(f"System not found: {system_id}")
+            if body_id not in self._bodies:
+                raise KeyError(f"Body not found: {body_id}")
+            system.bodyIds = [b for b in system.bodyIds if b != body_id]
+            if system.rootBodyId == body_id:
+                system.rootBodyId = system.bodyIds[0] if system.bodyIds else ""
+            del self._bodies[body_id]
+            self._repo.save_solar_system(system)
+
+    def get_body_position_at_tick(self, body_id: str, tick: int | None = None) -> dict:
+        """Compute the 3D position (AU) of a body relative to its system root at a given tick."""
+        with self._lock:
+            effective_tick = tick if tick is not None else self._tick_count
+            return compute_body_position_at_tick(body_id, effective_tick, self._bodies)
+
+    # ── Stellar routes ────────────────────────────────────────────────
+
+    def create_stellar_route(
+        self,
+        from_system_id: str,
+        to_system_id: str,
+        travel_time_modifier: float = 1.0,
+        description: str = "",
+        status: RouteStatus = RouteStatus.Hidden,
+    ) -> StellarRoute:
+        with self._lock:
+            return self._create_stellar_route_locked(
+                from_system_id, to_system_id, travel_time_modifier, description, status,
+            )
+
+    def list_stellar_routes(self, known_only: bool = False) -> list[StellarRoute]:
+        with self._lock:
+            return [
+                r.model_copy(deep=True) for r in self._stellar_routes.values()
+                if not known_only or r.status == RouteStatus.Known
+            ]
+
+    def get_stellar_route(self, route_id: str) -> StellarRoute:
+        with self._lock:
+            route = self._stellar_routes.get(route_id)
+            if route is None:
+                raise KeyError(f"Route not found: {route_id}")
+            return route.model_copy(deep=True)
+
+    def reveal_stellar_route(self, route_id: str) -> StellarRoute:
+        with self._lock:
+            route = self._stellar_routes.get(route_id)
+            if route is None:
+                raise KeyError(f"Route not found: {route_id}")
+            route.status = RouteStatus.Known
+            self._repo.save_stellar_route(route)
+            return route.model_copy(deep=True)
+
+    def delete_stellar_route(self, route_id: str) -> None:
+        with self._lock:
+            if route_id not in self._stellar_routes:
+                raise KeyError(f"Route not found: {route_id}")
+            del self._stellar_routes[route_id]
+            self._repo.delete_stellar_route(route_id)
+
+    # ── Space travel ──────────────────────────────────────────────────
+
+    def initiate_travel(
+        self,
+        from_system_id: str,
+        to_system_id: str,
+        route_id: str,
+        faction_id: str = "",
+    ) -> SpaceTravel:
+        """Start a journey. Route must be Known. Arrival tick computed from distance × modifier."""
+        with self._lock:
+            route = self._stellar_routes.get(route_id)
+            if route is None:
+                raise KeyError(f"Route not found: {route_id}")
+            if route.status != RouteStatus.Known:
+                raise ValueError(f"Route {route_id} is not known — must be revealed first")
+            # Route must connect the requested systems (either direction)
+            pair = {route.fromSystemId, route.toSystemId}
+            if from_system_id not in pair or to_system_id not in pair:
+                raise ValueError("Route does not connect the requested systems")
+            ticks_needed = max(1, round(route.distanceLy * TICKS_PER_LIGHT_YEAR * route.travelTimeModifier))
+            travel = SpaceTravel(
+                travelId=str(uuid4()),
+                factionId=faction_id,
+                fromSystemId=from_system_id,
+                toSystemId=to_system_id,
+                routeId=route_id,
+                distanceLy=route.distanceLy,
+                departedAtTick=self._tick_count,
+                arrivalTick=self._tick_count + ticks_needed,
+                status=TravelStatus.InTransit,
+            )
+            self._space_travels[travel.travelId] = travel
+            self._repo.save_space_travel(travel)
+            return travel.model_copy(deep=True)
+
+    def get_travel(self, travel_id: str) -> SpaceTravel:
+        with self._lock:
+            travel = self._space_travels.get(travel_id)
+            if travel is None:
+                raise KeyError(f"Travel not found: {travel_id}")
+            return travel.model_copy(deep=True)
+
+    def list_active_travels(self) -> list[SpaceTravel]:
+        with self._lock:
+            return [t.model_copy(deep=True) for t in self._space_travels.values()
+                    if t.status == TravelStatus.InTransit]
+
+    def cancel_travel(self, travel_id: str) -> SpaceTravel:
+        with self._lock:
+            travel = self._space_travels.get(travel_id)
+            if travel is None:
+                raise KeyError(f"Travel not found: {travel_id}")
+            if travel.status != TravelStatus.InTransit:
+                raise ValueError(f"Travel {travel_id} is not in-transit (status={travel.status.name})")
+            travel.status = TravelStatus.Cancelled
+            self._repo.save_space_travel(travel)
+            return travel.model_copy(deep=True)
+
+    def galaxy_overview(self) -> dict:
+        with self._lock:
+            return {
+                "systemCount": len(self._solar_systems),
+                "knownRouteCount": sum(1 for r in self._stellar_routes.values() if r.status == RouteStatus.Known),
+                "hiddenRouteCount": sum(1 for r in self._stellar_routes.values() if r.status == RouteStatus.Hidden),
+                "activeTravelCount": sum(1 for t in self._space_travels.values() if t.status == TravelStatus.InTransit),
+            }

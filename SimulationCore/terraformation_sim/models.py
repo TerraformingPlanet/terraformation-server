@@ -78,6 +78,9 @@ class SimulationEventType(IntEnum):
     TickAdvanced = 6
     SnapshotCaptured = 7
     Error = 8
+    ThermalEquilibrium = 9      # Temperature stable ±2K over 10 ticks
+    HabitabilityThreshold = 10  # habitabilityScore crosses 0.25 / 0.50 / 0.75 / 1.0
+    AtmosphereFormed = 11       # atmosphericPressure > 10 kPa for the first time
 
 
 class SimulationVector2State(BaseModel):
@@ -172,6 +175,16 @@ class SimulationCoherenceState(BaseModel):
     isExtremeFrozen: bool = False
 
 
+class AtmosphericState(BaseModel):
+    """Aggregated atmospheric state for a region, derived from cell states."""
+    co2Ratio: float = 0.0004           # CO₂ fraction [0..1] — Earth ≈ 0.0004
+    o2Ratio: float = 0.0               # O₂ fraction [0..1] — Earth ≈ 0.21
+    atmosphericPressure: float = 0.6   # kPa — Mars initial ≈ 0.6, Earth ≈ 101.3
+    averageTemperature: float = -60.0  # °C — Mars initial ≈ -60°C
+    toxinRatio: float = 0.0            # Toxin fraction [0..1]
+    habitabilityScore: float = 0.0     # Weighted habitability score [0..1]
+
+
 class ProjectionDebugSummary(BaseModel):
     cols: int = 0
     rows: int = 0
@@ -230,6 +243,7 @@ class RegionState(BaseModel):
     planetName: str = ""
     coordinates: SimulationCoordinates = Field(default_factory=SimulationCoordinates)
     terraformationProgress: float = 0.0
+    atmosphericState: AtmosphericState = Field(default_factory=AtmosphericState)
     weather: SimulationWeatherState = Field(default_factory=SimulationWeatherState)
     coherence: SimulationCoherenceState = Field(default_factory=SimulationCoherenceState)
     summary: HexGridDebugSummary = Field(default_factory=HexGridDebugSummary)
@@ -299,6 +313,17 @@ class BodyType(IntEnum):
     SpaceStation = 5
 
 
+class RouteStatus(IntEnum):
+    Hidden = 0
+    Known = 1
+
+
+class TravelStatus(IntEnum):
+    InTransit = 0
+    Arrived = 1
+    Cancelled = 2
+
+
 class ZoneType(IntEnum):
     Cave = 0
     NaturalCavern = 1
@@ -309,11 +334,16 @@ class ZoneType(IntEnum):
 
 
 class GoldbergTileState(BaseModel):
-    """One tile on the surface of a spherical body (planet, moon, asteroid).
-    tile_id = row * cols + col — stable and reproducible from coordinates.
+    """One tile on a spherical body surface — H3 hexagonal hierarchical cell.
+    tileId is the H3 cell index string (e.g. '8928308280fffff').
+    neighborIds lists up to 6 adjacent H3 cells (5 for the 12 pentagons at icosahedron vertices).
+    boundaryLatLons provides the 6 (lat, lon) vertex pairs of the hexagon boundary for exact
+    3D projection in Unity (replacing nearest-neighbour lat/lon approximation).
     childZoneIds lists any interior zones accessible from this tile (caves, buildings…).
     """
-    tileId: int = 0
+    tileId: str = ""
+    neighborIds: list[str] = Field(default_factory=list)
+    boundaryLatLons: list[list[float]] = Field(default_factory=list)
     latNorm: float = 0.0
     lonNorm: float = 0.0
     latDeg: float = 0.0
@@ -328,10 +358,28 @@ class GoldbergTileState(BaseModel):
     childZoneIds: list[str] = Field(default_factory=list)
 
 
+# Ticks required to travel 1 light-year along a stellar route (baseline, modifier=1.0)
+TICKS_PER_LIGHT_YEAR: int = 100
+
+
+class OrbitalParameters(BaseModel):
+    """Keplerian-like orbital parameters for a body orbiting its parent.
+    None on BodyBase means the body is the system root (star / black hole).
+    Position at tick T: angle = initialPhaseDeg + 360 * (T / periodTicks)
+    """
+    semiMajorAxisAU: float = 1.0      # orbit radius in Astronomical Units
+    eccentricity: float = 0.0          # 0 = circle, 0.9 = highly elliptical
+    inclinationDeg: float = 0.0        # tilt relative to system ecliptic
+    initialPhaseDeg: float = 0.0       # angle at tick 0 (degrees)
+    periodTicks: int = 365             # ticks for one full revolution
+
+
 class BodyBase(BaseModel):
     """Base contract for every body tracked by the simulation host.
     Subclasses override surfaceType with a Literal to act as the discriminator.
-    parentId links moons to their parent planet, zones to their parent body.
+    parentId links moons to their parent planet, zones to their parent body,
+    and secondary stars to the primary star of a multi-star system.
+    orbitalParams=None means this body is the root of its system (no orbit).
     """
     bodyId: str = ""
     bodyType: BodyType = BodyType.Planet
@@ -341,19 +389,29 @@ class BodyBase(BaseModel):
     surfaceType: str = "goldberg"
     isDiscovered: bool = True
     isColonized: bool = False
+    # Galaxy layer
+    systemId: str = ""                           # UUID of the SolarSystemState that owns this body
+    spectralType: str = ""                       # e.g. "G2V", "M5Ve", "BH", "" for non-stars
+    orbitalParams: OrbitalParameters | None = None  # None = system root
 
 
 class SphericalBodyState(BodyBase):
     """Planet, Moon or Asteroid — spherical surface represented as a lat/lon tile grid.
     tiles is empty by default; populated on demand via GET /bodies/{id}/tiles.
+    isModified is set True only when a player or agent performs a write action on this body
+    (tile delta, terraform action, zone registration). Read-only access never sets this flag.
+    generationVersion records which GENERATION_VERSION was active at time of first modification,
+    so a future algo change can detect and re-generate stale bodies.
     """
     surfaceType: Literal["goldberg"] = "goldberg"
     radiusKm: float = 6371.0
-    divisions: int = 5
+    h3Resolution: int = 2  # H3 resolution: 0=122 cells, 1=842 cells, 2=5882 cells
     tileCount: int = 0
     atmosphereDensity: float = 0.0
     projectionOverride: DebugCoherenceOverride = DebugCoherenceOverride.None_
     waterLevel: float = 0.0
+    isModified: bool = False
+    generationVersion: str = ""
     summary: ProjectionDebugSummary = Field(default_factory=ProjectionDebugSummary)
     tiles: list[GoldbergTileState] = Field(default_factory=list)
 
@@ -367,7 +425,7 @@ class InteriorZoneState(BodyBase):
     """
     surfaceType: Literal["hex_flat"] = "hex_flat"
     zoneType: ZoneType = ZoneType.Cave
-    parentTileId: int | None = None
+    parentTileId: str | None = None  # H3 cell index of the surface tile entrance
     cols: int = 9
     rows: int = 9
     summary: HexGridDebugSummary = Field(default_factory=HexGridDebugSummary)
@@ -378,3 +436,58 @@ AnyBodyState = Annotated[
     SphericalBodyState | InteriorZoneState,
     Field(discriminator="surfaceType"),
 ]
+
+
+# ── Galaxy layer ───────────────────────────────────────────────────────────────
+# Sits above the body hierarchy: systems contain bodies, routes connect systems,
+# and space travels move factions along routes.
+
+class GalacticPosition(BaseModel):
+    """3-D position in the galaxy, in light-years from an arbitrary origin."""
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+
+class SolarSystemState(BaseModel):
+    """A star system: one root body (star / black hole) plus all orbiting bodies.
+    rootBodyId is the body at the gravitational centre (orbitalParams=None).
+    bodyIds lists every body that belongs to this system (including root).
+    """
+    systemId: str = ""
+    name: str = ""
+    position: GalacticPosition = Field(default_factory=GalacticPosition)
+    rootBodyId: str = ""          # body_id of the central star / black hole
+    bodyIds: list[str] = Field(default_factory=list)
+    isDiscovered: bool = True
+    description: str = ""
+
+
+class StellarRoute(BaseModel):
+    """A travel corridor between two systems.
+    Hidden by default — must be revealed via event / agent action before use.
+    travelTimeModifier: <1 = shortcut (wormhole), >1 = hazard (black hole gravity).
+    distanceLy is computed at creation time from the two system positions.
+    """
+    routeId: str = ""
+    fromSystemId: str = ""
+    toSystemId: str = ""
+    distanceLy: float = 0.0
+    travelTimeModifier: float = 1.0
+    status: RouteStatus = RouteStatus.Hidden
+    description: str = ""
+
+
+class SpaceTravel(BaseModel):
+    """An in-flight journey of a faction from one system to another.
+    arrivalTick is computed at departure: tick + round(distanceLy * TICKS_PER_LIGHT_YEAR * modifier).
+    """
+    travelId: str = ""
+    factionId: str = ""           # corporation / player / agent identifier
+    fromSystemId: str = ""
+    toSystemId: str = ""
+    routeId: str = ""
+    distanceLy: float = 0.0
+    departedAtTick: int = 0
+    arrivalTick: int = 0
+    status: TravelStatus = TravelStatus.InTransit
