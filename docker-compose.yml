@@ -1,6 +1,27 @@
 services:
 
   # -------------------------------------------------------------------------
+  # PostgreSQL — authoritative state store
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: terraformation-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: terraformation
+      POSTGRES_USER: terra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-terralocal}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U terra -d terraformation"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # -------------------------------------------------------------------------
   # FastMCP — AI agent bridge for the Terraformation game
   # Phase 2: connects to Unity running on the Docker host (port 48621)
   # Phase 3: change GAME_BRIDGE_URL to http://unity-server:48621 once
@@ -13,6 +34,7 @@ services:
     container_name: terraformation-mcp
     depends_on:
       - terraformation-dedicated-server
+      - postgres
     ports:
       - "8000:8000"
     environment:
@@ -35,8 +57,15 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SERVER_MODE: in-memory
+      SERVER_MODE: ${SERVER_MODE:-postgres}
       SERVER_TICK_INTERVAL: "5.0"
       SERVER_AUTO_RESUME: "0"
+      DATABASE_URL: postgresql+psycopg2://terra:${POSTGRES_PASSWORD:-terralocal}@postgres:5432/terraformation
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  postgres_data:
 

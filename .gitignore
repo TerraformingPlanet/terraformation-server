@@ -50,6 +50,15 @@ Logs/
 *.log
 
 # =============================================================================
+# Documentation upstream (docs de librairies tierces — ne pas versionner)
+# =============================================================================
+Documentation/Hierarchie_h3/
+Documentation/mcp/quickstart.md
+Documentation/mcp/openapi.md
+Documentation/mcp/custom.md
+Documentation/mcp/proxy.md
+
+# =============================================================================
 # Editeurs / OS
 # =============================================================================
 .vs/

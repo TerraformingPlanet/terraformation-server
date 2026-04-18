@@ -165,6 +165,75 @@ def open_server_region(latitude: float, longitude: float) -> dict:
 
 
 @mcp.tool
+def get_atmospheric_state(latitude: float = 0.47, longitude: float = 0.18) -> dict:
+    """
+    Get the atmospheric state for a region (CO₂, O₂, pressure, temperature, habitability).
+    Does not require Unity to be running — queries the dedicated simulation server directly.
+
+    Args:
+        latitude: Normalized latitude [0, 1].
+        longitude: Normalized longitude [0, 1].
+    """
+    region = _server_post("/commands/open-region", latitude=latitude, longitude=longitude)
+    return region.get("atmosphericState", {})
+
+
+@mcp.tool
+def get_generation_stats(
+    coherence: int = 4,
+    water_level: float = 0.71,
+    seed: int = 1004,
+    h3_resolution: int = 2,
+    atmosphere_density: float = 0.7,
+) -> dict:
+    """
+    Get dedicated-server generation quality metrics for one preset/profile.
+    Useful for tuning projection generation without requiring Unity Play Mode.
+
+    Args:
+        coherence: DebugCoherenceOverride enum value. None_=0, Ocean=1, Arid=2, Frozen=3, Coast=4, Basin=5.
+        water_level: Global water target in [0, 1].
+        seed: Deterministic generation seed.
+        h3_resolution: H3 resolution (0-2).
+        atmosphere_density: Atmospheric retention factor in [0, 1].
+    """
+    return _server_get(
+        "/debug/generation-stats",
+        coherence=coherence,
+        water_level=water_level,
+        seed=seed,
+        h3_resolution=h3_resolution,
+        atmosphere_density=atmosphere_density,
+    )
+
+
+@mcp.tool
+def get_generation_noise_distribution(
+    seed: int = 1004,
+    octave: int = 10,
+    h3_resolution: int = 2,
+    buckets: int = 10,
+) -> dict:
+    """
+    Inspect the distribution of the dedicated-server H3 scatter noise.
+    Use this when generation thresholds behave oddly and you need to detect a biased hash/noise distribution.
+
+    Args:
+        seed: Generation seed.
+        octave: Noise octave index.
+        h3_resolution: H3 resolution (0-2).
+        buckets: Histogram bucket count (2-50).
+    """
+    return _server_get(
+        "/debug/noise-distribution",
+        seed=seed,
+        octave=octave,
+        h3_resolution=h3_resolution,
+        buckets=buckets,
+    )
+
+
+@mcp.tool
 def queue_server_terraform_action(action_type: int, q: int | None = None, r: int | None = None) -> dict:
     """
     Queue a terraformation action on the dedicated simulation runtime.
@@ -268,6 +337,14 @@ _PRESET_COORDINATES: dict[str, dict[str, float]] = {
     "basin":  {"lat": 0.57, "lon": 0.58},
 }
 
+_GENERATION_PROFILES: dict[str, dict[str, float | int]] = {
+    "Coast":  {"coherence": 4, "water_level": 0.71, "atmosphere_density": 0.70, "seed": 1004},
+    "Ocean":  {"coherence": 1, "water_level": 0.85, "atmosphere_density": 0.65, "seed": 1011},
+    "Arid":   {"coherence": 2, "water_level": 0.03, "atmosphere_density": 0.12, "seed": 1021},
+    "Frozen": {"coherence": 3, "water_level": 0.35, "atmosphere_density": 0.30, "seed": 1031},
+    "Basin":  {"coherence": 5, "water_level": 0.18, "atmosphere_density": 0.45, "seed": 1041},
+}
+
 _SMOKE_COMPARE_FIELDS_PROJ  = ["openOceanCells", "coastCells", "inlandWaterCells",
                                 "frozenWaterCells", "dryCells",
                                 "averageWaterRatio", "averageTemperature"]
@@ -288,6 +365,95 @@ def _safe_server_get(path: str, **params) -> dict:
         return _server_get(path, **params)
     except Exception as exc:
         return {"error": str(exc), "success": False}
+
+
+def _metric_pct(stats_map: dict, key: str) -> float:
+    entry = stats_map.get(key, {}) if isinstance(stats_map, dict) else {}
+    value = entry.get("pct", 0.0) if isinstance(entry, dict) else 0.0
+    return float(value or 0.0)
+
+
+def _build_generation_quality_row(preset_name: str, stats: dict) -> dict:
+    terrain = stats.get("terrain", {})
+    water = stats.get("water_classification", {})
+    terrain_class = stats.get("terrain_class", {})
+    quality = stats.get("quality", {})
+    temperature = stats.get("temperature", {})
+    params = stats.get("params", {})
+
+    return {
+        "preset": preset_name,
+        "seed": params.get("seed"),
+        "atmosphereDensity": params.get("atmosphere_density"),
+        "waterLevel": params.get("water_level"),
+        "dryPct": float(quality.get("dry_pct", 0.0)),
+        "humidPct": float(quality.get("humid_pct", 0.0)),
+        "saturatedPct": float(quality.get("saturated_pct", 0.0)),
+        "habitablePct": float(quality.get("habitable_pct", 0.0)),
+        "coldPct": float(quality.get("cold_pct", 0.0)),
+        "hotPct": float(quality.get("hot_pct", 0.0)),
+        "vegetationPct": _metric_pct(terrain, "Vegetation"),
+        "openOceanPct": _metric_pct(water, "OpenOcean"),
+        "frozenPct": _metric_pct(water, "FrozenWater"),
+        "coastPct": _metric_pct(water, "Coast"),
+        "inlandPct": _metric_pct(water, "InlandWater"),
+        "basinPct": _metric_pct(terrain_class, "Basin"),
+        "temperatureAvg": float(temperature.get("avg", 0.0)),
+    }
+
+
+def _append_generation_check(checks: list[dict], preset: str, name: str,
+                             passed: bool, message: str) -> None:
+    checks.append({
+        "preset": preset,
+        "check": name,
+        "passed": passed,
+        "message": message,
+    })
+
+
+def _evaluate_generation_quality(results: list[dict]) -> dict:
+    checks: list[dict] = []
+    for row in results:
+        preset = row["preset"]
+        if preset == "Coast":
+            _append_generation_check(
+                checks, preset, "coast-band-present", row["coastPct"] >= 5.0,
+                f"Coast should keep at least 5% coastal tiles, got {row['coastPct']:.1f}%.")
+            _append_generation_check(
+                checks, preset, "vegetation-present", row["vegetationPct"] >= 5.0,
+                f"Coast should keep at least 5% vegetation, got {row['vegetationPct']:.1f}%.")
+        elif preset == "Ocean":
+            _append_generation_check(
+                checks, preset, "ocean-dominant", row["openOceanPct"] >= 45.0,
+                f"Ocean should have at least 45% open ocean, got {row['openOceanPct']:.1f}%.")
+            _append_generation_check(
+                checks, preset, "not-overdry", row["dryPct"] <= 25.0,
+                f"Ocean should not be dry above 25%, got {row['dryPct']:.1f}%.")
+        elif preset == "Arid":
+            _append_generation_check(
+                checks, preset, "dry-dominant", row["dryPct"] >= 60.0,
+                f"Arid should have at least 60% dry tiles, got {row['dryPct']:.1f}%.")
+            _append_generation_check(
+                checks, preset, "limited-vegetation", row["vegetationPct"] <= 15.0,
+                f"Arid should keep vegetation under 15%, got {row['vegetationPct']:.1f}%.")
+        elif preset == "Frozen":
+            _append_generation_check(
+                checks, preset, "cold-dominant", row["coldPct"] >= 40.0,
+                f"Frozen should have at least 40% cold tiles, got {row['coldPct']:.1f}%.")
+            _append_generation_check(
+                checks, preset, "ice-present", row["frozenPct"] >= 5.0,
+                f"Frozen should have at least 5% frozen water, got {row['frozenPct']:.1f}%.")
+        elif preset == "Basin":
+            _append_generation_check(
+                checks, preset, "inland-water-present", row["inlandPct"] >= 5.0,
+                f"Basin should have at least 5% inland water, got {row['inlandPct']:.1f}%.")
+            _append_generation_check(
+                checks, preset, "basin-shapes-present", row["basinPct"] >= 10.0,
+                f"Basin should keep at least 10% terrainClass Basin, got {row['basinPct']:.1f}%.")
+
+    failures = [check for check in checks if not check["passed"]]
+    return {"passed": len(failures) == 0, "checks": checks, "failures": failures}
 
 
 def _run_smoke_sequence(preset_name: str, lat: float, lon: float,
@@ -418,6 +584,97 @@ def run_preset_smoke_test(preset_name: str, capture_screenshot: bool = False) ->
                                capture_screenshot)
     data["verdict"] = _validate_smoke(preset_name, data)
     return data
+
+
+@mcp.tool
+def run_generation_quality_suite(h3_resolution: int = 2) -> dict:
+    """
+    Run the dedicated-server generation quality suite across the 5 reference presets.
+    This is the MCP equivalent of `Tools/Test-GenerationQuality.ps1` and does not require Unity.
+
+    Args:
+        h3_resolution: H3 resolution to test (0-2).
+
+    Returns:
+        dict with `passed`, per-preset `results`, and structured `checks` / `failures`.
+    """
+    results: list[dict] = []
+    for preset_name, profile in _GENERATION_PROFILES.items():
+        stats = _server_get(
+            "/debug/generation-stats",
+            coherence=profile["coherence"],
+            water_level=profile["water_level"],
+            atmosphere_density=profile["atmosphere_density"],
+            seed=profile["seed"],
+            h3_resolution=h3_resolution,
+        )
+        results.append(_build_generation_quality_row(preset_name, stats))
+
+    verdict = _evaluate_generation_quality(results)
+    return {
+        "h3Resolution": h3_resolution,
+        "profiles": _GENERATION_PROFILES,
+        "results": results,
+        **verdict,
+    }
+
+
+@mcp.tool
+def compare_generation_profiles(profile_a: str, profile_b: str,
+                                h3_resolution: int = 2) -> dict:
+    """
+    Compare two dedicated-server generation profiles without involving Unity.
+
+    Args:
+        profile_a: First profile name. One of Coast, Ocean, Arid, Frozen, Basin.
+        profile_b: Second profile name. One of Coast, Ocean, Arid, Frozen, Basin.
+        h3_resolution: H3 resolution to test (0-2).
+
+    Returns:
+        dict with the two profile result rows and a field-by-field delta.
+    """
+    key_a = next((name for name in _GENERATION_PROFILES if name.lower() == profile_a.lower()), None)
+    key_b = next((name for name in _GENERATION_PROFILES if name.lower() == profile_b.lower()), None)
+    if key_a is None:
+        raise ValueError(f"Unknown generation profile: {profile_a}")
+    if key_b is None:
+        raise ValueError(f"Unknown generation profile: {profile_b}")
+
+    def build_row(profile_name: str) -> dict:
+        profile = _GENERATION_PROFILES[profile_name]
+        stats = _server_get(
+            "/debug/generation-stats",
+            coherence=profile["coherence"],
+            water_level=profile["water_level"],
+            atmosphere_density=profile["atmosphere_density"],
+            seed=profile["seed"],
+            h3_resolution=h3_resolution,
+        )
+        return _build_generation_quality_row(profile_name, stats)
+
+    row_a = build_row(key_a)
+    row_b = build_row(key_b)
+    fields = [
+        "dryPct", "humidPct", "saturatedPct", "habitablePct",
+        "coldPct", "hotPct", "vegetationPct", "openOceanPct",
+        "frozenPct", "coastPct", "inlandPct", "basinPct", "temperatureAvg",
+    ]
+
+    return {
+        "profiles": [key_a, key_b],
+        "h3Resolution": h3_resolution,
+        "resultA": row_a,
+        "resultB": row_b,
+        "delta": [
+            {
+                "field": field,
+                key_a: row_a[field],
+                key_b: row_b[field],
+                "delta": round(float(row_b[field]) - float(row_a[field]), 3),
+            }
+            for field in fields
+        ],
+    }
 
 
 @mcp.tool
@@ -573,6 +830,39 @@ def diagnose_hydrology_mismatch(preset_name: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Tick + projection tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool
+def get_tick_status() -> dict:
+    """
+    Get the current tick status of the simulation server.
+    Lightweight alternative to get_world_state — returns only tick info.
+
+    Returns:
+        dict with keys: tickCount, tickRunning, tickIntervalSeconds.
+    """
+    return _server_get("/tick/status")
+
+
+@mcp.tool
+def set_projection(projection_override: int = 0, water_level: float = 0.08) -> dict:
+    """
+    Change the active planet's projection override without resetting the full world state.
+    Also invalidates the tile cache so GET /bodies/{id}/tiles will regenerate with the new override.
+
+    Args:
+        projection_override: DebugCoherenceOverride enum value.
+            None_=0, Ocean=1, Arid=2, Frozen=3, Coast=4, Basin=5.
+        water_level: Global water level (0.0–1.0, default 0.08).
+
+    Returns:
+        Updated WorldState.
+    """
+    return _server_post("/commands/set-projection", projection_override=projection_override, water_level=water_level)
+
+
+# ---------------------------------------------------------------------------
 # Body hierarchy tools
 # ---------------------------------------------------------------------------
 
@@ -612,22 +902,47 @@ def get_body_tiles(body_id: str, page: int = 0, size: int = 50) -> dict:
 
 
 @mcp.tool
-def get_body_tile(body_id: str, tile_id: int) -> dict:
+def get_body_tile(body_id: str, tile_id: str) -> dict:
     """
-    Get a single surface tile by its stable tile_id (= row * cols + col).
+    Get a single surface tile by its H3 cell index string (e.g. "820007fffffffff").
     Also lists child zone IDs if any interior zones are accessible from this tile.
 
     Args:
         body_id: UUID of the spherical body.
-        tile_id: Integer tile identifier.
+        tile_id: H3 cell index string.
     """
     return _server_get(f"/bodies/{body_id}/tiles/{tile_id}")
 
 
 @mcp.tool
+def get_body_tile_at(body_id: str, lat: float, lon: float) -> dict:
+    """
+    Return the surface tile whose H3 cell contains the given latitude/longitude.
+
+    Args:
+        body_id: UUID of the spherical body.
+        lat: Latitude in degrees (-90 to 90).
+        lon: Longitude in degrees (-180 to 180).
+    """
+    return _server_get(f"/bodies/{body_id}/tiles/at", lat=lat, lon=lon)
+
+
+@mcp.tool
+def get_body_tile_neighbors(body_id: str, tile_id: str) -> dict:
+    """
+    Return the direct H3 neighbors (up to 6) of a surface tile.
+
+    Args:
+        body_id: UUID of the spherical body.
+        tile_id: H3 cell index string of the center tile.
+    """
+    return _server_get(f"/bodies/{body_id}/tiles/{tile_id}/neighbors")
+
+
+@mcp.tool
 def apply_body_tile_delta(
     body_id: str,
-    tile_id: int,
+    tile_id: str,
     water_delta: float = 0.0,
     temperature_delta: float = 0.0,
 ) -> dict:
@@ -637,7 +952,7 @@ def apply_body_tile_delta(
 
     Args:
         body_id: UUID of the spherical body.
-        tile_id: Target tile identifier.
+        tile_id: H3 cell index string of the target tile.
         water_delta: Additive water delta (positive = add water).
         temperature_delta: Additive temperature delta in °C.
     """
@@ -649,14 +964,14 @@ def apply_body_tile_delta(
 
 
 @mcp.tool
-def terraform_body_tile(body_id: str, tile_id: int, action_type: int) -> dict:
+def terraform_body_tile(body_id: str, tile_id: str, action_type: int) -> dict:
     """
     Apply a terraform action on a surface tile of a spherical body.
     The action modifier (Heat/Irrigate/Plant/Mine/Detoxify) is applied immediately.
 
     Args:
         body_id: UUID of the spherical body.
-        tile_id: Target tile identifier.
+        tile_id: H3 cell index string of the target tile.
         action_type: TerraformAction enum value. Heat=0, Irrigate=1, Plant=2, Mine=3, Detoxify=4.
     """
     return _server_post(f"/bodies/{body_id}/tiles/{tile_id}/action", action_type=action_type)
@@ -699,7 +1014,7 @@ def register_interior_zone(
     zone_type: int = 0,
     cols: int = 9,
     rows: int = 9,
-    parent_tile_id: int | None = None,
+    parent_tile_id: str | None = None,
     seed: int | None = None,
 ) -> dict:
     """
@@ -711,7 +1026,7 @@ def register_interior_zone(
         zone_type: ZoneType enum value. Cave=0, NaturalCavern=1, Building=2, Underground=3, Ship=4, Station=5.
         cols: Hex grid width (3–64).
         rows: Hex grid height (3–64).
-        parent_tile_id: Tile on the parent body where the entrance is (optional).
+        parent_tile_id: H3 cell index string of the entrance tile (optional).
         seed: Random seed for generation (optional, auto-generated if omitted).
     """
     params = {"zone_type": zone_type, "cols": cols, "rows": rows}
@@ -720,6 +1035,296 @@ def register_interior_zone(
     if seed is not None:
         params["seed"] = seed
     return _server_post(f"/bodies/{body_id}/zones", **params)
+
+
+# ---------------------------------------------------------------------------
+# Galaxy layer MCP tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool
+def get_galaxy_overview() -> dict:
+    """
+    Get a high-level summary of the galaxy: number of systems, known/hidden routes, active travels.
+    """
+    return _server_get("/galaxy")
+
+
+@mcp.tool
+def list_solar_systems() -> dict:
+    """
+    List all solar systems in the galaxy with their galactic coordinates (light-years) and body IDs.
+    """
+    return {"systems": _server_get("/galaxy/systems")}
+
+
+@mcp.tool
+def get_solar_system(system_id: str) -> dict:
+    """
+    Get details for a specific solar system including its root body and all body IDs.
+
+    Args:
+        system_id: UUID of the solar system.
+    """
+    return _server_get(f"/galaxy/systems/{system_id}")
+
+
+@mcp.tool
+def create_solar_system(
+    name: str,
+    x: float = 0.0,
+    y: float = 0.0,
+    z: float = 0.0,
+    description: str = "",
+) -> dict:
+    """
+    Create a new solar system at the given galactic position in light-years.
+
+    Args:
+        name: Human-readable name (e.g. "Kepler-442").
+        x: Galactic X coordinate in light-years.
+        y: Galactic Y coordinate in light-years.
+        z: Galactic Z coordinate in light-years.
+        description: Optional lore/description.
+    """
+    return _server_post("/galaxy/systems", name=name, x=x, y=y, z=z, description=description)
+
+
+@mcp.tool
+def add_body_to_system(
+    system_id: str,
+    name: str,
+    body_type: int = 1,
+    radius_km: float = 6371.0,
+    water_level: float = 0.0,
+    seed: int = 0,
+    parent_body_id: str | None = None,
+    orbital_semi_major_axis_au: float = 1.0,
+    orbital_eccentricity: float = 0.0,
+    orbital_inclination_deg: float = 0.0,
+    orbital_initial_phase_deg: float = 0.0,
+    orbital_period_ticks: int = 365,
+    spectral_type: str = "",
+    is_system_root: bool = False,
+) -> dict:
+    """
+    Add a body (star, planet, moon, gas giant…) to an existing solar system with orbital parameters.
+
+    Args:
+        system_id: UUID of the target solar system.
+        name: Name of the body.
+        body_type: BodyType enum. Star=0, Planet=1, Moon=2, Asteroid=3, GasGiant=4, BlackHole=5.
+        radius_km: Body radius in kilometres.
+        water_level: Water coverage fraction (0–1). 0=arid, 1=ocean.
+        seed: Terrain generation seed.
+        parent_body_id: UUID of the parent body (star for planets, planet for moons). None = system root.
+        orbital_semi_major_axis_au: Orbit radius in AU.
+        orbital_eccentricity: Orbit eccentricity (0=circle, <1=ellipse).
+        orbital_inclination_deg: Inclination relative to ecliptic in degrees.
+        orbital_initial_phase_deg: Phase angle at tick 0 in degrees.
+        orbital_period_ticks: Orbital period in simulation ticks.
+        spectral_type: Stellar spectral type (e.g. "G2V", "M5Ve"). Empty for non-stars.
+        is_system_root: If True, designates this body as the system root (no orbital params).
+    """
+    params: dict = {
+        "name": name,
+        "body_type": body_type,
+        "radius_km": radius_km,
+        "water_level": water_level,
+        "seed": seed,
+        "orbital_semi_major_axis_au": orbital_semi_major_axis_au,
+        "orbital_eccentricity": orbital_eccentricity,
+        "orbital_inclination_deg": orbital_inclination_deg,
+        "orbital_initial_phase_deg": orbital_initial_phase_deg,
+        "orbital_period_ticks": orbital_period_ticks,
+        "spectral_type": spectral_type,
+        "is_system_root": is_system_root,
+    }
+    if parent_body_id is not None:
+        params["parent_body_id"] = parent_body_id
+    return _server_post(f"/galaxy/systems/{system_id}/bodies", **params)
+
+
+@mcp.tool
+def create_stellar_route(
+    from_system_id: str,
+    to_system_id: str,
+    travel_time_modifier: float = 1.0,
+    description: str = "",
+    status: int = 0,
+) -> dict:
+    """
+    Create a stellar route between two solar systems. Distance is auto-computed from positions.
+
+    Args:
+        from_system_id: UUID of the origin system.
+        to_system_id: UUID of the destination system.
+        travel_time_modifier: Multiplier applied to travel time (>1 = slower, <1 = faster).
+        description: Optional narrative description of the route.
+        status: RouteStatus. Hidden=0, Known=1. Default Hidden.
+    """
+    return _server_post(
+        "/galaxy/routes",
+        from_system_id=from_system_id,
+        to_system_id=to_system_id,
+        travel_time_modifier=travel_time_modifier,
+        description=description,
+        status=status,
+    )
+
+
+@mcp.tool
+def list_stellar_routes(known_only: bool = False) -> dict:
+    """
+    List stellar routes. Optionally filter to only Known (revealed) routes.
+
+    Args:
+        known_only: If True, return only routes with status=Known.
+    """
+    return {"routes": _server_get("/galaxy/routes", known_only=known_only)}
+
+
+@mcp.tool
+def reveal_stellar_route(route_id: str) -> dict:
+    """
+    Reveal a hidden stellar route, making it available for space travel.
+
+    Args:
+        route_id: UUID of the stellar route to reveal.
+    """
+    return _server_post(f"/galaxy/routes/{route_id}/reveal")
+
+
+@mcp.tool
+def initiate_travel(
+    from_system_id: str,
+    to_system_id: str,
+    route_id: str,
+    faction_id: str = "",
+) -> dict:
+    """
+    Start a space journey along a known stellar route. Arrival tick is computed automatically.
+
+    Args:
+        from_system_id: UUID of the departure system.
+        to_system_id: UUID of the destination system.
+        route_id: UUID of the stellar route to use (must be Known/revealed).
+        faction_id: Optional faction identifier for the travelling party.
+    """
+    return _server_post(
+        "/travel",
+        from_system_id=from_system_id,
+        to_system_id=to_system_id,
+        route_id=route_id,
+        faction_id=faction_id,
+    )
+
+
+@mcp.tool
+def list_active_travels() -> dict:
+    """
+    List all space travels that are currently in-transit (status=InTransit).
+    """
+    return {"travels": _server_get("/travel")}
+
+
+@mcp.tool
+def get_travel_status(travel_id: str) -> dict:
+    """
+    Get the current status and details of a space travel.
+
+    Args:
+        travel_id: UUID of the space travel.
+    """
+    return _server_get(f"/travel/{travel_id}")
+
+
+@mcp.tool
+def cancel_travel(travel_id: str) -> dict:
+    """
+    Cancel an in-transit space travel. The journey is aborted immediately.
+
+    Args:
+        travel_id: UUID of the space travel to cancel.
+    """
+    return _server_post(f"/travel/{travel_id}/cancel")
+
+
+@mcp.tool
+def wipe_galaxy() -> dict:
+    """
+    DESTRUCTIVE — for testing and world-reset only.
+    Deletes all galaxy bodies, solar systems, stellar routes and space travels,
+    then re-runs the bootstrap (Sol + Alpha Terraformis, hidden route).
+    Bodies belonging to the active WorldState (e.g. Astra-Prime) are preserved.
+    Returns counts of deleted and recreated items.
+    """
+    return _server_post("/admin/wipe-galaxy")
+
+
+@mcp.tool
+def debug_generation_stats(
+    coherence: int = 4,
+    water_level: float = 0.71,
+    seed: int = 1004,
+    h3_resolution: int = 2,
+) -> dict:
+    """
+    Generate planet tiles in-memory and return terrain distribution statistics.
+    Never stored — pure read-only. Perfect for iterating on generation algorithms
+    without needing Unity.
+
+    Returns per-terrain-type counts and percentages, water/temperature stats.
+
+    Args:
+        coherence: DebugCoherenceOverride — None_=0, Ocean=1, Arid=2, Frozen=3, Coast=4, Basin=5.
+        water_level: Sea-level threshold (0.0=all land, 1.0=all ocean). Earth≈0.71.
+        seed: Random seed for tile noise.
+        h3_resolution: H3 grid resolution — 0=122 tiles, 1=842 tiles, 2=5882 tiles.
+    """
+    return _server_get(
+        "/debug/generation-stats",
+        coherence=coherence,
+        water_level=water_level,
+        seed=seed,
+        h3_resolution=h3_resolution,
+    )
+
+
+@mcp.tool
+def debug_noise_distribution(
+    seed: int = 1004,
+    octave: int = 10,
+    h3_resolution: int = 2,
+    buckets: int = 10,
+) -> dict:
+    """
+    Analyse the distribution of the internal _tile_noise_h3 function across all H3 cells.
+    Useful to detect biases for a given seed/octave combination.
+    Returns a histogram and the percentage of values below common water_level thresholds.
+
+    Args:
+        seed: Random seed.
+        octave: Noise octave index (0–15).
+        h3_resolution: H3 resolution — 0=122, 1=842, 2=5882 cells.
+        buckets: Number of histogram bins (2–50).
+    """
+    return _server_get(
+        "/debug/noise-distribution",
+        seed=seed,
+        octave=octave,
+        h3_resolution=h3_resolution,
+        buckets=buckets,
+    )
+
+
+@mcp.tool
+def bootstrap_sol() -> dict:
+    """
+    Bootstrap the Sol solar system: 8 planets + key moons, Earth as active planet.
+    Wipes all existing bodies and galaxy state first.
+    Earth has waterLevel=0.71 (Coast coherence, seed=1004).
+    """
+    return _server_post("/commands/bootstrap-sol")
 
 
 if __name__ == "__main__":
