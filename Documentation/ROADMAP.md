@@ -116,10 +116,15 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 - [ ] Étendre `MapRegion.ComputeCoherence()` avec signaux de rugosité, accumulation et structure de relief
 - [ ] Enrichir `CoherenceValidationSystem` pour utiliser ces signaux comme biais progressifs plutôt que des overrides trop binaires
 - [ ] ~~Ajouter une hydrologie simplifiée côté `PlanetaryHexGrid` pour améliorer océan/côte/aride/gel côté projection~~ *(obsolète — la projection est maintenant H3 serveur)*
-- [ ] Rendre les zones côtières projetées plus robustes via une logique de connectivité ou de voisinage enrichi (côté serveur `logic.py`)
-- [ ] Remplacer le bonus transitoire `Basin` par une vraie connectivité hydrologique H3 côté serveur (`logic.py`) : voisinage, exutoires, distinction lac/côte et accumulation cohérente
-- [ ] Vérifier que les presets debug (Ocean, Arid, Frozen, Basin, Coast) restent cohérents après enrichissement de la projection
+- [x] Rendre les zones côtières projetées plus robustes via une logique de connectivité ou de voisinage enrichi (côté serveur `logic.py`)
+- [x] Remplacer le bonus transitoire `Basin` par une vraie connectivité hydrologique H3 côté serveur (`logic.py`) : voisinage, exutoires, distinction lac/côte et accumulation cohérente
+- [x] Vérifier que les presets debug (Ocean, Arid, Frozen, Basin, Coast) restent cohérents après enrichissement de la projection
 - [ ] Mettre à jour le HUD/debug pour comparer clairement projection et local sur les nouveaux signaux si nécessaire
+
+**Livré côté serveur (v8)** :
+- `SimulationCore/terraformation_sim/logic.py` applique une passe hydrologique H3 post-génération : composantes d'eau, eau connectée à l'océan, eau enclavée, cuvettes, chenaux et côtes
+- `DedicatedServer/app/server.py` expose un bloc `hydrology` dans `/debug/generation-stats`
+- les garde-fous `generation_smoke.py`, `Tools/Test-GenerationQuality.ps1` et `Mcp/server.py::run_generation_quality_suite()` ont été réalignés et validés sur les 5 presets
 
 **Fichiers** :
 - `Game/Assets/Scripts/World/MapRegion.cs`

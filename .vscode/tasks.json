@@ -46,6 +46,63 @@
       ],
       "group": "test",
       "problemMatcher": []
+    },
+    {
+      "label": "terraformation: smoke profile",
+      "type": "shell",
+      "command": "docker",
+      "args": [
+        "compose",
+        "--profile",
+        "smoke",
+        "run",
+        "--rm",
+        "terraformation-generation-smoke"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "terraformation: mcp http probe",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "${workspaceFolder}/Mcp/ci_mcp_http_probe.py",
+        "--base-url",
+        "http://127.0.0.1:8000/mcp",
+        "--output",
+        "${workspaceFolder}/Artifacts/ci/mcp-http-probe.local.json"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "terraformation: compare smoke runs",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "${workspaceFolder}/DedicatedServer/app/compare_generation_runs.py",
+        "${input:baselineSmokeRun}",
+        "${input:candidateSmokeRun}",
+        "--thresholds",
+        "${workspaceFolder}/DedicatedServer/config/generation-smoke-thresholds.v8.json",
+        "--output",
+        "${workspaceFolder}/Artifacts/ci/generation-smoke.compare.local.json"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "baselineSmokeRun",
+      "type": "promptString",
+      "description": "Path to baseline generation smoke JSON"
+    },
+    {
+      "id": "candidateSmokeRun",
+      "type": "promptString",
+      "description": "Path to candidate generation smoke JSON"
     }
   ]
 }

@@ -560,6 +560,7 @@ Sorties utiles:
 - distribution `terrain`
 - distribution `terrain_class`
 - distribution `water_classification`
+- bloc `hydrology` (`water_components`, `ocean_connected_pct`, `enclosed_water_pct`, `shoreline_pct`, `basin_floor_pct`, `channel_pct`)
 - metriques `quality` (`dry_pct`, `humid_pct`, `saturated_pct`, `habitable_pct`, `cold_pct`, `hot_pct`)
 - temperature moyenne/min/max
 
@@ -584,6 +585,34 @@ Usage recommande:
 1. le lancer juste apres une modification de `SimulationCore/terraformation_sim/logic.py`
 2. traiter le resultat comme garde-fou de tuning avant les smoke tests Unity
 3. s'en servir comme base pour une future automatisation Docker/CI
+
+Industrialisation repo:
+
+- wrapper local: `Tools/Invoke-DedicatedServerGenerationSmoke.ps1`
+- service Compose: `terraformation-generation-smoke`
+- workflow CI: `.github/workflows/generation-smoke.yml`
+- probe MCP HTTP: `Mcp/ci_mcp_http_probe.py`
+- workflow CI MCP: `.github/workflows/mcp-http-probe.yml`
+
+Le probe MCP CI valide explicitement :
+
+1. `initialize` sur `/mcp`
+2. recuperation du header `mcp-session-id`
+3. `tools/call` sur `run_generation_quality_suite`
+4. `tools/call` sur `compare_generation_profiles`
+5. presence d'un `structuredContent.passed = true` et d'un `delta` non vide
+
+Sorties diffables generation smoke :
+
+- `generation-smoke.json`
+- `generation-smoke.normalized.json`
+- `generation-smoke.diff.json`
+- baseline versionnee: `DedicatedServer/config/generation-smoke-baseline.v8.json`
+- seuils de derive: `DedicatedServer/config/generation-smoke-thresholds.v8.json`
+
+Comparer deux runs localement :
+
+- `python DedicatedServer/app/compare_generation_runs.py <baseline.json> <candidate.json> --thresholds DedicatedServer/config/generation-smoke-thresholds.v8.json`
 
 `compare_generation_profiles` permet de comparer deux profils serveur directement sur les metriques de qualite sans passer par Unity ni par les smoke tests visuels.
 
