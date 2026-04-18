@@ -1,0 +1,51 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "terraformation: rebuild dedicated server",
+      "type": "shell",
+      "command": "docker",
+      "args": [
+        "compose",
+        "up",
+        "-d",
+        "--build",
+        "terraformation-dedicated-server"
+      ],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "terraformation: generation quality",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/Tools/Test-GenerationQuality.ps1",
+        "-BaseUrl",
+        "http://127.0.0.1:8080"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "terraformation: dedicated server smoke",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/Tools/Invoke-DedicatedServerGenerationSmoke.ps1",
+        "-BaseUrl",
+        "http://127.0.0.1:8080"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}
