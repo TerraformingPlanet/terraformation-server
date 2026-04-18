@@ -53,6 +53,7 @@ services:
     build:
       context: .
       dockerfile: DedicatedServer/Dockerfile
+    image: terraformation-dedicated-server-local:latest
     container_name: terraformation-dedicated-server
     ports:
       - "8080:8080"
@@ -64,7 +65,32 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, urllib.request; payload=json.load(urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)); raise SystemExit(0 if payload.get('service') == 'terraformation-dedicated-server' else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Dedicated-server smoke runner.
+  # Uses the same image and validates generation presets without Unity.
+  # Run with: docker compose --profile smoke run --rm terraformation-generation-smoke
+  # -------------------------------------------------------------------------
+  terraformation-generation-smoke:
+    image: terraformation-dedicated-server-local:latest
+    profiles: ["smoke"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      terraformation-dedicated-server:
+        condition: service_healthy
+    environment:
+      SERVER_MODE: ${SERVER_MODE:-postgres}
+      DATABASE_URL: postgresql+psycopg2://terra:${POSTGRES_PASSWORD:-terralocal}@postgres:5432/terraformation
+    command: ["python", "-m", "app.generation_smoke", "--base-url", "http://terraformation-dedicated-server:8080", "--json"]
+    restart: "no"
 
 volumes:
   postgres_data:

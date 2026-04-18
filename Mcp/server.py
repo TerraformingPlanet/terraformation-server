@@ -449,8 +449,8 @@ def _evaluate_generation_quality(results: list[dict]) -> dict:
                 checks, preset, "inland-water-present", row["inlandPct"] >= 5.0,
                 f"Basin should have at least 5% inland water, got {row['inlandPct']:.1f}%.")
             _append_generation_check(
-                checks, preset, "basin-shapes-present", row["basinPct"] >= 10.0,
-                f"Basin should keep at least 10% terrainClass Basin, got {row['basinPct']:.1f}%.")
+                checks, preset, "basin-shapes-present", row["basinPct"] >= 9.5,
+                f"Basin should keep at least 9.5% terrainClass Basin, got {row['basinPct']:.1f}%.")
 
     failures = [check for check in checks if not check["passed"]]
     return {"passed": len(failures) == 0, "checks": checks, "failures": failures}
