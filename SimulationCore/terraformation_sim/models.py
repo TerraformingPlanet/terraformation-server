@@ -265,6 +265,22 @@ class WorldState(BaseModel):
     region: RegionState = Field(default_factory=RegionState)
 
 
+# ── Corporation layer ──────────────────────────────────────────────────────────
+
+class ClaimedTile(BaseModel):
+    bodyId: str = ""
+    tileId: str = ""
+
+
+class CorporationData(BaseModel):
+    id: str = ""
+    name: str = ""
+    credits: float = 0.0
+    claimedTiles: list[ClaimedTile] = Field(default_factory=list)
+    score: float = 0.0
+    isAI: bool = False
+
+
 class ClientSnapshot(BaseModel):
     isValid: bool = False
     currentView: str = "Unavailable"

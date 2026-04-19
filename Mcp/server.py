@@ -1751,6 +1751,118 @@ def bootstrap_sol() -> dict:
     return _server_post("/commands/bootstrap-sol")
 
 
+# ── Sprint MCP-3: Gameplay / Corporation tools ─────────────────────────────
+
+
+@mcp.tool
+def get_tick_state() -> dict:
+    """
+    Get the current simulation tick state.
+    Returns tickCount, tickRunning, tickIntervalSeconds, and autoResume flag.
+    Does not require Unity. Wraps GET /tick/status on the DedicatedServer.
+    """
+    return _server_get("/tick/status")
+
+
+@mcp.tool
+def get_planet_overview(body_id: str) -> dict:
+    """
+    Get a composite overview of a spherical body.
+    Returns body metadata (type, radius, atmosphere density, equilibrium temperature)
+    plus tile distribution percentages (ocean, coast, inland, frozen, dry, habitable).
+
+    Args:
+        body_id: UUID of the body (from GET /bodies or get_galaxy_overview).
+    """
+    body = _server_get(f"/bodies/{body_id}")
+    tiles = _server_get(f"/bodies/{body_id}/tiles", page=0, size=200)
+
+    total = len(tiles) if isinstance(tiles, list) else 0
+    dist: dict[str, int] = {}
+    habitable = 0
+    if total > 0:
+        for tile in tiles:
+            wc = tile.get("waterClassification", "Dry")
+            dist[wc] = dist.get(wc, 0) + 1
+            if tile.get("isHabitable", False):
+                habitable += 1
+
+    def _pct(key: str) -> float:
+        return round(dist.get(key, 0) / total * 100, 1) if total > 0 else 0.0
+
+    atm = body.get("atmosphere", {})
+    return {
+        "bodyId": body_id,
+        "name": body.get("name", ""),
+        "bodyType": body.get("bodyType", ""),
+        "radiusKm": body.get("radiusKm", 0.0),
+        "equilibriumTemperature": body.get("equilibriumTemperature", 0.0),
+        "atmospherePressureKpa": atm.get("totalPressureKpa", 0.0),
+        "tileCount": total,
+        "tileDistribution": {
+            "openOceanPct":   _pct("OpenOcean"),
+            "coastPct":       _pct("Coast"),
+            "inlandWaterPct": _pct("InlandWater"),
+            "frozenWaterPct": _pct("FrozenWater"),
+            "dryPct":         _pct("Dry"),
+            "habitablePct":   round(habitable / total * 100, 1) if total > 0 else 0.0,
+        },
+    }
+
+
+@mcp.tool
+def get_corporations_list() -> dict:
+    """
+    List all registered corporations.
+    Returns each corporation's id, name, credits, hex count, score, and AI flag.
+    """
+    corps = _server_get("/game/corporations")
+    return {
+        "corporations": [
+            {
+                "id": c.get("id"),
+                "name": c.get("name"),
+                "credits": c.get("credits"),
+                "hexCount": len(c.get("claimedTiles", [])),
+                "score": c.get("score"),
+                "isAI": c.get("isAI"),
+            }
+            for c in (corps if isinstance(corps, list) else [])
+        ]
+    }
+
+
+@mcp.tool
+def get_corporation_state(corporation_id: str) -> dict:
+    """
+    Get the full state of a single corporation.
+    Returns id, name, credits, claimedTiles, score, and isAI.
+
+    Args:
+        corporation_id: The corporation's UUID.
+    """
+    return _server_get(f"/game/corporations/{corporation_id}")
+
+
+@mcp.tool
+def create_corporation(name: str, is_ai: bool = False) -> dict:
+    """
+    Register a new corporation with 1 000 starting credits.
+    Admin/debug operation — gameplay territory claims must go through Mirror.
+
+    Args:
+        name: Display name of the corporation.
+        is_ai: True if this corporation is controlled by an AI agent.
+    """
+    with httpx.Client(timeout=10) as client:
+        response = client.post(
+            f"{SIMULATION_SERVER_URL}/game/corporations",
+            json={"name": name, "is_ai": is_ai},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 if __name__ == "__main__":
     if MCP_TRANSPORT == "http":
         mcp.run(transport="streamable-http", host="0.0.0.0", port=MCP_PORT)

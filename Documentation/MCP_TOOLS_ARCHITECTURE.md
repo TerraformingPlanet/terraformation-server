@@ -197,6 +197,11 @@ Le serveur MCP a maintenant un découpage fonctionnel initial entre ces deux fam
 | `run_validation` | `/debug/validate` | simulation-server — Sprint MCP-1 |
 | `set_projection` | `/commands/set-projection` | simulation-server — Sprint MCP-2 |
 | `run_region_validation_suite` | `/commands/set-projection` + `/commands/open-region` + `/debug/*` | simulation-server — Sprint MCP-2 |
+| `get_tick_state` | `/tick/status` | simulation-server — Sprint MCP-3 |
+| `get_planet_overview` | `/bodies/{id}` + `/bodies/{id}/tiles` (composite) | simulation-server — Sprint MCP-3 |
+| `get_corporations_list` | `/game/corporations` | simulation-server — Sprint MCP-3 |
+| `get_corporation_state` | `/game/corporations/{id}` | simulation-server — Sprint MCP-3 |
+| `create_corporation` | `/game/corporations` (POST) | simulation-server admin — Sprint MCP-3 |
 
 La séparation des responsabilités est stable. `get_view_state` est le seul tool définitivement ancré sur le bridge Unity.
 
@@ -574,6 +579,11 @@ Tools exposes actuellement:
 - `run_validation` *(Sprint MCP-1)*
 - `set_projection` *(Sprint MCP-2)*
 - `run_region_validation_suite` *(Sprint MCP-2)*
+- `get_tick_state` *(Sprint MCP-3)*
+- `get_planet_overview` *(Sprint MCP-3)*
+- `get_corporations_list` *(Sprint MCP-3)*
+- `get_corporation_state` *(Sprint MCP-3)*
+- `create_corporation` *(Sprint MCP-3 — admin)*
 
 Contraintes actuelles:
 

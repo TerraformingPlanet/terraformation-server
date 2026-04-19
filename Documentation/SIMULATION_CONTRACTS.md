@@ -56,6 +56,8 @@ Toute modification d'un type partagé doit être appliquée **dans les deux fich
 | `ClientSnapshot` | `struct ClientSnapshot` | 10 champs identiques |
 | `SimulationCommand` | `struct SimulationCommand` | 8 champs identiques |
 | `SimulationEvent` | `struct SimulationEvent` | 7 champs identiques |
+| `ClaimedTile` | `struct ClaimedTile` | `bodyId`, `tileId` — Phase 7.1 |
+| `CorporationData` | `struct CorporationData` | `id`, `name`, `credits`, `claimedTiles[]`, `score`, `isAI` — Phase 7.1 |
 
 ---
 

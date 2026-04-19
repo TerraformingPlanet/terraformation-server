@@ -48,6 +48,8 @@ from .models import (
     WorldLayer,
     WorldState,
     ZoneType,
+    ClaimedTile,
+    CorporationData,
 )
 from .persistence import CellMutation, InMemoryRepository, SavedState, StateRepository, TileMutation
 
@@ -86,6 +88,9 @@ class InMemorySimulationRuntime:
         # Replayed on every open_region() call so modifications survive region reloads.
         # Key format: f"{lat:.3f},{lon:.3f}" (granularity ~0.1° ≈ 10 km)
         self._region_mutations: dict[str, dict[tuple[int, int], tuple[float, float]]] = {}
+        # Corporation registry (Phase 7.1)
+        self._corporations: dict[str, CorporationData] = {}
+        self._tile_ownership: dict[str, dict[str, str]] = {}  # body_id -> tile_id -> corp_id
         # Atmospheric event tracking (Phase 3 — SDK climate events)
         self._last_habitability_bucket: int = -1   # 0=<25% 1=<50% 2=<75% 3=100%
         self._atmosphere_formed_fired: bool = False
@@ -103,6 +108,35 @@ class InMemorySimulationRuntime:
         self._stop_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=1.0)
+
+    # ── Corporation registry (Phase 7.1) ──────────────────────────────────
+
+    def register_corporation(self, name: str, is_ai: bool = False) -> CorporationData:
+        with self._lock:
+            corp_id = str(uuid4())
+            corp = CorporationData(id=corp_id, name=name, credits=1000.0, isAI=is_ai)
+            self._corporations[corp_id] = corp
+            return corp
+
+    def list_corporations(self) -> list[CorporationData]:
+        with self._lock:
+            return list(self._corporations.values())
+
+    def get_corporation(self, corp_id: str) -> CorporationData | None:
+        with self._lock:
+            return self._corporations.get(corp_id)
+
+    def claim_tile(self, corp_id: str, body_id: str, tile_id: str) -> CorporationData:
+        with self._lock:
+            corp = self._corporations.get(corp_id)
+            if corp is None:
+                raise KeyError(f"Corporation '{corp_id}' not found")
+            existing = self._tile_ownership.get(body_id, {}).get(tile_id)
+            if existing is not None:
+                raise ValueError(f"Tile '{tile_id}' on body '{body_id}' is already claimed by '{existing}'")
+            self._tile_ownership.setdefault(body_id, {})[tile_id] = corp_id
+            corp.claimedTiles.append(ClaimedTile(bodyId=body_id, tileId=tile_id))
+            return corp
 
     def health(self) -> dict:
         with self._lock:
@@ -182,6 +216,8 @@ class InMemorySimulationRuntime:
             self._stellar_routes = {}
             self._space_travels = {}
             self._region_mutations = {}  # wipe persisted region deltas (Sprint C)
+            self._corporations = {}         # wipe corporation registry (Phase 7.1)
+            self._tile_ownership = {}       # wipe tile ownership (Phase 7.1)
 
             # ── Bootstrap Sol ───────────────────────────────────────
             earth_name = "Earth"

@@ -232,13 +232,16 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
 ### Sprint MCP-3 — API Gameplay (Phase 7 → 9)
 
-**Backlog** :
-- [ ] `/game/corporation` → `get_corporation_state`
-- [ ] `/game/market` → `get_market_state`
-- [ ] `/game/events` → `get_active_events`
-- [ ] `/game/tick` → `get_tick_state`
-- [ ] `/game/planet` → `get_planet_overview`
-- [ ] Règle : les writes (claim, achat) passent par Mirror, jamais par cette API
+**✅ terminé 2026-04-19**
+
+- [x] `get_tick_state()` → `GET /tick/status`
+- [x] `get_planet_overview(body_id)` → composite `/bodies/{id}` + tile distribution
+- [x] `get_corporations_list()` → `GET /game/corporations`
+- [x] `get_corporation_state(corporation_id)` → `GET /game/corporations/{id}`
+- [x] `create_corporation(name, is_ai)` → `POST /game/corporations` (admin MCP)
+- [x] Règle respectée : les writes gameplay (claim) passent par Mirror, jamais par cette API
+- [ ] `get_market_state` — différé Phase 7.3 (marché dynamique inexistant)
+- [ ] `get_active_events` — différé Phase 7.4 (contrats/événements inexistants)
 
 ---
 
@@ -259,11 +262,17 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 > Design de référence : [GDD.md §10-15](GDD.md) — Corporations, États, Marchés, Contrats, Contrôle de tuiles
 
 ### Phase 7.1 — Propriété de tuile
-- [ ] Créer `CorporationData` côté Python `SimulationCore` + contrat C# miroir
-- [ ] Implémenter le claim d'un hex libre — `POST /game/corporations/{id}/claim-hex`
-- [ ] Modéliser la propriété : tuile appartient à un État ou une corpo (ou personne)
-- [ ] Afficher les hexes possédés (bordure colorée par corpo) — couche ownership sur la grille Unity
-- [ ] Exposer `GET /game/corporations` sur `DedicatedServer` pour le MCP
+
+**✅ terminé 2026-04-19**
+
+- [x] Créer `CorporationData` + `ClaimedTile` côté Python `SimulationCore` + contrat C# miroir
+- [x] `CorporationRegistry` in-memory dans `InMemorySimulationRuntime` (`_corporations`, `_tile_ownership`)
+- [x] `POST /game/corporations` — créer une corpo (admin/MCP)
+- [x] `GET /game/corporations` — lister toutes les corpos
+- [x] `GET /game/corporations/{id}` — détail d'une corpo
+- [x] `POST /game/corporations/{id}/claim-hex?body_id=&tile_id=` — claim un hex libre (409 si déjà pris)
+- [x] `bootstrap_sol()` vide `_corporations` et `_tile_ownership`
+- [ ] Afficher les hexes possédés (bordure colorée par corpo) — couche ownership Unity — différé Phase 7.2
 
 ### Phase 7.2 — Bâtiments v1 (modèle entrée → sortie)
 - [ ] Implémenter le modèle tick-based : entrées (ressources + travailleurs + énergie) → sorties (ressources + déchets)

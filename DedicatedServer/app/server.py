@@ -1,8 +1,11 @@
 import os
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel as _BaseModel
 
 from terraformation_sim import (
+    ClaimedTile,
+    CorporationData,
     AnyBodyState,
     AtmosphericComposition,
     BodyBase,
@@ -732,3 +735,45 @@ def debug_validate() -> dict:
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
+
+
+# ── Game layer — Corporations (Phase 7.1) ─────────────────────────────────────
+
+class _CreateCorporationRequest(_BaseModel):
+    name: str
+    is_ai: bool = False
+
+
+@app.get("/game/corporations", response_model=list[CorporationData])
+def list_corporations() -> list[CorporationData]:
+    """List all registered corporations."""
+    return runtime.list_corporations()
+
+
+@app.get("/game/corporations/{corp_id}", response_model=CorporationData)
+def get_corporation(corp_id: str) -> CorporationData:
+    """Return a corporation by ID."""
+    corp = runtime.get_corporation(corp_id)
+    if corp is None:
+        raise HTTPException(status_code=404, detail=f"Corporation '{corp_id}' not found")
+    return corp
+
+
+@app.post("/game/corporations", response_model=CorporationData, status_code=201)
+def create_corporation(body: _CreateCorporationRequest) -> CorporationData:
+    """Register a new corporation with 1 000 starting credits."""
+    return runtime.register_corporation(name=body.name, is_ai=body.is_ai)
+
+
+@app.post("/game/corporations/{corp_id}/claim-hex", response_model=CorporationData)
+def claim_hex(corp_id: str, body_id: str, tile_id: str) -> CorporationData:
+    """Claim a free tile on behalf of a corporation.
+    Returns 404 if the corporation does not exist.
+    Returns 409 if the tile is already claimed.
+    """
+    try:
+        return runtime.claim_tile(corp_id, body_id, tile_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
