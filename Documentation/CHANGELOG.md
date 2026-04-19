@@ -4,6 +4,19 @@ Historique des phases et sprints complétés. Pour le backlog actif, voir [ROADM
 
 ---
 
+## ✅ Phase 6.75 — Split Simulation / Client / MCP (2026-04-19)
+
+**Complété** :
+- [x] `get_projection_summary`, `get_local_summary`, `get_client_snapshot` migrent vers `DedicatedServer` via `_server_get()` — fonctionnent sans Unity
+- [x] `get_view_state` marqué définitivement **debug-client only** (bridge Unity port 48621) — le serveur n'a pas connaissance de la vue active Unity
+- [x] `MCP_TOOLS_ARCHITECTURE.md` mis à jour : deux familles clarifiées (`debug-client` / `simulation-server`) avec tableau complet des tools et endpoints
+- [x] `Tools/mcp/server.py` conservé comme shim legacy, hors scope de migration active
+
+**Résultat** :
+> Le monde tourne sans la scène Unity. Unity peut afficher des snapshots serveur. Le MCP est une couche d'outillage distincte du bridge Unity, avec une seule exception permanente (`get_view_state`).
+
+---
+
 ## ✅ Phase 0 — Setup & Fondations
 
 - Installation Unity 6 LTS, VS Code, extensions C#

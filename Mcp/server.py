@@ -60,6 +60,11 @@ def get_view_state() -> dict:
     Get the current Unity view state.
     Returns active view level (SolarSystem / Planet / Local), active planet name,
     current region coordinates, selected hex cell, and terraformation progress.
+
+    NOTE — debug-client only.
+    Requires Unity to be running in Play Mode (bridge on port 48621).
+    The DedicatedServer has no knowledge of which view Unity is displaying;
+    this tool can never be migrated to the simulation server.
     """
     return _get("/debug/state")
 

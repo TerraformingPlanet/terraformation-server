@@ -89,16 +89,6 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 
 ---
 
-## En cours : Phase 6.75 — Split Simulation / Client / MCP
-
-**Restant (1 tâche)** :
-- [ ] Garder le bridge Unity uniquement pour le debug visuel et les artefacts de rendu — finaliser la migration des tools `get_view_state`, `get_projection_summary`, `get_local_summary`, `get_client_snapshot` vers le `DedicatedServer` ou les marquer définitivement comme "debug client uniquement"
-
-**Cible**
-> Le monde peut tourner sans la scène Unity, Unity peut afficher des snapshots serveur, et le MCP n'est plus un backend de fortune mais une couche d'outillage.
-
----
-
 ## En cours : Phase 6.5 — Relief & Hydrologie Locale
 
 > Design de référence : [GDD.md §8](GDD.md) — Relief & Hydrologie
@@ -404,7 +394,7 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 | Phase | Contenu | Statut |
 |---|---|---|
 | 0–6.9, Sprint 0 | Fondations, grille, génération, vues, terraformation, cosmos, split sim | ✅ Voir [CHANGELOG.md](CHANGELOG.md) |
-| 6.75 | Isolation bridge Unity | 🔄 1 tâche restante |
+| 6.75 | Isolation bridge Unity | ✅ Voir [CHANGELOG.md](CHANGELOG.md) |
 | 6.5 + Sprints A→D | Hydrologie, cohérence, persistance, AtmosphericState | 🔄 En cours |
 | MCP-1, 2, 3 | Outils cellule, tests auto, API gameplay | ⬜ À faire |
 | 7 | Corporations | ⬜ À faire (attend Sprints C + D) |

@@ -167,12 +167,33 @@ Le serveur MCP a maintenant un découpage fonctionnel initial entre ces deux fam
 - les tools visuels et client continuent à interroger le bridge Unity
 - les snapshots métier structurés (`WorldState`, `ProjectionState`, `RegionState`) et certaines actions de simulation passent par `DedicatedServer`
 
-En pratique :
+**Famille `debug-client`** — nécessite Unity en Play Mode (bridge port 48621) :
 
-- Unity reste la source pour `get_view_state`, `get_projection_summary`, `get_local_summary`, `get_client_snapshot`, `get_console_errors`, `take_screenshot`, `launch_preset`, `open_region`
-- le serveur dédié devient la source pour `get_projection_state`, `get_region_state`, `get_world_state`, `get_last_simulation_event`, `get_server_action_definitions`, `advance_simulation_tick`, `open_server_region`, `queue_server_terraform_action`, `apply_server_cell_delta`
+| Tool | Endpoint Unity | Remarque |
+|------|---------------|----------|
+| `get_view_state` | `/debug/state` | **Permanent debug-client** — le serveur ne connaît pas la vue active Unity |
+| `get_console_errors` | `/debug/console` | debug-client |
+| `take_screenshot` | `/debug/screenshot` | debug-client |
+| `launch_preset` | `/debug/launch-preset` | debug-client |
+| `open_region` | `/debug/open-region` | debug-client |
 
-Ce n'est pas encore la cible finale, mais la séparation des responsabilités est maintenant visible dans le MCP lui-même.
+**Famille `simulation-server`** — fonctionne sans Unity, interroge `DedicatedServer` :
+
+| Tool | Endpoint serveur | Remarque |
+|------|-----------------|----------|
+| `get_projection_summary` | `/projection` | migré ✅ |
+| `get_local_summary` | `/region` | migré ✅ |
+| `get_client_snapshot` | `/world` | migré ✅ |
+| `get_projection_state` | `/projection` | simulation-server |
+| `get_region_state` | `/region` | simulation-server |
+| `get_world_state` | `/world` | simulation-server |
+| `get_last_simulation_event` | `/events/last` | simulation-server |
+| `get_server_action_definitions` | `/actions/definitions` | simulation-server |
+| `advance_simulation_tick` | `/tick/advance` | simulation-server |
+| `open_server_region` | `/commands/open-region` | simulation-server |
+| `get_generation_stats` | `/debug/generation-stats` | simulation-server |
+
+La séparation des responsabilités est stable. `get_view_state` est le seul tool définitivement ancré sur le bridge Unity.
 
 ### Contrats déjà posés côté runtime Unity
 
