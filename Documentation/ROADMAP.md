@@ -207,18 +207,17 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 **GitHub Copilot est propriétaire du MCP et de l'API du jeu.**
 Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
-### Sprint MCP-1 — Outils de cellule et validation (Sprint B → C)
+### ✅ Sprint MCP-1 — Outils de cellule et validation (terminé 2026-04-19)
 
-**Backlog** :
-- [ ] Endpoint `/debug/cell?q=&r=` → tool `get_cell_detail`
-- [ ] Endpoint `/debug/hydrology` → tool `get_hydrology_stats`
-- [ ] Endpoint `/debug/validate` → tool `run_validation`
-- [ ] Exposer ces 3 tools dans `Mcp/server.py` + documenter dans `MCP_TOOLS_ARCHITECTURE.md`
-- [ ] Valider les 3 tools en Play Mode via Copilot Chat
+**Complété** :
+- [x] `GET /debug/cell?q=&r=` → `get_cell_detail(q, r)` — état complet d'un hex par coordonnées axiales
+- [x] `GET /debug/hydrology` → `get_hydrology_stats()` — distribution hydrologique de la région active
+- [x] `GET /debug/validate` → `run_validation()` — validation de cohérence sans Unity (3 règles : ocean-low-water, frozen-too-warm, dry-high-water)
+- [x] `runtime.py` : `get_region_cell`, `get_region_hydrology`, `get_region_validation` (thread-safe)
+- [x] `Mcp/server.py` : 3 tools exposés dans la famille `simulation-server`
+- [x] Documenté dans [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
-**Critères de sortie** :
-- [ ] L'agent peut sélectionner un hex par coordonnées axiales et lire son état complet
-- [ ] L'agent peut déclencher `run_validation` et obtenir la liste des incohérences sans ouvrir Unity
+**Validé 2026-04-19** : cell(3,-1) waterRatio=0.598 | hydrology 24 cells | validate 2/24 issues détectées (dry-high-water réel)
 
 ### Sprint MCP-2 — Boucle de test automatisée (Sprint C → Phase 7)
 
