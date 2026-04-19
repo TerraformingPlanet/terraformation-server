@@ -688,6 +688,74 @@ class InMemorySimulationRuntime:
             )
             return self._world_state.model_copy(deep=True)
 
+    # ── Sprint MCP-1 — Region debug helpers ─────────────────────────────────
+
+    def get_region_cell(self, q: int, r: int) -> "SimulationCellState | None":
+        """Return the cell at axial coordinates (q, r) in the current region, or None."""
+        with self._lock:
+            return next(
+                (c.model_copy(deep=True) for c in self._region_cells if c.address.q == q and c.address.r == r),
+                None,
+            )
+
+    def get_region_hydrology(self) -> dict:
+        """Return hydrology summary for the current region cells."""
+        with self._lock:
+            if not self._region_cells:
+                return {"error": "no active region", "cells": 0}
+            summary = summarize_region_cells(self._region_cells)
+            total = summary.totalCells or 1
+            return {
+                "cells": total,
+                "openOceanPct":   round(summary.openOceanCells / total * 100, 1),
+                "coastPct":       round(summary.coastCells / total * 100, 1),
+                "inlandWaterPct": round(summary.inlandWaterCells / total * 100, 1),
+                "frozenWaterPct": round(summary.frozenWaterCells / total * 100, 1),
+                "dryPct":         round(summary.dryCells / total * 100, 1),
+                "riverCells":     summary.riverCells,
+                "basinCells":     summary.basinCells,
+                "channelCells":   summary.channelCells,
+                "ridgeCells":     summary.ridgeCells,
+                "sourceCells":    summary.sourceCells,
+                "overflowCells":  summary.overflowCells,
+                "maxFlowAccumulation": summary.maxFlowAccumulation,
+            }
+
+    def get_region_validation(self) -> dict:
+        """Validate coherence of the current region cells.
+
+        Returns a list of issues (incoherent cells) and a summary score.
+        A cell is flagged if its waterClassification contradicts its waterRatio:
+        - OpenOcean but waterRatio < 0.60
+        - FrozenWater but temperature > 0°C
+        - Dry but waterRatio > 0.40
+        """
+        with self._lock:
+            if not self._region_cells:
+                return {"error": "no active region", "passed": True, "issues": []}
+            issues: list[dict] = []
+            for cell in self._region_cells:
+                q, r = cell.address.q, cell.address.r
+                wc = cell.waterClassification
+                wr = round(cell.waterRatio, 3)
+                temp = round(cell.temperature, 1)
+                from .models import WaterClassification
+                if wc == WaterClassification.OpenOcean and wr < 0.60:
+                    issues.append({"q": q, "r": r, "rule": "ocean-low-water",
+                                   "detail": f"OpenOcean but waterRatio={wr}"})
+                if wc == WaterClassification.FrozenWater and temp > 0.0:
+                    issues.append({"q": q, "r": r, "rule": "frozen-too-warm",
+                                   "detail": f"FrozenWater but temperature={temp}°C"})
+                if wc == WaterClassification.Dry and wr > 0.40:
+                    issues.append({"q": q, "r": r, "rule": "dry-high-water",
+                                   "detail": f"Dry but waterRatio={wr}"})
+            return {
+                "passed": len(issues) == 0,
+                "totalCells": len(self._region_cells),
+                "issueCount": len(issues),
+                "issues": issues,
+            }
+
     def _tick_loop(self) -> None:
         while not self._stop_event.wait(self._tick_interval_seconds):
             with self._lock:

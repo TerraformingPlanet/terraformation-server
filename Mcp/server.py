@@ -253,6 +253,54 @@ def get_generation_noise_distribution(
     )
 
 
+# ---------------------------------------------------------------------------
+# Sprint MCP-1 — Region cell inspection, hydrology, validation
+# ---------------------------------------------------------------------------
+
+@mcp.tool
+def get_cell_detail(q: int, r: int) -> dict:
+    """
+    Get the full state of a specific hex cell in the active region by axial coordinates.
+    Returns waterRatio, temperature, waterClassification, terrainType, terrainClass,
+    flowAccumulation, isHabitable and all other SimulationCellState fields.
+
+    Requires an active region (call open_server_region first).
+
+    Args:
+        q: Axial q coordinate of the cell.
+        r: Axial r coordinate of the cell.
+    """
+    return _server_get("/debug/cell", q=q, r=r)
+
+
+@mcp.tool
+def get_hydrology_stats() -> dict:
+    """
+    Get hydrology distribution statistics for the current active region.
+    Returns percentages per water classification (ocean, coast, inland, frozen, dry)
+    and terrain class breakdown (basin, ridge, channel, source cells).
+
+    Requires an active region (call open_server_region first).
+    """
+    return _server_get("/debug/hydrology")
+
+
+@mcp.tool
+def run_validation() -> dict:
+    """
+    Validate the coherence of the active region cells without opening Unity.
+    Flags cells where waterClassification contradicts waterRatio or temperature:
+    - OpenOcean but waterRatio < 0.60
+    - FrozenWater but temperature > 0°C
+    - Dry but waterRatio > 0.40
+
+    Returns: passed (bool), issueCount, and a list of flagged cells with their rule name.
+
+    Requires an active region (call open_server_region first).
+    """
+    return _server_get("/debug/validate")
+
+
 @mcp.tool
 def queue_server_terraform_action(action_type: int, q: int | None = None, r: int | None = None) -> dict:
     """

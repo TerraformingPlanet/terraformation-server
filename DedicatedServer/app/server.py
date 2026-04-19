@@ -697,3 +697,38 @@ def debug_noise_distribution(
             "avg": round(sum(values) / total, 4),
         },
     }
+
+
+@app.get("/debug/cell")
+def debug_cell(q: int, r: int) -> dict:
+    """Return the full state of the hex cell at axial coordinates (q, r) in the current region.
+    Returns 404 if no region is loaded or the cell is not found.
+    """
+    cell = runtime.get_region_cell(q, r)
+    if cell is None:
+        raise HTTPException(status_code=404, detail=f"Cell ({q}, {r}) not found in active region")
+    return cell.model_dump()
+
+
+@app.get("/debug/hydrology")
+def debug_hydrology() -> dict:
+    """Return hydrology distribution statistics for the current region.
+    Returns percentages per water classification and terrain class (basin, ridge, channel…).
+    Returns 404 if no region is active.
+    """
+    result = runtime.get_region_hydrology()
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.get("/debug/validate")
+def debug_validate() -> dict:
+    """Validate coherence of the active region cells.
+    Flags cells where waterClassification contradicts waterRatio or temperature.
+    Returns 404 if no region is active.
+    """
+    result = runtime.get_region_validation()
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
