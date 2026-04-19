@@ -6,6 +6,8 @@ from pydantic import BaseModel as _BaseModel
 from terraformation_sim import (
     ClaimedTile,
     CorporationData,
+    BuildingData,
+    BuildingType,
     AnyBodyState,
     AtmosphericComposition,
     BodyBase,
@@ -784,6 +786,49 @@ def unclaim_hex(corp_id: str, body_id: str, tile_id: str) -> CorporationData:
     """Release a previously claimed tile from a corporation."""
     try:
         return runtime.unclaim_tile(corp_id, body_id, tile_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+# ── Game layer — Buildings (Phase 7.2) ────────────────────────────────────────
+
+@app.post("/game/corporations/{corp_id}/buildings", response_model=BuildingData, status_code=201)
+def construct_building(corp_id: str, body_id: str, tile_id: str, building_type: int) -> BuildingData:
+    """Construct a building on a tile claimed by the corporation.
+    Returns 404 if corp not found, 409 if tile not claimed or building type already present.
+    """
+    try:
+        return runtime.construct_building(corp_id, body_id, tile_id, BuildingType(building_type))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.get("/game/corporations/{corp_id}/buildings", response_model=list[BuildingData])
+def list_buildings(corp_id: str) -> list[BuildingData]:
+    """List all buildings owned by a corporation."""
+    return runtime.list_buildings(corp_id)
+
+
+@app.delete("/game/corporations/{corp_id}/buildings/{building_id}", status_code=204)
+def demolish_building(corp_id: str, building_id: str) -> None:
+    """Demolish a building. Returns 404 if not found, 409 if corp mismatch."""
+    try:
+        runtime.demolish_building(corp_id, building_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.patch("/game/corporations/{corp_id}/buildings/{building_id}/workers", response_model=BuildingData)
+def set_worker_ratio(corp_id: str, building_id: str, worker_ratio: float) -> BuildingData:
+    """Update the worker ratio (0.0–1.0) for a building."""
+    try:
+        return runtime.set_building_worker_ratio(corp_id, building_id, worker_ratio)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:

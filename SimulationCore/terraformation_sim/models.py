@@ -272,6 +272,42 @@ class ClaimedTile(BaseModel):
     tileId: str = ""
 
 
+# ── Buildings ─────────────────────────────────────────────────────────────────
+
+class BuildingType(IntEnum):
+    Mine        = 0
+    Farm        = 1
+    EnergyPlant = 2
+    Research    = 3
+
+
+class ResourceType(IntEnum):
+    Minerals       = 0
+    Food           = 1
+    Energy         = 2
+    ResearchPoints = 3
+    Waste          = 4
+
+
+# Production par tick pour chaque type de bâtiment (ResourceType → delta par tick)
+BUILDING_CONFIGS: dict[BuildingType, dict[ResourceType, float]] = {
+    BuildingType.Mine:        {ResourceType.Minerals: 2.0, ResourceType.Waste: 0.5},
+    BuildingType.Farm:        {ResourceType.Food: 3.0},
+    BuildingType.EnergyPlant: {ResourceType.Energy: 5.0, ResourceType.Waste: 1.0},
+    BuildingType.Research:    {ResourceType.Energy: -1.0, ResourceType.ResearchPoints: 1.0},
+}
+
+
+class BuildingData(BaseModel):
+    id: str = ""
+    buildingType: BuildingType = BuildingType.Mine
+    tileId: str = ""
+    bodyId: str = ""
+    corpId: str = ""
+    workerRatio: float = 1.0
+    ticksActive: int = 0
+
+
 class CorporationData(BaseModel):
     id: str = ""
     name: str = ""
@@ -279,6 +315,8 @@ class CorporationData(BaseModel):
     claimedTiles: list[ClaimedTile] = Field(default_factory=list)
     score: float = 0.0
     isAI: bool = False
+    buildings: list[BuildingData] = Field(default_factory=list)
+    resources: dict[str, float] = Field(default_factory=dict)
 
 
 class ClientSnapshot(BaseModel):

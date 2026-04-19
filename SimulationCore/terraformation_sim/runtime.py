@@ -50,6 +50,10 @@ from .models import (
     ZoneType,
     ClaimedTile,
     CorporationData,
+    BuildingData,
+    BuildingType,
+    BUILDING_CONFIGS,
+    ResourceType,
 )
 from .persistence import CellMutation, InMemoryRepository, SavedState, StateRepository, TileMutation
 
@@ -91,6 +95,8 @@ class InMemorySimulationRuntime:
         # Corporation registry (Phase 7.1)
         self._corporations: dict[str, CorporationData] = {}
         self._tile_ownership: dict[str, dict[str, str]] = {}  # body_id -> tile_id -> corp_id
+        # Building registry (Phase 7.2)
+        self._buildings: dict[str, BuildingData] = {}  # building_id -> BuildingData
         # Atmospheric event tracking (Phase 3 — SDK climate events)
         self._last_habitability_bucket: int = -1   # 0=<25% 1=<50% 2=<75% 3=100%
         self._atmosphere_formed_fired: bool = False
@@ -150,6 +156,74 @@ class InMemorySimulationRuntime:
             corp.claimedTiles = [ct for ct in corp.claimedTiles
                                   if not (ct.bodyId == body_id and ct.tileId == tile_id)]
             return corp
+
+    # ── Building registry (Phase 7.2) ──────────────────────────────────────────
+
+    def construct_building(self, corp_id: str, body_id: str, tile_id: str, building_type: BuildingType) -> BuildingData:
+        with self._lock:
+            corp = self._corporations.get(corp_id)
+            if corp is None:
+                raise KeyError(f"Corporation '{corp_id}' not found")
+            owner = self._tile_ownership.get(body_id, {}).get(tile_id)
+            if owner != corp_id:
+                raise ValueError(f"Tile '{tile_id}' on body '{body_id}' is not claimed by '{corp_id}'")
+            # 1 bâtiment par type par tuile
+            for b in self._buildings.values():
+                if b.corpId == corp_id and b.bodyId == body_id and b.tileId == tile_id and b.buildingType == building_type:
+                    raise ValueError(f"A {building_type.name} already exists on tile '{tile_id}'")
+            building_id = str(uuid4())
+            building = BuildingData(
+                id=building_id,
+                buildingType=building_type,
+                tileId=tile_id,
+                bodyId=body_id,
+                corpId=corp_id,
+            )
+            self._buildings[building_id] = building
+            corp.buildings.append(building)
+            return building
+
+    def demolish_building(self, corp_id: str, building_id: str) -> None:
+        with self._lock:
+            building = self._buildings.get(building_id)
+            if building is None:
+                raise KeyError(f"Building '{building_id}' not found")
+            if building.corpId != corp_id:
+                raise ValueError(f"Building '{building_id}' does not belong to '{corp_id}'")
+            del self._buildings[building_id]
+            corp = self._corporations.get(corp_id)
+            if corp:
+                corp.buildings = [b for b in corp.buildings if b.id != building_id]
+
+    def list_buildings(self, corp_id: str) -> list[BuildingData]:
+        with self._lock:
+            return [b for b in self._buildings.values() if b.corpId == corp_id]
+
+    def get_building(self, building_id: str) -> BuildingData | None:
+        with self._lock:
+            return self._buildings.get(building_id)
+
+    def set_building_worker_ratio(self, corp_id: str, building_id: str, worker_ratio: float) -> BuildingData:
+        with self._lock:
+            building = self._buildings.get(building_id)
+            if building is None:
+                raise KeyError(f"Building '{building_id}' not found")
+            if building.corpId != corp_id:
+                raise ValueError(f"Building '{building_id}' does not belong to '{corp_id}'")
+            building.workerRatio = max(0.0, min(1.0, worker_ratio))
+            return building
+
+    def _process_building_production(self) -> None:
+        """Appelé à chaque tick — crédite les ressources de chaque corpo selon ses bâtiments actifs."""
+        for building in self._buildings.values():
+            corp = self._corporations.get(building.corpId)
+            if corp is None:
+                continue
+            config = BUILDING_CONFIGS.get(building.buildingType, {})
+            for resource_type, delta in config.items():
+                key = resource_type.name
+                corp.resources[key] = corp.resources.get(key, 0.0) + delta * building.workerRatio
+            building.ticksActive += 1
 
     def health(self) -> dict:
         with self._lock:
@@ -231,6 +305,7 @@ class InMemorySimulationRuntime:
             self._region_mutations = {}  # wipe persisted region deltas (Sprint C)
             self._corporations = {}         # wipe corporation registry (Phase 7.1)
             self._tile_ownership = {}       # wipe tile ownership (Phase 7.1)
+            self._buildings = {}            # wipe building registry (Phase 7.2)
 
             # ── Bootstrap Sol ───────────────────────────────────────
             earth_name = "Earth"
@@ -862,6 +937,9 @@ class InMemorySimulationRuntime:
                 message="Tick advanced",
                 hasRegion=False,
             )
+        # Production des bâtiments (Phase 7.2)
+        self._process_building_production()
+
         # Persist every 10 ticks to avoid per-tick overhead
         if self._tick_count % 10 == 0:
             self._repo.save_world_state(self._world_state, self._tick_interval_seconds)
