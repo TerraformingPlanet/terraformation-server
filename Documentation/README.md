@@ -8,7 +8,7 @@ Index d'entrée pour le projet. Commence ici si tu découvres le dépôt.
 
 | # | Fichier | Intention |
 |---|---------|-----------|
-| 1 | [GDD.md](GDD.md) | Vision du jeu, concept central, système de vues, navigation |
+| 1 | [GDD.md](GDD.md) | **Document de design unique** — vision, concept, systèmes de jeu (vues, tuiles, corporations, marchés, contrats, États, IA) |
 | 2 | [ARCHITECTURE.md](ARCHITECTURE.md) | Stack technique, décisions d'architecture, structure cible des couches |
 | 3 | [REPOSITORY_STRUCTURE.md](REPOSITORY_STRUCTURE.md) | Découpage monorepo en sous-projets (`Game/`, `Mcp/`, `DedicatedServer/`, `SimulationCore/`) |
 | 4 | [ROADMAP.md](ROADMAP.md) | **Backlog actif uniquement** — phases et sprints en cours ou à venir |
@@ -26,6 +26,15 @@ Index d'entrée pour le projet. Commence ici si tu découvres le dépôt.
 | [AI_DEBUG_WORKFLOW.md](AI_DEBUG_WORKFLOW.md) | Workflow AI/debug : comment utiliser Copilot pour débugger sans improviser |
 | [TEST_PRESETS_CHECKLIST.md](TEST_PRESETS_CHECKLIST.md) | Checklist de validation pour les presets Ocean, Arid, Frozen, Coast, Basin |
 | [MapGeneration_rule.md](MapGeneration_rule.md) | Règles de génération de carte et de cohérence projection → local |
+
+---
+
+## Design du jeu (notes de travail)
+
+| Dossier | Intention |
+|---------|-----------|
+| [description_jeu/Description_du_jeu.md](description_jeu/Description_du_jeu.md) | Premier brouillon de description du jeu (source du GDD) |
+| [description_jeu/questions/](description_jeu/questions/) | Notes de design par thème : contrats, marchés, bâtiments, tour de jeu, IA, tuiles — base de travail ayant alimenté le GDD |
 
 ---
 
@@ -50,7 +59,7 @@ Index d'entrée pour le projet. Commence ici si tu découvres le dépôt.
 
 | Dossier | Intention |
 |---------|-----------|
-| [Archive/](Archive/) | Notes de recherche et scratchpads — pas de la documentation de projet active |
+| [Archive/](Archive/) | Notes de recherche, scratchpads et documents fusionnés — pas de documentation active |
 
 ---
 
@@ -58,6 +67,8 @@ Index d'entrée pour le projet. Commence ici si tu découvres le dépôt.
 
 - **Nouvelles décisions d'architecture** → `ARCHITECTURE.md` (section "Décisions d'Architecture")
 - **Nouveau type de contrat partagé Python ↔ C#** → `SIMULATION_CONTRACTS.md` (mettre à jour les deux colonnes)
+- **Nouvelle mécanique de jeu** → `GDD.md` section correspondante
+- **Nouvelle tâche / phase** → `ROADMAP.md` avec lien vers la section GDD concernée
 - **Nouveau tool MCP** → `MCP_TOOLS_ARCHITECTURE.md`
 - **Phase terminée** → déplacer de `ROADMAP.md` vers `CHANGELOG.md`
 - **Doc spécifique à une brique** → `{Brique}/README.md` (co-localisé avec le code, pas ici)

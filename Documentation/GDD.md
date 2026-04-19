@@ -1,22 +1,90 @@
 # Game Design Document — Terraformation & Colonisation Spatiale
 
-## Vision
-
-Un jeu de gestion/simulation multijoueur asynchrone en vue top-down 3D sur une grille hexagonale où des corporations s'affrontent et coopèrent pour terraformer une planète hostile, dominer une bourse commune et devenir la corporation numéro 1.
-
-Inspiré de : **Victoria 3 / Hearts of Iron / Crusader Kings 3**
+> Document de référence unique pour le design du jeu.
+> Notes de travail détaillées par thème : `Documentation/description_jeu/questions/`
 
 ---
 
-## Concept Central
+## 1. Vision & Concept Central
 
-La planète est un monde mort. Des corporations (joueurs et IA) débarquent, s'emparent de territoires hexagonaux, construisent des infrastructures et modifient progressivement l'environnement pour le rendre habitable — tout en cherchant à écraser économiquement leurs concurrents.
+Jeu de **simulation / exploration / colonisation spatiale en temps discret (tick-based)**, multijoueur asynchrone.
+
+Le joueur incarne une **corporation** dont l'objectif est :
+- d'étendre son influence territoriale
+- de contrôler des tuiles pour accéder aux marchés
+- de générer du profit via production, commerce et contrats
+- de terraformer des mondes hostiles pour les rendre habitables
+
+La planète est un monde mort. Des corporations (joueurs et IA) débarquent, s'emparent de territoires hexagonaux, construisent des infrastructures et modifient progressivement l'environnement — tout en cherchant à écraser économiquement leurs concurrents.
 
 Le monde tourne **en temps réel sur un serveur dédié**, même quand les joueurs sont déconnectés. Chaque joueur se connecte quand il le peut, prend ses décisions, et revient plus tard voir l'évolution.
 
+## 2. Inspirations
+
+| Jeu | Ce qu'on emprunte |
+|---|---|
+| Victoria 3 | Économie dynamique, production en chaîne, mobilité sociale, marché mondial |
+| Per Aspera | Planète + tuiles + simulation de terraformation |
+| Hearts of Iron IV | Tempo de jeu, progression en temps réel, événements |
+| Crusader Kings 3 | Intrigues, événements narratifs, rivalités entre entités |
+| Civilization VI | Grille hexagonale, types de terrain, amélioration de cases |
+| Stellaris | Exploration spatiale, découvertes alien, colonisation |
+
 ---
 
-## Système de Vues (3 niveaux)
+---
+
+## 3. Structure de l'univers
+
+```
+Galaxie
+ └── Systèmes stellaires
+      └── Corps célestes (planètes, lunes…)
+           └── Tuiles (grille H3 — hexagones géospatiaux)
+```
+
+- Chaque tuile est l'unité de base exploitable
+- Une tuile appartient à un **État**, une **corporation**, ou à personne (espace non colonisé)
+- Les planètes sont représentées avec une grille **H3** (hexagones géospatiaux hiérarchiques)
+
+---
+
+## 4. Système de temps
+
+- **1 tick = 1 jour** (valeur de référence, ajustable pour l'équilibrage)
+- À chaque tick : production des bâtiments, consommation des ressources, mise à jour des marchés, évolution de la population et de l'écologie
+
+### File de décisions (énergie d'action)
+- Un joueur dispose d'un quota de **décisions par jour** (ex : 10), rechargé chaque tick
+- Toutes les décisions ont le même coût — ajustable pour l'équilibrage
+- Les décisions ont un **délai d'effet variable** selon leur nature :
+  - Signer un contrat → quasi-immédiat
+  - Construire un bâtiment → délai long (réunir ressources, passer le mot)
+  - Terraformer → très long
+
+---
+
+## 5. Les trois moteurs du jeu
+
+### 5.1 Moteur économique
+- Gestion des marchés : offre/demande à chaque tick
+- Les bâtiments et la population consomment des ressources
+- Les prix se propagent entre tuiles connectées, atténués par la distance
+
+### 5.2 Moteur écologique (= terraformation)
+- La pollution est une **forme de terraformation négative**
+- Chaque tuile a des **indicateurs environnementaux** : O₂, CO₂, azote, température
+- Une fonction continue détermine si une espèce peut survivre ou subir des malus (pas de seuil binaire — malus croissants selon l'écart)
+- La nature évolue passivement : arbres, animaux, biodiversité dynamique
+- Exemple de chaîne : déforestation → perte d'animaux → moins de conversion CO₂→O₂ → dégradation atmosphérique
+
+### 5.3 Moteur joueur
+- La corporation décide, dépense des décisions, attend les effets
+- Si les ressources manquent : passer un contrat, ou les transporter depuis un autre monde
+
+---
+
+## 6. Système de Vues Unity (3 niveaux)
 
 Le jeu propose trois niveaux de vue imbriqués. La navigation se fait par **clic** et **retour contextuel** dans une seule scène, sans écran de chargement.
 
@@ -58,11 +126,11 @@ La vue planétaire propose deux sous-vues basculées par un toggle :
 
 ---
 
-## Gameplay
+## 7. Tuiles & Terrain
 
 ### Grille Hexagonale
 
-- La planète est représentée par une grille d'hexagones (coordonnées axiales)
+- La planète est représentée par une grille d'hexagones H3 (coordonnées axiales)
 - Chaque hexagone a un **type de terrain** et des **propriétés environnementales**
 - Les joueurs cliquent sur les hexagones pour interagir
 - Le relief local influence la circulation de l'eau, la formation des bassins, les côtes et les rivières
@@ -81,164 +149,260 @@ La vue planétaire propose deux sous-vues basculées par un toggle :
 ### Propriétés par hexagone
 
 Chaque hex possède des valeurs dynamiques :
-- **Température** (°C)
-- **Taux d'oxygène** (%)
-- **Humidité / eau disponible**
-- **Richesse minérale** (fer, rares)
-- **Énergie ambiante** (solaire, géothermique)
+- **Température** (°C), **O₂/CO₂/azote** (%), **Humidité / eau disponible**
+- **Richesse minérale** (fer, rares), **Énergie ambiante** (solaire, géothermique)
 - **Altitude locale** et rôle topographique (crête, pente, bassin, chenal)
 - **Classe hydrologique** : océan ouvert, côte, eau intérieure, sec, gelé
 
-### Relief & hydrologie
+---
+
+## 8. Relief & Hydrologie
 
 - Une case basse se remplit plus facilement qu'une case haute si de l'eau arrive depuis l'amont
-- Une montagne ou une crête draine l'eau vers les hex voisins plus bas
-- Une cuvette peut former un **lac** ou une **mer intérieure** si l'eau s'y accumule sans échappatoire immédiate
-- Une zone basse connectée à une masse d'eau ouverte devient **côtière** puis **océanique** selon sa connectivité
+- Une cuvette peut former un **lac** ou une **mer intérieure** si l'eau s'y accumule sans échappatoire
+- Une zone basse connectée à une masse d'eau ouverte devient **côtière** puis **océanique**
 - Aux pôles ou dans les régions froides, l'eau disponible peut devenir **eau gelée / glace dominante**
-- La vue locale doit rester cohérente avec la vue projetée :
-  - case projetée océanique → région locale majoritairement marine
-  - case projetée aride → région locale très sèche
-  - case projetée gelée → région locale dominée par la glace ou l'eau gelée
+- La vue locale doit rester cohérente avec la vue projetée (océanique → marine, aride → sèche, gelée → glace)
 
-### État actuel de l'implémentation hydrologique
-
-- Le relief local calcule déjà des classes topographiques lisibles : **crête, pente, bassin, chenal, source**
-- L'eau locale est déjà classée en **océan ouvert, côte, eau intérieure, sec, gelé**
-- Les rivières suivent un **champ d'écoulement pré-calculé** au lieu de recalculer une pente locale différente à chaque pas
-- Le HUD local expose déjà les informations de debug utiles : classe hydrologique, classe de relief, accumulation de flux, voisin aval
-- Le rendu local colore déjà légèrement les hex selon leur état hydrologique, sans remplacer le biome source
-
-### Ce qui reste à pousser côté gameplay
-
-- Le **débordement des bassins** n'est pas encore simulé : un bassin fermé retient aujourd'hui l'eau mais n'ouvre pas encore un exutoire crédible
-- La distinction **côte vs océan** repose encore sur une heuristique locale simple, pas sur une connectivité globale robuste
-- Les futures actions de terraformation devront pouvoir exploiter explicitement ces classes d'eau et de relief
-
-### Classes d'eau ciblées
+### Classes d'eau
 
 | Classe | Description gameplay |
 |---|---|
-| Océan ouvert | Masse d'eau dominante, connectée à grande échelle, pas d'occupation terrestre locale significative |
-| Côte | Transition terre/eau, zone favorable aux infrastructures littorales futures |
-| Eau intérieure | Lac ou mer intérieure formé dans un bassin ou un chenal fermé |
-| Sec | Zone sans eau significative, typique des reliefs drainants ou régions arides |
-| Gelé | Eau ou surface dominée par le gel, typique des pôles et hauts reliefs froids |
+| Océan ouvert | Masse d'eau dominante, connectée à grande échelle |
+| Côte | Transition terre/eau, zone favorable aux infrastructures littorales |
+| Eau intérieure | Lac ou mer intérieure formé dans un bassin fermé |
+| Sec | Zone sans eau significative, typique des reliefs drainants |
+| Gelé | Surface dominée par le gel, typique des pôles et hauts reliefs froids |
 
-### Actions de Terraformation
-
-- Chauffer l'atmosphère
-- Irriguer (convertir glace → eau)
-- Planter (végétaliser, produire O₂)
-- Miner
-- Neutraliser toxines
-
-Chaque action a un **coût en crédits/ressources** et un **temps de progression** (ticks).
-
-### Impact du relief sur le gameplay futur
-
-- Les lacs et mers intérieures deviennent des points d'intérêt économiques et logistiques
-- Les côtes créent des régions mixtes plus riches mais plus complexes à aménager
-- Les chaînes montagneuses créent des barrières naturelles et modifient les trajectoires de ruissellement
-- Les régions très basses et humides peuvent devenir plus favorables à l'irrigation et à la végétation
-- Les régions hautes, sèches ou gelées demandent davantage d'investissement de terraformation
+### État actuel de l'implémentation
+- Classes topographiques calculées : **crête, pente, bassin, chenal, source**
+- Eau locale classée en **océan ouvert, côte, eau intérieure, sec, gelé**
+- Rivières suivant un **champ d'écoulement pré-calculé**
+- HUD local exposant classe hydrologique, relief, accumulation de flux, voisin aval
 
 ---
 
-## Corporations
+## 9. Bâtiments
 
-### Structure d'une Corporation
-
-- **Nom & logo** (couleur distinctive)
-- **Solde en crédits**
-- **Hexagones possédés** (territoire)
-- **Bâtiments construits**
-- **Score global** (crédits + territoire + influence)
-
-### Types de Corporations
-
-- **Joueurs humains** — connectés de façon asynchrone
-- **Corpos IA (NPC)** — remplissent le monde et concurrencent les joueurs
-  - Stratégie expansionniste
-  - Stratégie économiste
-  - Stratégie militariste / sabotage
-
-### Bâtiments
+### Modèle général
+```
+Entrées (ressources + travailleurs + énergie)
+        ↓
+    Bâtiment
+        ↓
+Sorties (ressources + déchets + effets par tick)
+```
 
 | Bâtiment | Fonction |
 |---|---|
 | Mine | Extraction de minerais par tick |
-| Serre | Production O₂ + nourriture |
-| Raffinerie | Transformation ressources brutes → crédits |
+| Ferme / Serre | Production O₂ + nourriture |
+| Raffinerie | Transformation ressources brutes |
 | Centrale | Production d'énergie |
-| Laboratoire | Génère des points de tech |
+| Laboratoire | Génère des points de tech, irradie la connaissance |
 | Quartier Général | Augmente le score d'influence |
+| Bureau administratif | Permet à l'État de proposer des contrats |
+| Bâtiment de traitement | Neutralise les déchets accumulés |
+
+### Travailleurs
+- Population locale + salariés corpo (considérés comme habitants de la tuile)
+- Ratio 0→100% : 100% = plein rendement, 0% = bâtiment abandonné
+- Si la corpo retire ses salariés → l'État peut nationaliser
+
+### Réseau énergétique
+- Une centrale produit X énergie, distribuée aux tuiles adjacentes via segments de réseau limitrophes
+- Chaque segment a une capacité maximale — plusieurs segments augmentent la charge
+- L'énergie est disponible sur le marché local
+
+### Déchets
+- S'accumulent sur la tuile à chaque tick
+- Sans bâtiment de traitement → impact écologique négatif (faune, flore)
+
+### Technologies et évolution
+- Une technologie peut **améliorer** une entrée (ex : pioche → dynamite = +rendement, +risque) ou la **remplacer** (pioche → foreuse = moins de travailleurs)
+- Upgrade à appliquer **bâtiment par bâtiment** — crée des chaînes de production
+- La connaissance **irradie passivement** avec le temps vers les autres entités
+
+### Épuisement et reconversion
+- Ressource épuisée → bâtiment inutile → **abandonner** (risque d'événements négatifs) ou **reconvertir** (construire par-dessus)
+
+### Actions de Terraformation
+- Chauffer l'atmosphère, irriguer (glace → eau), planter (O₂), miner, neutraliser toxines
+- Chaque action a un **coût en ressources** et un **délai en ticks**
+
+---
+
+## 10. Corporations
+
+### Structure d'une Corporation
+- **Nom & logo** (couleur distinctive)
+- **Solde en crédits**, hexagones possédés, bâtiments construits
+- **Score global** (crédits + territoire + influence)
+- **Réputation globale** (publique) + **relation bilatérale** par paire (Corp ↔ État, Corp ↔ Corp)
+
+### Types de Corporations
+- **Joueurs humains** — connectés de façon asynchrone
+- **Corpos IA** — contrôlées par simulation, pilotables par agent LLM
+  - Stratégie expansionniste, économiste, militariste / sabotage
 
 ### Claim de territoire
-
-- Un joueur peut **réclamer un hex libre** pour un coût en crédits
-- Les hexagones d'une corpo ennemie ne peuvent pas être réclamés directement (sabotage ou rachat)
+- Réclamer un hex libre en y construisant une infrastructure
+- Créer un **État vassal** à partir de tuiles entièrement contrôlées (évolue selon les mêmes règles, peut gagner en autonomie)
 
 ---
 
-## Économie & Bourse Commune
+## 11. États & Gouvernements
+
+### Caractéristiques
+- Possèdent des tuiles, bâtiments de production, population
+- **Type** (capitaliste, nationaliste, mixte…) → influence le comportement et le seuil de tolérance
+- **Taux de corruption** : passif (moins efficace) ou exploitable par les corporations
+- **Bureaucratie** (stat RPG) : délai des décisions = base × (1 + % bureaucratie)
+- Contrôlés par la simulation IA, pilotables par un **agent LLM** (décisions stratégiques + réactions événementielles)
+
+### Seuil de tolérance & Nationalisation
+- Chaque corpo présente a un score calculé (puissance, comportement, contrats)
+- Dépassement du seuil → nationalisation progressive (délai = bureaucratie + corruption)
+- Pendant le délai : la corpo peut corrompre, négocier, activer un contrat spécial
+
+---
+
+## 12. Marchés
+
+### Hiérarchie
+```
+Tuile → Planète → Système stellaire → Marché global (inter-étatique, optionnel)
+```
+
+### Prix : offre et demande dynamique
+- Propagation à chaque tick entre tuiles connectées, **atténuée par la distance**
+  - Exemple : pénurie tuile A → -50% sur A, -30% sur B (1 saut), -10% sur C (2 sauts)
+
+### Population et niveaux de richesse
+- Distribuée en **catégories sociales** (pauvres → classes moyennes → riches) avec besoins différents
+- La richesse **évolue** : un ouvrier mieux payé monte de catégorie après X ticks
+- **Migrations** possibles vers des tuiles plus attractives en cas de déséquilibre
 
 ### Ressources tradables
-
 - Fer, O₂, Eau, Énergie, Tech, Nourriture
 
-### Mécanique de marché
+### Routes commerciales
+1. Lancer une **expédition d'exploration** entre deux tuiles
+2. Chemin calculé avec modificateurs terrain (ex : montagne = +10 ticks)
+3. Construire la route physique → les tuiles se voient sur le marché
+- Routes spatiales : même principe, infrastructure spatioport (à préciser)
 
-- **Prix dynamiques** : fluctuent selon l'offre et la demande globale (toutes corpos confondues)
-- Chaque tick, le serveur recalcule les prix selon les volumes échangés
-- Les corpos peuvent passer des **ordres d'achat/vente** (order book simplifié)
-- Les corpos IA participent aussi au marché et influencent les prix
-
-### Objectif économique
-
-Faire fructifier sa corpo, acheter bas, vendre haut, investir dans des infrastructures rentables.
+### Régulation
+- **Marché national** : régulé par l'État via taxes/quotas, influençable par corruption
+- **Marché global** : organisme inter-étatique optionnel (événement ou action volontaire), corruptible par les corporations
 
 ---
 
-## Événements Aléatoires
+## 13. Contrats
 
-Des événements se déclenchent aléatoirement (tirage pondéré par tick serveur) :
+### Qui peut proposer
+- États (depuis un bâtiment dédié) et corporations — contrats État ↔ Corp et Corp ↔ Corp
+
+### Types de diffusion
+- **Public (enchères)** : plusieurs soumettent une offre, le proposeur choisit la meilleure
+- **Privé (direct)** : validation bilatérale, pas de négociation des termes
+
+### Types d'objectifs
+- Production/livraison de ressources, contrôle territorial, présence militaire, exploration
+- Bonus de surperformance défini à la signature
+
+### Durée, rupture, récompenses
+- Durée fixe ou open-ended (fourniture continue), rupture possible → pénalité financière + réputation
+- Récompenses : argent, influence, technologies, bonus de marché
+
+---
+
+## 14. Contrôle et perte de tuiles
+
+### Conditions de perte
+1. **Rébellion** : besoins vitaux non satisfaits → baisse productivité → grève → rébellion
+2. **Rupture de contrat** : l'État peut reprendre ses biens
+3. **Seuil de tolérance dépassé** : nationalisation
+
+### Corporation contre corporation
+- Attaque possible (milices, pression économique, contrat d'exclusivité)
+- Risque de dégradation de la relation avec l'État présent
+
+### Conséquences
+- Perte d'accès au marché local, perte des bâtiments, pénalité de réputation
+- Zéro tuile dans un État = exclusion totale de son marché
+
+---
+
+## 15. Voyages interplanétaires
+
+- Durée calculée à l'avance (distance + technologies + modificateurs terrain)
+- Événements aléatoires possibles pendant le trajet (piraterie, panne, opportunité)
+- Vaisseau appartient à un État ou une corporation — louable via contrat
+
+---
+
+## 16. Événements
+
+Des événements se déclenchent par tirage pondéré à chaque tick serveur, ou sur condition :
 
 | Événement | Effet |
 |---|---|
-| Rencontre du 3ème type | Découverte d'une structure alien → bonus ou malus selon choix |
+| Rencontre alien | Découverte d'une structure → bonus ou malus selon choix |
 | Tempête solaire | Dommages sur les bâtiments exposés |
-| Découverte minière riche | Un hex révèle un gisement exceptionnel |
+| Découverte minière | Un hex révèle un gisement exceptionnel |
 | Crise économique | Chute brutale du prix d'une ressource |
-| Sabotage corpo | Une corpo IA (ou joueur) attaque une infrastructure |
+| Sabotage corpo | Une corpo attaque une infrastructure |
 | Épidémie biologique | Ralentit la production d'une zone terraformée |
-| Contact diplomatique alien | Ouvre un arbre d'événements sur plusieurs tours |
+| Rébellion populaire | Besoins vitaux non satisfaits → perte de tuile |
+| Migration | Déséquilibre de main-d'œuvre → déplacement de population |
+| Convention inter-étatique | Formation d'un organisme de marché global |
 
 ---
 
-## Multijoueur
+## 17. IA & Agents LLM
+
+### Rôle
+- Un agent LLM peut contrôler un État ou une corporation via des **outils MCP**
+- Outils : lire l'état du jeu, prendre des décisions, donner des objectifs
+
+### Fréquence
+- **Sur événement** (rébellion, contrat disponible, menace…) ou **toutes les N ticks**
+- LLM hébergé localement → coût maîtrisé
+
+### Mémoire par entité
+- **Profil** : personnalité, valeurs, stratégie
+- **Événementielle** : historique des décisions et contrats
+- **Relationnelle** : état des relations avec les autres entités
+
+---
+
+## 18. Multijoueur
 
 - **Mode** : Asynchrone temps réel (monde persistant côté serveur)
-- **Compétition + Coopération** : Les joueurs sont en compétition pour le classement mais partagent la même bourse et la même planète
+- **Compétition + Coopération** : même bourse et même planète partagées
 - **Monde persistant** : tourne même quand tout le monde est déconnecté
 - **Classement** : Score global = crédits + territoires + score d'influence
 
 ---
 
-## Conditions de Victoire
+## 19. Conditions de Victoire
 
-- Short term : Être #1 au classement
-- Long term : Atteindre un score de terraformation global (planète viable) en premier
-- Coopératif : La planète devient habitable si toutes les corpos atteignent un seuil de terraformation combiné
+- **Court terme** : Être #1 au classement
+- **Long terme** : Atteindre un score de terraformation global (planète viable) en premier
+- **Coopératif** : La planète devient habitable si toutes les corpos atteignent un seuil combiné
+- **Fin de partie potentielle** : Contrôler l'organisme inter-étatique corrompu
 
 ---
 
-## Inspirations
+## 20. Points ouverts (à designer)
 
-| Jeu | Ce qu'on emprunte |
+| Sujet | Question |
 |---|---|
-| Victoria 3 | Économie dynamique, production en chaîne, marché mondial |
-| Hearts of Iron IV | Tempo de jeu, progression en temps réel, événements |
-| Crusader Kings 3 | Intrigues, événements narratifs, rivalités entre entités |
-| Civilization VI | Grille hexagonale, types de terrain, amélioration de cases |
-| Stellaris | Exploration spatiale, découvertes alien, colonisation |
+| Routes spatiales | Infrastructure spatioport à préciser |
+| Espionnage | Mécanisme d'accès aux informations hors portée |
+| Arbre de technologies | Structure, déblocage, diffusion |
+| Multijoueur | Nombre de joueurs, synchronisation des ticks |
+| Génération procédurale | Quoi est généré au démarrage (planètes, ressources, États initiaux…) |
+| Militaire | Profondeur du système de combat / milices |
+| États vassaux | Conditions d'autonomisation, rupture de vassalité |

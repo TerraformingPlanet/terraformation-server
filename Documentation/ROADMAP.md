@@ -257,7 +257,7 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
 **Prérequis** : Sprint C (persistance régionale) + Sprint D (AtmosphericState) terminés. Phase 6.9 (hiérarchie Cosmos) ✅
 
-> Design de référence : [GDD_Synthese.md](description_jeu/GDD_Synthese.md)
+> Design de référence : [GDD.md §10-15](GDD.md) — Corporations, États, Marchés, Contrats, Contrôle de tuiles
 
 ### Phase 7.1 — Propriété de tuile
 - [ ] Créer `CorporationData` côté Python `SimulationCore` + contrat C# miroir
@@ -304,6 +304,8 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
 ## Phase 8 — Système d'Événements & Agents LLM
 
+> Design de référence : [GDD.md §16-17](GDD.md) — Événements, IA & Agents LLM
+
 - [ ] `EventData` : nom, description, effets, poids de probabilité, déclencheur (tick ou condition)
 - [ ] Événements de base : RencontreAlienne, TempêteSolaire, DécouverteMinière, CriseÉconomique, SabotageCorpo, Rébellion, MigrationPopulation
 - [ ] `EventManager` : tirage pondéré à chaque tick serveur
@@ -317,6 +319,8 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 ---
 
 ## Phase 9 — Économie avancée & Routes commerciales
+
+> Design de référence : [GDD.md §12](GDD.md) — Marchés, Routes commerciales, Organisme inter-étatique
 
 - [ ] Ressources tradables : fer, O₂, eau, énergie, tech, nourriture
 - [ ] `MarketManager` avec order book simplifié, propagation hiérarchique (tuile → planète → système)
@@ -332,6 +336,8 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 ---
 
 ## Phase 10 — Multijoueur Réseau
+
+> Design de référence : [GDD.md §18](GDD.md) — Multijoueur
 
 - [ ] Intégrer Mirror Networking
 - [ ] Serveur dédié autoritaire (client-serveur, pas P2P)
