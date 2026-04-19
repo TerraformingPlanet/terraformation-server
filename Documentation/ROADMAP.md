@@ -38,7 +38,7 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 - [x] `ViewManager.cs` — abonnement `OnH3TilesReady` → `LoadPlanetFromH3` + `RefreshColorsFromH3` ; suppression `PlanetaryHexGrid.ActiveGrid` de `ShowProjectedPlanet` ; `OpenRegion` simplifié
 - [x] `FlatDebugOverlay.cs` — désabonnement Mercator, labels désactivés (avertissement console)
 - [x] `TerraformHUD.cs` — `ShowH3TileInfo(GoldbergTileState)` pour affichage HUD globe/flat
-- [x] `SimulationContracts.cs` — structs `GoldbergTileState` et `BodyListEntry`
+- [x] `SimulationContracts.cs` — structs `GoldbergTileState` et `SimulationBodyListEntry`
 
 **Résultat** :
 > `PlanetaryHexGrid` ne pilote plus aucune vue planétaire. Globe, FlatView et TangentView sont colorisés exclusivement depuis les tuiles H3 autoritatives du `DedicatedServer`. `PlanetaryHexGrid` reste utilisé uniquement pour la génération de la vue locale hexagonale et ses constantes de résolution.
@@ -272,16 +272,25 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 - [x] `GET /game/corporations/{id}` — détail d'une corpo
 - [x] `POST /game/corporations/{id}/claim-hex?body_id=&tile_id=` — claim un hex libre (409 si déjà pris)
 - [x] `bootstrap_sol()` vide `_corporations` et `_tile_ownership`
-- [ ] Afficher les hexes possédés (bordure colorée par corpo) — couche ownership Unity — différé Phase 7.2
+- [x] `GetBoundaryLoops()` rewrite (Goldberg edge-map) + `OwnershipBorderRenderer.cs` — LineRenderers colorés par corpo sur globe
+- [x] `GameHUD.cs` (~650 lignes) — HUD code-driven unifié : TopBar, LeftPanel (progression), RightPanel (inspecteur tuile + Claim/Unclaim + badge corpo)
+- [x] `TerraformHUD.cs` — events `OnProgressUpdated` + `OnRegionStateChanged` ; `ViewManager.GoBackOneLevel()` public
+- [x] Fix bug `OnH3TileResolved` (FindObjectsInactive + suppression check PlanetSubView) + clic globe centroïde hover
+
+**Commits** : `2664364`, `40da8c4`, `fad0973`, `ec65103`, `03e6a49`, `898f274`
+
+**Résultat validé en Play Mode :**
+> Clic tuile → RightPanel Claim/Unclaim ✓ | Tuile claimée → badge + nom corpo ✓ | Bordures ownership sur globe ✓ | Hover et clic cohérents ✓
 
 ### Phase 7.2 — Bâtiments v1 (modèle entrée → sortie)
-- [ ] Implémenter le modèle tick-based : entrées (ressources + travailleurs + énergie) → sorties (ressources + déchets)
-- [ ] Types de bâtiments initiaux : mine, ferme, centrale énergetique, bâtiment de recherche
-- [ ] Ratio travailleurs 0→100% : 100% = plein rendement, 0% = bâtiment abandonné
-- [ ] Réseau énergétique limitrophe : centrale → segments → tuiles adjacentes
-- [ ] Épuisement de ressource de tuile + reconversion possible
-- [ ] Calcul automatique de la production par tick côté `DedicatedServer`
-- [ ] Déchets s'accumulent sur la tuile (impact moteur écologique)
+
+> Design de référence : [GDD.md §11](GDD.md) — Bâtiments & Production
+
+- [x] **B1** — `SimulationCore/terraformation_sim/models.py` : `BuildingType` enum, `ResourceType` enum, `BuildingData` Pydantic, `BUILDING_CONFIGS`, `CorporationData` enrichi (liste bâtiments + stocks)
+- [x] **B2** — `SimulationCore/terraformation_sim/runtime.py` : `construct_building()`, `demolish_building()`, `_process_building_production()` dans `tick_loop`
+- [x] **B3** — `DedicatedServer/app/server.py` : `POST /game/corporations/{id}/buildings`, `GET /game/corporations/{id}/buildings`, `DELETE /game/corporations/{id}/buildings/{building_id}`, `PATCH /game/corporations/{id}/buildings/{building_id}/workers`
+- [x] **B4** — `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` : `CorpBuildingType` enum + `CorpBuilding` struct miroir (renommés pour éviter conflit Economy/BuildingData)
+- [x] **B5** — `Game/Assets/Scripts/UI/GameHUD.cs` : section Bâtiments dans RightPanel (visible si tuile claimée par la corpo locale)
 
 ### Phase 7.3 — Marché local v1
 - [ ] Catégories sociales de population (pauvres → classes moyennes → riches) avec besoins différents
@@ -383,7 +392,8 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 | 6.75 | Isolation bridge Unity | ✅ Voir [CHANGELOG.md](CHANGELOG.md) |
 | 6.5 + Sprints A→D | Hydrologie, cohérence, persistance, AtmosphericState | 🔄 En cours |
 | MCP-1, 2, 3 | Outils cellule, tests auto, API gameplay | ⬜ À faire |
-| 7 | Corporations | ⬜ À faire (attend Sprints C + D) |
+| 7.1 | Propriété de tuile + Ownership UI | ✅ Terminé 2026-04-19 |
+| 7.2 | Bâtiments v1 | ✅ Terminé 2026-04-19 |
 | 8 | Événements | ⬜ À faire |
 | 9 | Économie & Bourse | ⬜ À faire |
 | 10 | Multijoueur Réseau | ⬜ À faire |
