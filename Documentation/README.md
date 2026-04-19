@@ -4,6 +4,19 @@ Index d'entrée pour le projet. Commence ici si tu découvres le dépôt.
 
 ---
 
+## Démarrage rapide — agent IA
+
+> **Si tu démarres une session de travail :**
+>
+> 1. **[ROADMAP.md](ROADMAP.md)** — identifie la tâche active (tableau récapitulatif en bas du fichier)
+> 2. **[GDD.md §lié](GDD.md)** — design intent de la mécanique à implémenter (lien `> Design de référence` en tête de chaque phase)
+> 3. **[ARCHITECTURE.md](ARCHITECTURE.md)** — contraintes de stack et décisions techniques
+> 4. **[REPOSITORY_STRUCTURE.md](REPOSITORY_STRUCTURE.md)** — où placer les fichiers, conventions de nommage
+>
+> → Détail de ce protocole dans [ROADMAP.md — section Navigation](ROADMAP.md#navigation--agents-ia)
+
+---
+
 ## Ordre de lecture recommandé
 
 | # | Fichier | Intention |

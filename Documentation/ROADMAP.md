@@ -6,6 +6,26 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 
 ---
 
+## Navigation — agents IA
+
+> **Avant d'implémenter une tâche de ce backlog, lis dans cet ordre :**
+>
+> | Étape | Document | Ce qu'on y cherche |
+> |-------|----------|--------------------|
+> | 1 | Ce fichier (ROADMAP) | Tâche exacte + critères de sortie (tableau récapitulatif en bas) |
+> | 2 | [GDD.md §lié](GDD.md) | Design intent : pourquoi la mécanique existe, comment elle se comporte |
+> | 3 | [ARCHITECTURE.md](ARCHITECTURE.md) | Contraintes de stack, couches autorisées, décisions techniques prises |
+> | 4 | [REPOSITORY_STRUCTURE.md](REPOSITORY_STRUCTURE.md) | Où placer les fichiers, conventions de nommage |
+>
+> **Références conditionnelles :**
+> - Tâche touche un contrat Python ↔ C# → [SIMULATION_CONTRACTS.md](SIMULATION_CONTRACTS.md)
+> - Tâche touche un tool MCP → [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
+> - Tâche de debug visuel Unity → [AI_DEBUG_WORKFLOW.md](AI_DEBUG_WORKFLOW.md)
+>
+> Ne jamais proposer une implémentation avant d'avoir lu les critères de sortie de la tâche.
+
+---
+
 ## Terminé : Phase 6.9 — Migration H3 Client Unity (vues planétaires)
 
 **Complété** :
@@ -81,6 +101,8 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 
 ## En cours : Phase 6.5 — Relief & Hydrologie Locale
 
+> Design de référence : [GDD.md §8](GDD.md) — Relief & Hydrologie
+
 ### Tâches restantes
 - [ ] Étendre `MapRegion.ComputeCoherence()` et `CoherenceValidationSystem` avec rugosité, accumulation et signaux relief/hydrologie
 - [ ] Ajouter un débordement de bassin avec exutoire dynamique
@@ -93,6 +115,8 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 ---
 
 ## Sprint A — Stabilisation Debug + Hydrologie Locale v2 (reste)
+
+> Design de référence : [GDD.md §8](GDD.md) — Relief & Hydrologie | [AI_DEBUG_WORKFLOW.md](AI_DEBUG_WORKFLOW.md)
 
 **Restant** :
 - [ ] Vérifier en Play Mode les 5 cas de référence (océan ouvert, côte, bassin, désert drainant, pôle gelé)
@@ -108,6 +132,8 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 ---
 
 ## Sprint B — Cohérence Macro → Micro + Projection Hydrologique
+
+> Design de référence : [GDD.md §8](GDD.md) — Relief & Hydrologie (cohérence macro→micro)
 
 **Objectif**
 > Améliorer la cohérence entre cellule projetée et région locale pour que la projection devienne un résumé hydrologique crédible du globe.
@@ -142,6 +168,8 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 
 ## Sprint C — Persistance Régionale + Synchro Local → Projection
 
+> Design de référence : [GDD.md §7](GDD.md) — Tuiles & Terrain (base technique pour Phase 7) | [SIMULATION_CONTRACTS.md](SIMULATION_CONTRACTS.md)
+
 **Objectif**
 > Faire survivre les modifications locales aux régénérations et préparer la transition vers un vrai gameplay de corporation.
 
@@ -168,6 +196,8 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 ---
 
 ## Sprint D — AtmosphericState : progression terraformation mesurable (prérequis Phase 7)
+
+> Design de référence : [GDD.md §5](GDD.md) — Les trois moteurs du jeu (moteur écologique) | [SIMULATION_CONTRACTS.md](SIMULATION_CONTRACTS.md)
 
 **Objectif**
 > Donner aux corporations un indicateur de progression de la terraformation calculé à l'échelle de la région entière.
@@ -204,6 +234,8 @@ La terraformation doit être modélisée comme une évolution atmosphérique agr
 ---
 
 ## Sprints MCP — Responsabilité GitHub Copilot
+
+> Design de référence : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md) — Architecture des tools, endpoints, état par tool
 
 **GitHub Copilot est propriétaire du MCP et de l'API du jeu.**
 Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
