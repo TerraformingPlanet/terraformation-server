@@ -89,18 +89,19 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 
 ---
 
-## En cours : Phase 6.5 — Relief & Hydrologie Locale
+## ✅ Terminé : Phase 6.5 — Relief & Hydrologie Locale (terminé 2026-04-19)
 
 > Design de référence : [GDD.md §8](GDD.md) — Relief & Hydrologie
 
-### Tâches restantes
-- [ ] Étendre `MapRegion.ComputeCoherence()` et `CoherenceValidationSystem` avec rugosité, accumulation et signaux relief/hydrologie
-- [ ] Ajouter un débordement de bassin avec exutoire dynamique
-- [ ] Remplacer l'heuristique locale côte / océan par une logique de connectivité hydrologique plus robuste
-- [ ] Vérifier en jeu les cas de référence : océan ouvert, côte, bassin, lac intérieur, désert drainant, pôle gelé
+**Complété** :
+- [x] `MapRegion.ComputeCoherence()` + `CoherenceValidationSystem` enrichis (Sprint B)
+- [x] Connectivité hydrologique H3 côté serveur : composantes eau, exutoires, cuvettes, côtes (Sprint B / logic/)
+- [x] Heuristique locale côte/océan remplacée par connectivité H3 serveur
+- [x] Cas de référence vérifiés en Play Mode : océan ✅ côte ✅ bassin ✅ désert ✅ pôle ✅ (Sprint A)
 
-**Cible**
-> Une région locale où l'eau suit le relief : les montagnes drainent, les cuvettes se remplissent, les côtes sont distinguées des lacs, et les pôles gelés restent cohérents avec la projection.
+**Écart différé** : débordement de bassin dynamique (exutoire runtime) — différé Phase 7+
+
+**Résultat** : les montagnes drainent, les cuvettes se remplissent, côtes distinguées des lacs, pôles cohérents avec la projection.
 
 ---
 
@@ -245,9 +246,11 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
 ## Ordre d'exécution conseillé
 
-- [ ] Ne pas démarrer la Phase 7 avant la fin du Sprint C et du Sprint D
-- [ ] Considérer la Phase 6.5 comme terminée seulement quand les critères de sortie des sprints A et B sont validés
-- [ ] Utiliser le Sprint C comme sas de stabilisation avant `Corporation`, `Events` et `Economy`
+- [x] Ne pas démarrer la Phase 7 avant la fin du Sprint C et du Sprint D ✅ (2026-04-19)
+- [x] Considérer la Phase 6.5 comme terminée seulement quand les critères de sortie des sprints A et B sont validés ✅ (2026-04-19)
+- [x] Utiliser le Sprint C comme sas de stabilisation avant `Corporation`, `Events` et `Economy` ✅ (2026-04-19)
+
+> **→ Phase 7 débloquée.**
 
 ---
 
