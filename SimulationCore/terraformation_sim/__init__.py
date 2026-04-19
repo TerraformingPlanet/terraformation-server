@@ -5,6 +5,8 @@ from .models import (
     ATMOSPHERE_PRESETS,
     BodyBase,
     BodyType,
+    BuildingData,
+    BuildingType,
     ClaimedTile,
     ClientSnapshot,
     CorporationData,
