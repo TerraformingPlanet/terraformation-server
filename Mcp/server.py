@@ -8,7 +8,6 @@ Transport:
 """
 
 import os
-import time
 import urllib.parse
 from datetime import datetime
 
@@ -335,14 +334,6 @@ def open_region(latitude: float, longitude: float) -> dict:
 # Helpers for composite tools
 # ---------------------------------------------------------------------------
 
-_PRESET_COORDINATES: dict[str, dict[str, float]] = {
-    "ocean":  {"lat": 0.50, "lon": 0.50},
-    "arid":   {"lat": 0.52, "lon": 0.52},
-    "frozen": {"lat": 0.20, "lon": 0.50},
-    "coast":  {"lat": 0.47, "lon": 0.18},
-    "basin":  {"lat": 0.57, "lon": 0.58},
-}
-
 _GENERATION_PROFILES: dict[str, dict[str, float | int]] = {
     "Coast":  {"coherence": 4, "water_level": 0.71, "atmosphere_density": 0.70, "seed": 1004},
     "Ocean":  {"coherence": 1, "water_level": 0.85, "atmosphere_density": 0.65, "seed": 1011},
@@ -351,12 +342,15 @@ _GENERATION_PROFILES: dict[str, dict[str, float | int]] = {
     "Basin":  {"coherence": 5, "water_level": 0.18, "atmosphere_density": 0.45, "seed": 1041},
 }
 
-_SMOKE_COMPARE_FIELDS_PROJ  = ["openOceanCells", "coastCells", "inlandWaterCells",
-                                "frozenWaterCells", "dryCells",
-                                "averageWaterRatio", "averageTemperature"]
-_SMOKE_COMPARE_FIELDS_LOCAL = ["openOceanCells", "coastCells", "inlandWaterCells",
-                                "frozenWaterCells", "dryCells", "basinCells",
-                                "averageWaterRatio", "averageTemperature"]
+_SMOKE_COMPARE_FIELDS_PROJ = ["openOceanCells", "coastCells", "inlandWaterCells",
+                              "frozenWaterCells", "dryCells",
+                              "averageWaterRatio", "averageTemperature"]
+# Generation-stats fields used for compare_presets diff (H3-native, no Unity)
+_SMOKE_COMPARE_FIELDS_GEN = [
+    "dryPct", "humidPct", "saturatedPct", "habitablePct",
+    "coldPct", "hotPct", "vegetationPct", "openOceanPct",
+    "frozenPct", "coastPct", "inlandPct", "basinPct", "temperatureAvg",
+]
 
 
 def _build_smoke_projection_summary(gen_stats: dict) -> dict:
@@ -459,6 +453,9 @@ def _evaluate_generation_quality(results: list[dict]) -> dict:
             _append_generation_check(
                 checks, preset, "vegetation-present", row["vegetationPct"] >= 5.0,
                 f"Coast should keep at least 5% vegetation, got {row['vegetationPct']:.1f}%.")
+            _append_generation_check(
+                checks, preset, "coast-temperate", row["temperatureAvg"] >= 0.0,
+                f"Coast should have average temperature ≥ 0°C, got {row['temperatureAvg']:.1f}°C.")
         elif preset == "Ocean":
             _append_generation_check(
                 checks, preset, "ocean-dominant", row["openOceanPct"] >= 45.0,
@@ -466,6 +463,9 @@ def _evaluate_generation_quality(results: list[dict]) -> dict:
             _append_generation_check(
                 checks, preset, "not-overdry", row["dryPct"] <= 25.0,
                 f"Ocean should not be dry above 25%, got {row['dryPct']:.1f}%.")
+            _append_generation_check(
+                checks, preset, "ocean-temperate", row["temperatureAvg"] >= 5.0,
+                f"Ocean should have average temperature ≥ 5°C, got {row['temperatureAvg']:.1f}°C.")
         elif preset == "Arid":
             _append_generation_check(
                 checks, preset, "dry-dominant", row["dryPct"] >= 60.0,
@@ -473,6 +473,9 @@ def _evaluate_generation_quality(results: list[dict]) -> dict:
             _append_generation_check(
                 checks, preset, "limited-vegetation", row["vegetationPct"] <= 15.0,
                 f"Arid should keep vegetation under 15%, got {row['vegetationPct']:.1f}%.")
+            _append_generation_check(
+                checks, preset, "arid-not-frozen", row["coldPct"] <= 50.0,
+                f"Arid should not have more than 50% cold tiles, got {row['coldPct']:.1f}%.")
         elif preset == "Frozen":
             _append_generation_check(
                 checks, preset, "cold-dominant", row["coldPct"] >= 40.0,
@@ -480,6 +483,9 @@ def _evaluate_generation_quality(results: list[dict]) -> dict:
             _append_generation_check(
                 checks, preset, "ice-present", row["frozenPct"] >= 5.0,
                 f"Frozen should have at least 5% frozen water, got {row['frozenPct']:.1f}%.")
+            _append_generation_check(
+                checks, preset, "frozen-cold", row["temperatureAvg"] <= -10.0,
+                f"Frozen should have average temperature ≤ -10°C, got {row['temperatureAvg']:.1f}°C.")
         elif preset == "Basin":
             _append_generation_check(
                 checks, preset, "inland-water-present", row["inlandPct"] >= 5.0,
@@ -492,27 +498,28 @@ def _evaluate_generation_quality(results: list[dict]) -> dict:
     return {"passed": len(failures) == 0, "checks": checks, "failures": failures}
 
 
-def _run_smoke_sequence(preset_name: str, lat: float, lon: float,
-                        capture_screenshot: bool) -> dict:
-    """Execute the standard smoke sequence for one preset and return raw data."""
+def _run_smoke_sequence(preset_name: str, capture_screenshot: bool) -> dict:
+    """Execute the smoke sequence for one preset (Track 2 — Unity bridge).
+
+    Validates launch, projection coherence, and console state.
+    Local hex grid data (ActiveHexGrid / PlanetaryHexGrid) is excluded — that system
+    is pre-H3 and not authoritative. Projection is validated via DedicatedServer
+    generation-stats which is H3-native and preset-aware.
+    open-region is excluded because ShowLocalView() triggers the old HexGrid, not H3.
+    """
     data: dict = {
         "preset": preset_name,
-        "latitude": lat,
-        "longitude": lon,
         "ranAt": datetime.now().isoformat(timespec="seconds"),
     }
-    data["stateBefore"]   = _safe_get("/debug/state")
-    data["launchResult"]  = _safe_get("/debug/launch-preset", preset=preset_name)
+    data["stateBefore"]      = _safe_get("/debug/state")
+    data["launchResult"]     = _safe_get("/debug/launch-preset", preset=preset_name)
     data["stateAfterLaunch"] = _safe_get("/debug/state")
-    # Projection: use DedicatedServer generation-stats with preset-specific params.
-    # The bridge /debug/projection requires the Mercator sphere to have been rendered
-    # at least once (lazy-build), which doesn't happen during automated smoke tests.
-    # The default /projection endpoint always returns the fixed Earth planet — not
-    # useful for preset-specific checks.  generation-stats is preset-aware.
-    _profile = _GENERATION_PROFILES.get(
-        next((k for k in _GENERATION_PROFILES if k.lower() == preset_name.lower()), ""),
-        None,
-    )
+
+    # Projection: DedicatedServer generation-stats (H3-native, preset-aware).
+    # /debug/projection bridge endpoint is excluded — requires the Mercator sphere to
+    # have been rendered (lazy-build) which never happens in automated runs.
+    _key = next((k for k in _GENERATION_PROFILES if k.lower() == preset_name.lower()), "")
+    _profile = _GENERATION_PROFILES.get(_key)
     if _profile is not None:
         _gen_stats = _safe_server_get(
             "/debug/generation-stats",
@@ -524,21 +531,8 @@ def _run_smoke_sequence(preset_name: str, lat: float, lon: float,
         data["projection"] = _build_smoke_projection_summary(_gen_stats)
     else:
         data["projection"] = {"isValid": False, "error": f"No profile for preset '{preset_name}'"}
-    data["openRegion"]    = _safe_get("/debug/open-region", lat=lat, lon=lon)
-    # Wait for Unity to regenerate the HexGrid before reading local data.
-    # The open-region request triggers a coroutine; without a delay the next
-    # /debug/local read may still reflect the previous preset's grid.
-    time.sleep(1.5)
-    # Use the Unity bridge for local data — the DedicatedServer /region returns
-    # a fixed default region that is not updated when a preset is launched in Unity.
-    _bridge_local = _safe_get("/debug/local")
-    # Remap bridge response shape (gridSummary) to the expected shape (summary)
-    # so _validate_smoke field access stays consistent.
-    if "gridSummary" in _bridge_local and "summary" not in _bridge_local:
-        _bridge_local["summary"] = _bridge_local.pop("gridSummary")
-    data["local"]         = _bridge_local
-    data["console"]       = _safe_get("/debug/console",
-                                      maxEntries=20, minimumSeverity="Warning")
+
+    data["console"] = _safe_get("/debug/console", maxEntries=20, minimumSeverity="Warning")
     if capture_screenshot:
         name = f"{preset_name.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         data["screenshot"] = _safe_get("/debug/screenshot", fileName=name)
@@ -546,7 +540,16 @@ def _run_smoke_sequence(preset_name: str, lat: float, lon: float,
 
 
 def _validate_smoke(preset_name: str, data: dict) -> dict:
-    """Port of PowerShell Test-SmokeResults.  Uses DedicatedServer summary field names."""
+    """Validate one preset's smoke sequence against H3-native criteria (Track 2).
+
+    Checks:
+    - state-before-response: bridge responds before launch
+    - launch-preset-success: preset launches cleanly in Unity
+    - unity-projection-override: Unity reports the correct coherenceOverride after launch
+    - projection-valid / projection-has-summary: generation-stats returns H3 data
+    - projection-*: per-preset terrain distribution checks (H3, DedicatedServer)
+    - console-no-errors / console-no-warnings: no Unity errors/warnings after launch
+    """
     checks: list[dict] = []
 
     def chk(name: str, passed: bool, message: str, severity: str = "error") -> None:
@@ -561,19 +564,19 @@ def _validate_smoke(preset_name: str, data: dict) -> dict:
     chk("launch-preset-success", launch.get("success") is True,
         "Preset must launch successfully.")
 
+    # Unity must update its activeProjectionOverride to match the launched preset.
+    state_after = data.get("stateAfterLaunch", {})
+    unity_override = state_after.get("activeProjectionOverride", "")
+    chk("unity-projection-override",
+        unity_override.lower() == preset_name.lower(),
+        f"Unity should report '{preset_name}' override after launch, got '{unity_override}'.")
+
     projection = data.get("projection", {})
     chk("projection-valid", projection.get("isValid") is True,
-        "Projection must return valid data.")
+        "Projection must return valid H3 data (source: generation-stats).")
     proj_s = projection.get("summary", {})
     chk("projection-has-summary", bool(proj_s),
-        "Projection must include a summary.")
-
-    local = data.get("local", {})
-    chk("local-valid", local.get("isValid") is True,
-        "Local region must return valid data.")
-    local_s = local.get("summary", {})
-    chk("local-has-summary", bool(local_s),
-        "Local region must include a summary.")
+        "Projection must include a non-empty summary.")
 
     console = data.get("console", {})
     chk("console-no-errors",
@@ -585,38 +588,22 @@ def _validate_smoke(preset_name: str, data: dict) -> dict:
     name_lower = preset_name.lower()
     if name_lower == "coast":
         chk("projection-coast-cells", proj_s.get("coastCells", 0) > 0,
-            "Coast preset must produce coast cells in projection.")
-        chk("local-coast-cells", local_s.get("coastCells", 0) > 0,
-            "Coast preset must produce coast cells locally.")
+            "Coast preset must produce coast cells in H3 projection.")
     elif name_lower == "basin":
         chk("projection-inland-water", proj_s.get("inlandWaterCells", 0) > 0,
-            "Basin preset must produce inland water in projection.")
-        chk("local-basin-or-water",
-            local_s.get("basinCells", 0) > 0 or local_s.get("inlandWaterCells", 0) > 0,
-            "Basin preset must produce basins or inland water locally.")
+            "Basin preset must produce inland water in H3 projection.")
     elif name_lower == "ocean":
         chk("projection-ocean-dominant",
             proj_s.get("openOceanCells", 0) > proj_s.get("dryCells", 0),
-            "Ocean preset must be dominated by ocean in projection.")
-        chk("local-water-dominant", local_s.get("averageWaterRatio", 0.0) >= 0.45,
-            "Ocean preset must maintain high water ratio locally (≥0.45).")
+            "Ocean preset must be dominated by open ocean in H3 projection.")
     elif name_lower == "arid":
         chk("projection-dry-dominant",
             proj_s.get("dryCells", 0) > (proj_s.get("openOceanCells", 0)
                                          + proj_s.get("inlandWaterCells", 0)),
-            "Arid preset must be mostly dry in projection.")
-        chk("local-dry-dominant",
-            local_s.get("dryCells", 0) > (local_s.get("openOceanCells", 0)
-                                           + local_s.get("inlandWaterCells", 0)
-                                           + local_s.get("coastCells", 0)),
-            "Arid preset must remain mostly dry locally.")
+            "Arid preset must be mostly dry in H3 projection.")
     elif name_lower == "frozen":
         chk("projection-frozen-cells", proj_s.get("frozenWaterCells", 0) > 0,
-            "Frozen preset must produce frozen water in projection.")
-        chk("local-frozen-or-cold",
-            local_s.get("frozenWaterCells", 0) > 0
-            or local_s.get("averageTemperature", 99.0) <= 0.0,
-            "Frozen preset must produce frozen water or average temperature ≤ 0 locally.")
+            "Frozen preset must produce frozen water in H3 projection.")
 
     failures = [c for c in checks if not c["passed"] and c["severity"] == "error"]
     warnings  = [c for c in checks if not c["passed"] and c["severity"] == "warning"]
@@ -631,23 +618,24 @@ def _validate_smoke(preset_name: str, data: dict) -> dict:
 @mcp.tool
 def run_preset_smoke_test(preset_name: str, capture_screenshot: bool = False) -> dict:
     """
-    Run a full smoke test sequence for a named preset.
+    Run a smoke test for a named preset (Track 2 — requires Unity Play Mode).
 
-    Executes: launch_preset → get_projection → open_region → get_local_summary →
-    get_console_errors, then validates the results against per-preset criteria
-    (port of Invoke-TerraformationDebugSmokeTest.ps1).
+    Sequence: launch_preset → check Unity override → validate H3 projection → check console.
+    open-region and local hex grid data are excluded — those rely on the pre-H3
+    PlanetaryHexGrid system. Projection is validated via DedicatedServer generation-stats.
+
+    For purely server-side H3 validation without Unity, use run_generation_quality_suite.
+    For both tracks together, use run_full_validation_suite.
 
     Args:
         preset_name: Preset name — 'Ocean', 'Arid', 'Frozen', 'Coast', or 'Basin'.
         capture_screenshot: Whether to capture a Unity screenshot at the end.
 
     Returns:
-        dict with keys: preset, ranAt, stateBefore, launchResult, projection, openRegion,
-        local, console, (screenshot?), verdict { passed, failures, warnings, checks }.
+        dict with keys: preset, ranAt, stateBefore, launchResult, stateAfterLaunch,
+        projection, console, (screenshot?), verdict { passed, failures, warnings, checks }.
     """
-    coords = _PRESET_COORDINATES.get(preset_name.lower(), {"lat": 0.50, "lon": 0.50})
-    data = _run_smoke_sequence(preset_name, coords["lat"], coords["lon"],
-                               capture_screenshot)
+    data = _run_smoke_sequence(preset_name, capture_screenshot)
     data["verdict"] = _validate_smoke(preset_name, data)
     return data
 
@@ -682,6 +670,130 @@ def run_generation_quality_suite(h3_resolution: int = 2) -> dict:
         "profiles": _GENERATION_PROFILES,
         "results": results,
         **verdict,
+    }
+
+
+@mcp.tool
+def run_full_validation_suite(h3_resolution: int = 2,
+                              capture_screenshot: bool = False) -> dict:
+    """
+    Run both validation tracks across all 5 reference presets.
+
+    Track 1 — DedicatedServer (H3 pur, no Unity required):
+      generation-stats quality suite, temperature checks, hydrology checks.
+
+    Track 2 — Unity bridge (requires Play Mode on port 48621):
+      launch preset → check override → validate H3 projection → check console.
+      open-region and local hex grid excluded (pre-H3 PlanetaryHexGrid system).
+
+    Args:
+        h3_resolution: H3 resolution for Track 1 generation stats (0-2).
+        capture_screenshot: Whether to capture a screenshot per preset in Track 2.
+
+    Returns:
+        dict with `dedicated` (Track 1 verdict), `unity` (per-preset Track 2 verdicts),
+        and `combined` { passed, failureCount }.
+    """
+    # Track 1 — DedicatedServer, H3-native, no Unity
+    dedicated = run_generation_quality_suite(h3_resolution=h3_resolution)
+
+    # Track 2 — Unity bridge, sequential (FastMCP is single-threaded)
+    unity_results: list[dict] = []
+    for preset_name in _GENERATION_PROFILES:
+        data = _run_smoke_sequence(preset_name, capture_screenshot)
+        verdict = _validate_smoke(preset_name, data)
+        unity_results.append({
+            "preset": preset_name,
+            "ranAt": data.get("ranAt"),
+            "verdict": verdict,
+        })
+
+    all_unity_passed = all(r["verdict"]["passed"] for r in unity_results)
+    combined_passed = dedicated.get("passed", False) and all_unity_passed
+    total_failures = (
+        len(dedicated.get("failures", []))
+        + sum(len(r["verdict"]["failures"]) for r in unity_results)
+    )
+
+    return {
+        "h3Resolution": h3_resolution,
+        "dedicated": dedicated,
+        "unity": {
+            "results": unity_results,
+            "passed": all_unity_passed,
+        },
+        "combined": {
+            "passed": combined_passed,
+            "failureCount": total_failures,
+        },
+    }
+
+
+@mcp.tool
+def run_body_tile_checks(body_id: str, preset_name: str) -> dict:
+    """
+    Sample H3 surface tiles for a body and validate dominant terrain matches a preset.
+
+    Reads authoritative tile data from the DedicatedServer. Does not require Unity.
+    Useful after bootstrap-sol to verify that bodies in the galaxy have the correct
+    terrain distribution for their configured preset.
+
+    Args:
+        body_id: UUID of the spherical body (from /bodies or list_bodies MCP tool).
+        preset_name: Expected preset — 'Ocean', 'Arid', 'Frozen', 'Coast', or 'Basin'.
+
+    Returns:
+        dict with dominant water classification, histogram, per-preset checks, passed/failures.
+    """
+    try:
+        tiles = _server_get(f"/bodies/{body_id}/tiles", page=0, size=200)
+    except Exception as exc:
+        return {"error": str(exc), "bodyId": body_id, "preset": preset_name}
+
+    if not isinstance(tiles, list) or not tiles:
+        return {"error": "No tiles returned", "bodyId": body_id, "preset": preset_name}
+
+    from collections import Counter
+    water_counts: Counter = Counter(
+        t.get("waterClassification", "Unknown") for t in tiles
+    )
+    total = len(tiles)
+    histogram = {
+        cls: {"count": cnt, "pct": round(cnt / total * 100, 1)}
+        for cls, cnt in sorted(water_counts.items(), key=lambda x: -x[1])
+    }
+    dominant = water_counts.most_common(1)[0][0] if water_counts else "Unknown"
+
+    # Threshold checks per preset
+    _thresholds: dict[str, tuple[str, float, str]] = {
+        "ocean":  ("OpenOcean",    40.0, "OpenOcean tiles should be ≥40% for Ocean"),
+        "arid":   ("Dry",          50.0, "Dry tiles should be ≥50% for Arid"),
+        "frozen": ("FrozenWater",   5.0, "FrozenWater tiles should be ≥5% for Frozen"),
+        "coast":  ("Coast",         5.0, "Coast tiles should be ≥5% for Coast"),
+        "basin":  ("InlandWater",   5.0, "InlandWater tiles should be ≥5% for Basin"),
+    }
+    checks: list[dict] = []
+    threshold_entry = _thresholds.get(preset_name.lower())
+    if threshold_entry:
+        cls_name, threshold, msg = threshold_entry
+        pct = histogram.get(cls_name, {}).get("pct", 0.0)
+        passed = pct >= threshold
+        checks.append({
+            "check": f"{preset_name.lower()}-dominant-tiles",
+            "passed": passed,
+            "message": f"{msg}, got {pct:.1f}%.",
+        })
+
+    failures = [c for c in checks if not c["passed"]]
+    return {
+        "bodyId": body_id,
+        "preset": preset_name,
+        "tilesSampled": total,
+        "dominant": dominant,
+        "histogram": histogram,
+        "checks": checks,
+        "passed": len(failures) == 0,
+        "failures": failures,
     }
 
 
@@ -746,26 +858,25 @@ def compare_generation_profiles(profile_a: str, profile_b: str,
 @mcp.tool
 def compare_presets(preset_a: str, preset_b: str) -> dict:
     """
-    Run smoke sequences for two presets and compare their projection and local stats.
+    Compare two presets: H3 generation quality diff (Track 1) + Unity smoke (Track 2).
 
-    Runs preset_a, then preset_b sequentially (each resets Unity state).
-    Returns a field-by-field diff for projection and local summaries, plus
-    individual verdicts for each preset.
+    Track 1 compares generation-stats from the DedicatedServer (no Unity required).
+    Track 2 runs Unity smoke sequences sequentially and validates launch + projection.
+    local hex grid data is excluded — it relied on the pre-H3 PlanetaryHexGrid system.
 
     Args:
         preset_a: First preset name  ('Ocean', 'Arid', 'Frozen', 'Coast', 'Basin').
         preset_b: Second preset name ('Ocean', 'Arid', 'Frozen', 'Coast', 'Basin').
     """
-    coords_a = _PRESET_COORDINATES.get(preset_a.lower(), {"lat": 0.50, "lon": 0.50})
-    coords_b = _PRESET_COORDINATES.get(preset_b.lower(), {"lat": 0.50, "lon": 0.50})
+    # Track 1: generation quality comparison (H3, no Unity)
+    gen_compare = compare_generation_profiles(preset_a, preset_b)
 
-    data_a = _run_smoke_sequence(preset_a, coords_a["lat"], coords_a["lon"], False)
-    data_b = _run_smoke_sequence(preset_b, coords_b["lat"], coords_b["lon"], False)
+    # Track 2: Unity smoke sequences
+    data_a = _run_smoke_sequence(preset_a, False)
+    data_b = _run_smoke_sequence(preset_b, False)
 
     proj_a = data_a.get("projection", {}).get("summary", {})
     proj_b = data_b.get("projection", {}).get("summary", {})
-    loc_a  = data_a.get("local", {}).get("summary", {})
-    loc_b  = data_b.get("local", {}).get("summary", {})
 
     def diff_field(key: str, a: dict, b: dict) -> dict:
         va, vb = a.get(key, 0), b.get(key, 0)
@@ -774,10 +885,9 @@ def compare_presets(preset_a: str, preset_b: str) -> dict:
 
     return {
         "presets": [preset_a, preset_b],
+        "generationDiff": gen_compare.get("delta", []),
         "projectionDiff": [diff_field(k, proj_a, proj_b)
                            for k in _SMOKE_COMPARE_FIELDS_PROJ],
-        "localDiff":      [diff_field(k, loc_a, loc_b)
-                           for k in _SMOKE_COMPARE_FIELDS_LOCAL],
         "verdictA": _validate_smoke(preset_a, data_a),
         "verdictB": _validate_smoke(preset_b, data_b),
     }
@@ -786,43 +896,85 @@ def compare_presets(preset_a: str, preset_b: str) -> dict:
 @mcp.tool
 def diagnose_hydrology_mismatch(preset_name: str) -> dict:
     """
-    Diagnose projection ↔ local hydrology mismatches for a given preset.
+    Diagnose hydrology coherence for a given preset using H3 generation-stats.
 
-    Launches the preset, reads projection and local summaries, then compares
-    dominant water classifications between the two to surface incoherences
-    (e.g. ocean projection → dry local, frozen projection → warm local).
+    Launches the preset in Unity, then compares two generation-stats views:
+    full-planet (H3 res=2, global) vs regional (H3 res=0, coarse approximation).
+    Both use the preset's authoritative DedicatedServer profile.
+
+    Note: true macro→micro comparison (global projection vs local hex tile) is
+    deferred to Sprint B when local H3 tile sampling replaces the old PlanetaryHexGrid.
 
     Args:
         preset_name: Preset name — 'Ocean', 'Arid', 'Frozen', 'Coast', or 'Basin'.
 
     Returns:
-        dict with projectionRatios, localRatios, mismatches list, insights list,
-        and the raw coherence block from the region state.
+        dict with projectionRatios (res=2), coarseRatios (res=0), mismatches, insights.
     """
-    coords = _PRESET_COORDINATES.get(preset_name.lower(), {"lat": 0.50, "lon": 0.50})
+    _key = next((k for k in _GENERATION_PROFILES if k.lower() == preset_name.lower()), "")
+    _profile = _GENERATION_PROFILES.get(_key)
+    if _profile is None:
+        return {"error": f"No profile for preset '{preset_name}'", "preset": preset_name}
 
-    launch     = _safe_get("/debug/launch-preset", preset=preset_name)
-    projection = _safe_server_get("/projection")
-    _safe_get("/debug/open-region", lat=coords["lat"], lon=coords["lon"])
-    local      = _safe_server_get("/region")
+    launch = _safe_get("/debug/launch-preset", preset=preset_name)
 
-    proj_s = projection.get("summary", {})
-    loc_s  = local.get("summary", {})
+    # Full-planet projection (H3 res=2, 5882 tiles)
+    proj_stats = _safe_server_get(
+        "/debug/generation-stats",
+        coherence=_profile["coherence"],
+        water_level=_profile["water_level"],
+        atmosphere_density=_profile["atmosphere_density"],
+        seed=_profile["seed"],
+        h3_resolution=2,
+    )
+    # Coarse view (H3 res=0, 122 tiles) — approximates macro-level tile distribution
+    coarse_stats = _safe_server_get(
+        "/debug/generation-stats",
+        coherence=_profile["coherence"],
+        water_level=_profile["water_level"],
+        atmosphere_density=_profile["atmosphere_density"],
+        seed=_profile["seed"],
+        h3_resolution=0,
+    )
+
+    def _ratios(stats: dict) -> dict:
+        wc = stats.get("water_classification", {})
+        total = max(stats.get("total_tiles", 1), 1)
+        def _r(key: str) -> float:
+            entry = wc.get(key, {})
+            return int(entry.get("count", 0)) / total if isinstance(entry, dict) else 0.0
+        temp = stats.get("temperature", {})
+        wr   = stats.get("water_ratio", {})
+        return {
+            "ocean":  round(_r("OpenOcean"),    3),
+            "coast":  round(_r("Coast"),         3),
+            "dry":    round(_r("Dry"),           3),
+            "frozen": round(_r("FrozenWater"),   3),
+            "inland": round(_r("InlandWater"),   3),
+            "averageWaterRatio":  round(float(wr.get("avg",  0.0) if isinstance(wr,   dict) else 0.0), 3),
+            "averageTemperature": round(float(temp.get("avg",0.0) if isinstance(temp, dict) else 0.0), 1),
+        }
+
+    proj_r   = _ratios(proj_stats)
+    coarse_r = _ratios(coarse_stats)
+
+    proj_s = proj_r
+    loc_s  = coarse_r
 
     proj_total = max(proj_s.get("totalCells", 1), 1)
     loc_total  = max(loc_s.get("totalCells", 1), 1)
 
-    proj_ocean_r  = proj_s.get("openOceanCells", 0) / proj_total
-    proj_coast_r  = proj_s.get("coastCells",     0) / proj_total
-    proj_dry_r    = proj_s.get("dryCells",        0) / proj_total
-    proj_frozen_r = proj_s.get("frozenWaterCells",0) / proj_total
+    proj_ocean_r  = proj_s["ocean"]
+    proj_coast_r  = proj_s["coast"]
+    proj_dry_r    = proj_s["dry"]
+    proj_frozen_r = proj_s["frozen"]
 
-    loc_ocean_r   = loc_s.get("openOceanCells",  0) / loc_total
-    loc_coast_r   = loc_s.get("coastCells",      0) / loc_total
-    loc_dry_r     = loc_s.get("dryCells",        0) / loc_total
-    loc_frozen_r  = loc_s.get("frozenWaterCells",0) / loc_total
-    loc_water_r   = loc_s.get("averageWaterRatio", 0.0)
-    loc_temp      = loc_s.get("averageTemperature", 0.0)
+    loc_ocean_r  = loc_s["ocean"]
+    loc_coast_r  = loc_s["coast"]
+    loc_dry_r    = loc_s["dry"]
+    loc_frozen_r = loc_s["frozen"]
+    loc_water_r  = loc_s["averageWaterRatio"]
+    loc_temp     = loc_s["averageTemperature"]
 
     mismatches: list[str] = []
     insights:   list[str] = []
@@ -831,67 +983,56 @@ def diagnose_hydrology_mismatch(preset_name: str) -> dict:
     if proj_ocean_r > 0.5:
         if loc_water_r < 0.35:
             mismatches.append(
-                f"Projection {proj_ocean_r:.0%} ocean but local averageWaterRatio={loc_water_r:.2f} (expected ≥0.35).")
+                f"Projection {proj_ocean_r:.0%} ocean but coarse averageWaterRatio={loc_water_r:.2f} (expected ≥0.35).")
         elif loc_dry_r > 0.5:
             mismatches.append(
-                f"Projection {proj_ocean_r:.0%} ocean but local is {loc_dry_r:.0%} dry cells.")
+                f"Projection {proj_ocean_r:.0%} ocean but coarse is {loc_dry_r:.0%} dry cells.")
         else:
             insights.append(
-                f"Ocean projection ({proj_ocean_r:.0%}) coherent with local water ({loc_water_r:.2f}).")
+                f"Ocean projection ({proj_ocean_r:.0%}) coherent with coarse water ({loc_water_r:.2f}).")
 
     # Arid projection → expect low local water
     if proj_dry_r > 0.5:
         if loc_water_r > 0.4:
             mismatches.append(
-                f"Projection {proj_dry_r:.0%} dry but local averageWaterRatio={loc_water_r:.2f} (expected ≤0.4).")
-        elif (loc_ocean_r + loc_s.get("inlandWaterCells", 0) / loc_total) > 0.3:
+                f"Projection {proj_dry_r:.0%} dry but coarse averageWaterRatio={loc_water_r:.2f} (expected ≤0.4).")
+        elif (loc_ocean_r + loc_s.get("inland", 0.0)) > 0.3:
             mismatches.append(
-                f"Projection is arid but local ocean+inland water = "
-                f"{loc_ocean_r + loc_s.get('inlandWaterCells',0)/loc_total:.0%}.")
+                f"Projection is arid but coarse ocean+inland water = "
+                f"{loc_ocean_r + loc_s.get('inland', 0.0):.0%}.")
         else:
             insights.append(
-                f"Arid projection ({proj_dry_r:.0%} dry) coherent with local ({loc_dry_r:.0%} dry).")
+                f"Arid projection ({proj_dry_r:.0%} dry) coherent with coarse ({loc_dry_r:.0%} dry).")
 
     # Frozen projection → expect frozen cells or cold temp
     if proj_frozen_r > 0.1:
         if loc_frozen_r == 0 and loc_temp > 0:
             mismatches.append(
-                f"Projection has {proj_frozen_r:.0%} frozen cells but local has none "
+                f"Projection has {proj_frozen_r:.0%} frozen cells but coarse has none "
                 f"and averageTemperature={loc_temp:.1f}°C > 0.")
         else:
             insights.append(
-                f"Frozen projection ({proj_frozen_r:.0%}) coherent with local "
-                f"(frozenCells={loc_s.get('frozenWaterCells',0)}, avgTemp={loc_temp:.1f}°C).")
+                f"Frozen projection ({proj_frozen_r:.0%}) coherent with coarse "
+                f"(frozen={loc_frozen_r:.0%}, avgTemp={loc_temp:.1f}°C).")
 
-    # Coast projection → expect coast cells locally
+    # Coast projection → expect coast cells in coarse view
     if proj_coast_r > 0.1:
         if loc_coast_r == 0:
             mismatches.append(
-                f"Projection has {proj_coast_r:.0%} coast cells but local has none.")
+                f"Projection has {proj_coast_r:.0%} coast cells but coarse has none.")
         else:
             insights.append(
-                f"Coast projection ({proj_coast_r:.0%}) coherent with local coast ({loc_coast_r:.0%}).")
+                f"Coast projection ({proj_coast_r:.0%}) coherent with coarse coast ({loc_coast_r:.0%}).")
 
     return {
         "preset": preset_name,
         "launchSuccess": launch.get("success", False),
-        "projectionRatios": {
-            "ocean":  round(proj_ocean_r,  3),
-            "coast":  round(proj_coast_r,  3),
-            "dry":    round(proj_dry_r,    3),
-            "frozen": round(proj_frozen_r, 3),
-        },
-        "localRatios": {
-            "ocean":              round(loc_ocean_r,  3),
-            "coast":              round(loc_coast_r,  3),
-            "dry":                round(loc_dry_r,    3),
-            "frozen":             round(loc_frozen_r, 3),
-            "averageWaterRatio":  round(loc_water_r,  3),
-            "averageTemperature": round(loc_temp, 1),
-        },
+        "note": "coarseRatios uses H3 res=0 (122 tiles) as macro approximation. "
+                "True local H3 comparison deferred to Sprint B.",
+        "projectionRatios": proj_r,
+        "coarseRatios": coarse_r,
         "mismatches": mismatches,
         "insights":   insights,
-        "coherence":  local.get("coherence", {}),
     }
 
 
