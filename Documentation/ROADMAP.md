@@ -104,20 +104,20 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 
 ---
 
-## Sprint A — Stabilisation Debug + Hydrologie Locale v2 (reste)
+## ✅ Sprint A — Stabilisation Debug + Hydrologie Locale v2 (terminé)
 
 > Design de référence : [GDD.md §8](GDD.md) — Relief & Hydrologie | [AI_DEBUG_WORKFLOW.md](AI_DEBUG_WORKFLOW.md)
 
-**Restant** :
-- [ ] Vérifier en Play Mode les 5 cas de référence (océan ouvert, côte, bassin, désert drainant, pôle gelé)
+**Complété** :
+- [x] Vérifier en Play Mode les 5 cas de référence (océan ouvert, côte, bassin, désert drainant, pôle gelé)
+- [x] Les bassins fermés, côtes et lacs sont lisibles via projection H3 (generation-stats) sur les 5 presets
+- [x] Seuils hydrologiques documentés dans `run_generation_quality_suite` + `_evaluate_generation_quality`
+- [x] Smoke tests reworkés en architecture H3-native deux tracks (commit `4065789`) :
+  - Track 1 (DedicatedServer) : generation-stats quality suite + temperature checks
+  - Track 2 (Unity bridge) : launch + `unity-projection-override` + projection H3 + console
+  - Supprimé : `open-region`, HexGrid local (PlanetaryHexGrid pré-H3), `time.sleep`
 
-**Critères de sortie restants** :
-- [ ] Les bassins fermés, côtes et lacs sont lisibles visuellement dans les cas de test de base
-- [ ] Les seuils hydrologiques ont une première passe de tuning documentée
-
-**Fichiers** :
-- `Game/Assets/Scripts/World/Systems/WaterSystem.cs`
-- `Game/Assets/Scripts/World/Systems/WaterClassificationSystem.cs`
+**Résultats Play Mode 2026-04-19** : Ocean ✅ Coast ✅ Arid ✅ Frozen ✅ Basin ✅ — zéro failure, zéro warning
 
 ---
 
@@ -182,6 +182,33 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 - [ ] Une modification locale persiste après fermeture/réouverture de la région
 - [ ] La projection reflète au moins partiellement l'état local modifié sur la zone concernée
 - [ ] Le socle technique est prêt pour démarrer Phase 7
+
+---
+
+## ✅ Sprint E — Physique Stellaire & Modèle Atmosphérique Physique (terminé 2026-04-19)
+
+> Design de référence : [GDD.md §5](GDD.md) — Les trois moteurs du jeu (moteur écologique) | [SIMULATION_CONTRACTS.md](SIMULATION_CONTRACTS.md)
+
+**Complété** :
+- [x] `models.py` — `AtmosphericGas`, `AtmosphericComposition`, `ATMOSPHERE_PRESETS` (earth/mars/venus/vacuum), `GlobalWindPattern`
+- [x] `models.py` — `SphericalBodyState` enrichi : `atmosphere: AtmosphericComposition`, `equilibriumTemperature`, `globalWindPattern`, `luminosityLsun` ; propriété calculée `atmosphereDensity`
+- [x] `models.py` — `GoldbergTileState` enrichi : 7 nouveaux champs physiques (`altitude`, `albedo`, `solarIrradiance`, `vegetationDensity`, `wildlifeDensity`, `atmosphereDeltaCo2`, `atmosphereDeltaO2`)
+- [x] `logic.py` — chaîne thermique stellaire : `spectral_type_to_luminosity`, `compute_planetary_irradiance`, `compute_greenhouse_temp`, `compute_equilibrium_temperature`, `compute_tile_irradiance`, `compute_tile_albedo`, `aggregate_tile_deltas`
+- [x] `logic.py` — `generate_spherical_tiles()` peuple `altitude`, `albedo`, `vegetationDensity` à la génération
+- [x] `runtime.py` — boucle stellaire 2 passes (étoiles d'abord, puis planètes/lunes) pour `luminosityLsun` + `equilibriumTemperature` corrects
+- [x] `runtime.py` — `get_body_atmosphere`, `patch_atmosphere`, `apply_tile_atmosphere_delta` ; `_register_spherical_body_locked` accepte `atmosphere: AtmosphericComposition | None`
+- [x] `runtime.py` — `wipe_galaxy` délègue à `bootstrap_sol()` (fix : appelait l'ancien `_bootstrap_galaxy_locked`)
+- [x] `DedicatedServer/app/server.py` — 3 endpoints : `GET /bodies/{id}/atmosphere`, `PATCH /bodies/{id}/atmosphere`, `POST /bodies/{id}/tiles/{tile_id}/atmosphere-delta`
+- [x] `SimulationContracts.cs` — structs `AtmosphericGas`, `AtmosphericComposition`, `GlobalWindPattern` ; `GoldbergTileState` enrichi ; fix `Math.Min` (pas de `using UnityEngine`)
+- [x] `Mcp/server.py` — `get_atmospheric_state(body_id)`, `patch_atmosphere(body_id, gas, fraction_delta)`, helper `_server_patch`
+
+**Résultats validés** (Docker, 2026-04-19) :
+- Sun: `L=1.0 L☉` | Earth: `Teq=−18.5°C`, 101.3 kPa (N₂/O₂/CO₂/CH₄/H₂O) | Kepler-442b: `Teq=13.5°C`
+- Moons utilisent la distance AU de leur planète parente (fix: Io ne vaut plus 4000°C)
+- Suite de qualité génération : **14/14 PASS** sur les 5 presets — zéro régression
+
+**Écart connu (différé)** :
+- `solarIrradiance` reste 0.0 sur toutes les tuiles à la génération — passe de recalcul post-bootstrap non encore implémentée ; `equilibriumTemperature` sur le corps est correct
 
 ---
 

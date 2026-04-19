@@ -54,6 +54,13 @@ def _server_post(path: str, **params) -> dict:
         return response.json()
 
 
+def _server_patch(path: str, **params) -> dict:
+    with httpx.Client(timeout=10) as client:
+        response = client.patch(f"{SIMULATION_SERVER_URL}{path}", params=params or None)
+        response.raise_for_status()
+        return response.json()
+
+
 @mcp.tool
 def get_view_state() -> dict:
     """
@@ -170,15 +177,23 @@ def open_server_region(latitude: float, longitude: float) -> dict:
 
 
 @mcp.tool
-def get_atmospheric_state(latitude: float = 0.47, longitude: float = 0.18) -> dict:
+def get_atmospheric_state(body_id: str = "", latitude: float = 0.47, longitude: float = 0.18) -> dict:
     """
-    Get the atmospheric state for a region (CO₂, O₂, pressure, temperature, habitability).
-    Does not require Unity to be running — queries the dedicated simulation server directly.
+    Get the atmospheric composition and equilibrium temperature for a body or region.
+
+    When body_id is provided, returns the full AtmosphericComposition (gas list, pressure)
+    and equilibrium temperature from GET /bodies/{body_id}/atmosphere.
+    When body_id is empty, falls back to the legacy region-level AtmosphericState
+    (CO₂, O₂, pressure, temperature, habitability) by opening the region at lat/lon.
 
     Args:
-        latitude: Normalized latitude [0, 1].
-        longitude: Normalized longitude [0, 1].
+        body_id: UUID of the spherical body. Empty string = legacy region mode.
+        latitude: Normalized latitude [0, 1] (used only in legacy mode).
+        longitude: Normalized longitude [0, 1] (used only in legacy mode).
     """
+    if body_id:
+        return _server_get(f"/bodies/{body_id}/atmosphere")
+    # Legacy: open region and return atmosphericState
     region = _server_post("/commands/open-region", latitude=latitude, longitude=longitude)
     return region.get("atmosphericState", {})
 
@@ -1168,6 +1183,25 @@ def apply_body_tile_delta(
         water_delta=water_delta,
         temperature_delta=temperature_delta,
     )
+
+
+@mcp.tool
+def patch_atmosphere(
+    body_id: str,
+    gas: str,
+    fraction_delta: float,
+) -> dict:
+    """
+    Apply an additive CO₂/O₂/N₂/CH₄/H₂O fraction delta to a planet's atmosphere.
+    The gas must already exist in the body's gas list (use get_atmospheric_state first).
+    fraction_delta is clamped server-side so the result stays in [0, 1].
+
+    Args:
+        body_id: UUID of the spherical body.
+        gas: Gas name ("CO2", "O2", "N2", "H2O", "CH4", … — case-insensitive).
+        fraction_delta: Signed fraction delta to apply (e.g. 0.01 adds 1 %).
+    """
+    return _server_patch(f"/bodies/{body_id}/atmosphere", gas=gas, fraction_delta=fraction_delta)
 
 
 @mcp.tool

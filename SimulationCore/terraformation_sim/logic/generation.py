@@ -4,431 +4,21 @@ import math
 import h3 as _h3
 from noise import snoise3 as _snoise3
 
+from .stellar import compute_tile_albedo, compute_tile_irradiance
+from ..models import (
+    DebugCoherenceOverride,
+    GoldbergTileState,
+    ProjectionDebugSummary,
+    TerrainClass,
+    TerrainType,
+    WaterClassification,
+)
+
 # Bump this string whenever the tile generation algorithm changes.
 # Bodies that were modified under a different version will have their
 # tiles regenerated lazily on next access (mutations are preserved).
 GENERATION_VERSION: str = "v8"
 
-from .models import (
-    AnyBodyState,
-    AtmosphericComposition,
-    AtmosphericState,
-    DebugCoherenceOverride,
-    GoldbergTileState,
-    HexGridDebugSummary,
-    HexStateModifier,
-    InteriorZoneState,
-    OrbitalParameters,
-    PendingTerraformAction,
-    ProjectionDebugSummary,
-    RegionState,
-    SimulationCellAddress,
-    SimulationCellState,
-    SimulationSoilState,
-    SimulationVector2State,
-    SphericalBodyState,
-    TerraformAction,
-    TerraformActionDefinition,
-    TerrainClass,
-    TerrainType,
-    WaterClassification,
-    WorldLayer,
-    ZoneType,
-)
-
-
-# ── Greenhouse constants (GameBalanced preset — from Per Aspera SDK ClimateConfig) ──
-_CO2_EFF: float = 1.5
-_H2O_EFF: float = 4.0
-_MAX_WARMING_K: float = 80.0
-
-
-def _greenhouse_delta(co2_ratio: float, h2o_factor: float = 0.01) -> float:
-    """Extra temperature (Kelvin) from greenhouse effect. Logarithmic, capped."""
-    co2_effect = _CO2_EFF * math.log(1.0 + co2_ratio * 100.0) * 5.0
-    h2o_effect = _H2O_EFF * h2o_factor
-    return min(co2_effect + h2o_effect, _MAX_WARMING_K)
-
-
-# ── Stellar physics ───────────────────────────────────────────────────────────
-
-# Base luminosity (L☉) and reference radius (km) per spectral class.
-# Values are approximate mid-class averages; radius correction refines them.
-_SPECTRAL_BASE_LUMINOSITY: dict[str, float] = {
-    "O": 100_000.0, "B": 100.0, "A": 5.0, "F": 2.0, "G": 1.0, "K": 0.3, "M": 0.08,
-}
-_SPECTRAL_BASE_RADIUS_KM: dict[str, float] = {
-    "O": 3_500_000.0, "B": 1_500_000.0, "A": 1_200_000.0, "F": 900_000.0,
-    "G": 695_700.0,   "K": 550_000.0,   "M": 350_000.0,
-}
-
-_STEFAN_BOLTZMANN: float = 5.67e-8  # W m⁻² K⁻⁴
-_SOL_LUMINOSITY_W: float = 3.828e26  # W — IAU 2015 nominal
-_AU_IN_METRES:    float = 1.496e11   # m per AU
-
-
-def spectral_type_to_luminosity(spectral_type: str, radius_km: float) -> float:
-    """Derive stellar luminosity (L☉) from spectral class + radius.
-    Uses a radius² correction relative to the class median.
-    Returns 0.0 for empty / non-stellar spectral types.
-    """
-    if not spectral_type:
-        return 0.0
-    cls = spectral_type[0].upper()
-    base_L = _SPECTRAL_BASE_LUMINOSITY.get(cls, 1.0)
-    base_R = _SPECTRAL_BASE_RADIUS_KM.get(cls, 695_700.0)
-    if base_R <= 0:
-        return 0.0
-    return base_L * (radius_km / base_R) ** 2
-
-
-def compute_planetary_irradiance(luminosity_lsun: float, semi_major_au: float) -> float:
-    """Mean solar irradiance at a planet's distance from its star (W/m²).
-    Returns 0.0 for luminosity≤0 or semi_major_au≤0.
-    """
-    if luminosity_lsun <= 0.0 or semi_major_au <= 0.0:
-        return 0.0
-    L_W   = _SOL_LUMINOSITY_W * luminosity_lsun
-    dist_m = semi_major_au * _AU_IN_METRES
-    return L_W / (4.0 * math.pi * dist_m ** 2)
-
-
-def compute_greenhouse_temp(atmosphere: AtmosphericComposition) -> float:
-    """Greenhouse warming (ΔK) from the planet's atmospheric composition.
-    CH₄ is folded in as CO₂-equivalent using a simplified GWP scaling.
-    """
-    co2 = atmosphere.fraction_of("CO2")
-    h2o = atmosphere.fraction_of("H2O")
-    ch4 = atmosphere.fraction_of("CH4")
-    effective_co2 = co2 + ch4 * 0.005  # CH4 GWP-scaled contribution
-    return _greenhouse_delta(effective_co2, h2o_factor=h2o)
-
-
-_DEFAULT_PLANET_ALBEDO: float = 0.30
-
-
-def compute_equilibrium_temperature(
-    irradiance_wm2: float,
-    atmosphere: AtmosphericComposition,
-    planet_albedo: float = _DEFAULT_PLANET_ALBEDO,
-) -> float:
-    """Planetary mean surface temperature (°C).
-    Uses the Stefan-Boltzmann zero-dim energy balance plus greenhouse warming.
-    Returns absolute zero (−273.15 °C) for irradiance≤0.
-    """
-    if irradiance_wm2 <= 0.0:
-        return -273.15
-    T_eff_K = ((irradiance_wm2 * (1.0 - planet_albedo)) / (4.0 * _STEFAN_BOLTZMANN)) ** 0.25
-    greenhouse_K = compute_greenhouse_temp(atmosphere)
-    return T_eff_K - 273.15 + greenhouse_K * 0.1
-
-
-def compute_tile_irradiance(lat_deg: float, planet_irradiance_wm2: float) -> float:
-    """Effective W/m² at a tile given its latitude (cosine weighting)."""
-    cos_factor = max(0.0, math.cos(math.radians(lat_deg)))
-    return planet_irradiance_wm2 * cos_factor
-
-
-def compute_tile_albedo(terrain_type: TerrainType, water_class: WaterClassification) -> float:
-    """Surface albedo for a single tile, used for per-tile temperature correction."""
-    if water_class == WaterClassification.FrozenWater or terrain_type == TerrainType.Glace:
-        return 0.85
-    if water_class == WaterClassification.OpenOcean:
-        return 0.06
-    if water_class in (WaterClassification.InlandWater, WaterClassification.Coast):
-        return 0.08
-    if terrain_type == TerrainType.Vegetation:
-        return 0.12
-    if terrain_type == TerrainType.Metal:
-        return 0.30
-    if terrain_type == TerrainType.AtmosphereToxique:
-        return 0.20
-    return 0.25  # Roche default
-
-
-def aggregate_tile_deltas(body: SphericalBodyState) -> None:
-    """Fold per-tile CO₂/O₂ deltas into the planet's AtmosphericComposition.
-    Should be called once per advance_tick() for each colonised body.
-    Deltas are volume-fraction per tile; they are averaged across all tiles
-    and then added to the global gas fractions.
-    """
-    if not body.tiles:
-        return
-    n = len(body.tiles)
-    total_co2_delta = sum(t.atmosphereDeltaCo2 for t in body.tiles)
-    total_o2_delta  = sum(t.atmosphereDeltaO2  for t in body.tiles)
-    co2_delta_avg = total_co2_delta / n
-    o2_delta_avg  = total_o2_delta  / n
-    if co2_delta_avg:
-        new_co2 = max(0.0, min(1.0, body.atmosphere.fraction_of("CO2") + co2_delta_avg))
-        body.atmosphere.set_fraction("CO2", new_co2)
-    if o2_delta_avg:
-        new_o2 = max(0.0, min(1.0, body.atmosphere.fraction_of("O2") + o2_delta_avg))
-        body.atmosphere.set_fraction("O2", new_o2)
-
-
-def cell_habitability_score(cell: SimulationCellState) -> float:
-    """Continuous habitability score [0..1] for a single cell (weighted multi-param)."""
-    t = cell.temperature
-    if t < -30.0 or t > 70.0:
-        temp_score = 0.0
-    elif -10.0 <= t <= 50.0:
-        temp_score = 1.0 - abs(t - 15.0) / 35.0
-    else:
-        temp_score = max(0.0, 1.0 - abs(t - 15.0) / 45.0) * 0.3
-
-    if cell.terrainType == TerrainType.Vegetation:
-        water_score = 1.0
-    elif cell.terrainType == TerrainType.Eau:
-        water_score = min(1.0, cell.waterRatio / 0.3)
-    else:
-        water_score = cell.waterRatio
-
-    veg_bonus = 1.0 if cell.terrainType == TerrainType.Vegetation else 0.0
-    toxin_penalty = max(0.0, 1.0 - cell.toxinLevel * 3.0)
-
-    return (temp_score * 0.35 + water_score * 0.25 + veg_bonus * 0.25 + toxin_penalty * 0.15)
-
-
-def compute_atmospheric_state(cells: list[SimulationCellState]) -> AtmosphericState:
-    """Aggregate cell states into a planetary AtmosphericState (SDK Per Aspera port)."""
-    if not cells:
-        return AtmosphericState()
-
-    total = len(cells)
-    avg_temp = sum(c.temperature for c in cells) / total
-    avg_water = sum(c.waterRatio for c in cells) / total
-    avg_toxin = sum(c.toxinLevel for c in cells) / total
-
-    veg_fraction = sum(1 for c in cells if c.terrainType == TerrainType.Vegetation) / total
-    water_fraction = sum(
-        1 for c in cells
-        if c.waterClassification in (
-            WaterClassification.OpenOcean,
-            WaterClassification.InlandWater,
-            WaterClassification.Coast,
-        )
-    ) / total
-    toxic_fraction = sum(1 for c in cells if c.terrainType == TerrainType.AtmosphereToxique) / total
-
-    o2_ratio = min(0.21, veg_fraction * 0.5 + water_fraction * 0.05)
-    co2_ratio = max(0.0004, toxic_fraction * 0.8 + avg_toxin * 0.3 - veg_fraction * 0.1)
-    co2_ratio = min(0.96, co2_ratio)
-
-    # kPa — Earth ≈ 101.3, Mars initial ≈ 0.6
-    atmospheric_pressure = 0.6 + co2_ratio * 50.0 + o2_ratio * 40.0 + water_fraction * 10.0
-
-    greenhouse_k = _greenhouse_delta(co2_ratio)
-    effective_temp = avg_temp + greenhouse_k * 0.1
-
-    habitability = sum(cell_habitability_score(c) for c in cells) / total
-
-    return AtmosphericState(
-        co2Ratio=round(co2_ratio, 6),
-        o2Ratio=round(o2_ratio, 6),
-        atmosphericPressure=round(atmospheric_pressure, 3),
-        averageTemperature=round(effective_temp, 2),
-        toxinRatio=round(avg_toxin, 4),
-        habitabilityScore=round(habitability, 4),
-    )
-
-
-def is_cell_habitable(cell: SimulationCellState | None) -> bool:
-    if cell is None:
-        return False
-
-    if cell.terrainType == TerrainType.Vegetation:
-        return True
-
-    if cell.terrainType == TerrainType.Eau:
-        return True
-
-    return -10.0 <= cell.temperature <= 50.0 and cell.waterRatio >= 0.05
-
-
-def compute_habitability_progress(cells: list[SimulationCellState]) -> float:
-    if not cells:
-        return 0.0
-
-    habitable_count = sum(1 for cell in cells if is_cell_habitable(cell))
-    return habitable_count / len(cells)
-
-
-def apply_region_progress(region: RegionState, cells: list[SimulationCellState]) -> RegionState:
-    region.terraformationProgress = compute_habitability_progress(cells)
-    region.cells = [cell.model_copy(deep=True) for cell in cells]
-    if region.hasSelectedCell and cells:
-        selected_address = region.selectedCell.address
-        matched_cell = next(
-            (cell for cell in cells if cell.address.q == selected_address.q and cell.address.r == selected_address.r),
-            None,
-        )
-        region.selectedCell = matched_cell if matched_cell is not None else cells[0]
-    region.summary = summarize_region_cells(cells)
-    return region
-
-
-def summarize_region_cells(cells: list[SimulationCellState]) -> HexGridDebugSummary:
-    summary = HexGridDebugSummary(totalCells=len(cells))
-    if not cells:
-        return summary
-
-    total_water = 0.0
-    total_temperature = 0.0
-
-    for cell in cells:
-        total_water += cell.waterRatio
-        total_temperature += cell.temperature
-        summary.maxFlowAccumulation = max(summary.maxFlowAccumulation, cell.flowAccumulation)
-
-        if cell.waterClassification == WaterClassification.OpenOcean:
-            summary.openOceanCells += 1
-        elif cell.waterClassification == WaterClassification.InlandWater:
-            summary.inlandWaterCells += 1
-        elif cell.waterClassification == WaterClassification.Coast:
-            summary.coastCells += 1
-        elif cell.waterClassification == WaterClassification.FrozenWater:
-            summary.frozenWaterCells += 1
-        else:
-            summary.dryCells += 1
-
-        if cell.terrainClass == TerrainClass.Ridge:
-            summary.ridgeCells += 1
-        elif cell.terrainClass == TerrainClass.Basin:
-            summary.basinCells += 1
-        elif cell.terrainClass == TerrainClass.Channel:
-            summary.channelCells += 1
-        elif cell.terrainClass == TerrainClass.Source:
-            summary.sourceCells += 1
-
-        if cell.hasRiver:
-            summary.riverCells += 1
-        if cell.hasDownstream:
-            summary.downstreamCells += 1
-        if cell.hasOverflowOutlet:
-            summary.overflowCells += 1
-
-        if cell.terrainType == TerrainType.Roche:
-            summary.rockTerrainCells += 1
-        elif cell.terrainType == TerrainType.Glace:
-            summary.iceTerrainCells += 1
-        elif cell.terrainType == TerrainType.AtmosphereToxique:
-            summary.toxicTerrainCells += 1
-        elif cell.terrainType == TerrainType.Eau:
-            summary.waterTerrainCells += 1
-        elif cell.terrainType == TerrainType.Vegetation:
-            summary.vegetationTerrainCells += 1
-        elif cell.terrainType == TerrainType.Metal:
-            summary.metalTerrainCells += 1
-
-    summary.averageWaterRatio = total_water / len(cells)
-    summary.averageTemperature = total_temperature / len(cells)
-    return summary
-
-
-def terraform_action_definitions() -> dict[TerraformAction, TerraformActionDefinition]:
-    return {
-        TerraformAction.Heat: TerraformActionDefinition(
-            actionType=TerraformAction.Heat,
-            displayName="Heat",
-            durationTicks=3,
-            modifier=HexStateModifier(tempDelta=8.0),
-        ),
-        TerraformAction.Irrigate: TerraformActionDefinition(
-            actionType=TerraformAction.Irrigate,
-            displayName="Irrigate",
-            durationTicks=5,
-            modifier=HexStateModifier(waterDelta=0.15, hardnessDelta=-0.05),
-        ),
-        TerraformAction.Plant: TerraformActionDefinition(
-            actionType=TerraformAction.Plant,
-            displayName="Plant",
-            durationTicks=10,
-            modifier=HexStateModifier(organicDelta=0.08),
-        ),
-        TerraformAction.Mine: TerraformActionDefinition(
-            actionType=TerraformAction.Mine,
-            displayName="Mine",
-            durationTicks=1,
-            modifier=HexStateModifier(mineralDelta=-0.10, hardnessDelta=-0.05),
-        ),
-        TerraformAction.Detoxify: TerraformActionDefinition(
-            actionType=TerraformAction.Detoxify,
-            displayName="Detoxify",
-            durationTicks=4,
-            modifier=HexStateModifier(toxinDelta=-0.20),
-        ),
-    }
-
-
-def can_apply_action(cell: SimulationCellState | None, action: TerraformAction) -> bool:
-    if cell is None:
-        return False
-
-    if action == TerraformAction.Plant:
-        if cell.waterRatio < 0.1:
-            return False
-        if cell.temperature < -30.0:
-            return False
-    elif action == TerraformAction.Mine:
-        if cell.soil.rockHardness < 0.05:
-            return False
-
-    return True
-
-
-def apply_modifier_to_cell(cell: SimulationCellState, modifier: HexStateModifier) -> SimulationCellState:
-    cell.temperature += modifier.tempDelta
-    cell.waterRatio = max(0.0, min(1.0, cell.waterRatio + modifier.waterDelta))
-    cell.toxinLevel = max(0.0, min(1.0, cell.toxinLevel + modifier.toxinDelta))
-    cell.soil = SimulationSoilState(
-        rockHardness=max(0.0, min(1.0, cell.soil.rockHardness + modifier.hardnessDelta)),
-        organicContent=max(0.0, min(1.0, cell.soil.organicContent + modifier.organicDelta)),
-        porosity=cell.soil.porosity,
-        mineralDensity=max(0.0, min(1.0, cell.soil.mineralDensity + modifier.mineralDelta)),
-        toxicSoil=cell.soil.toxicSoil if cell.toxinLevel > 0.0 else False,
-        thermalConductivity=cell.soil.thermalConductivity,
-    )
-
-    if cell.toxinLevel <= 0.0:
-        cell.soil.toxicSoil = False
-
-    return cell
-
-
-def queue_action(pending: list[PendingTerraformAction],
-                 target_cell: SimulationCellAddress,
-                 action: TerraformAction) -> PendingTerraformAction:
-    definition = terraform_action_definitions()[action]
-    entry = PendingTerraformAction(cell=target_cell, actionType=action, ticksRemaining=definition.durationTicks)
-    pending.append(entry)
-    return entry
-
-
-def process_pending_actions(cells: list[SimulationCellState],
-                            pending: list[PendingTerraformAction]) -> tuple[list[SimulationCellState], list[PendingTerraformAction]]:
-    if not pending:
-        return cells, pending
-
-    definitions = terraform_action_definitions()
-    cell_index = {(cell.address.q, cell.address.r): index for index, cell in enumerate(cells)}
-    next_pending: list[PendingTerraformAction] = []
-
-    for entry in pending:
-        index = cell_index.get((entry.cell.q, entry.cell.r))
-        if index is None:
-            continue
-
-        definition = definitions[entry.actionType]
-        cells[index] = apply_modifier_to_cell(cells[index], definition.modifier)
-        remaining = entry.ticksRemaining - 1
-        if remaining > 0:
-            next_pending.append(PendingTerraformAction(cell=entry.cell, actionType=entry.actionType, ticksRemaining=remaining))
-
-    return cells, next_pending
-
-
-# ── H3 hexagonal hierarchical tile generation ─────────────────────────────────
 
 def _body_h3_resolution(radius_km: float) -> int:
     """Return the H3 resolution appropriate for a body's radius.
@@ -501,7 +91,7 @@ def _warp_position(x: float, y: float, z: float, warp_scale: float, warp_strengt
 
 
 def _planet_height(x: float, y: float, z: float, seed: int,
-                   coherence: "DebugCoherenceOverride") -> float:
+                   coherence: DebugCoherenceOverride) -> float:
     """Compute terrain elevation for a point on the unit sphere using Simplex noise.
 
     Returns a float in approximately [-0.6, +0.6].
@@ -647,30 +237,25 @@ def _assign_spherical_tile(
 
     # ── Biome tree — MapGeneration_rule.md decision order ────────────────
     if is_mountain:
-        # altitude > 0.70 normalized → rocky mountain peak
         terrain_type = TerrainType.Roche
     elif toxin_level > 0.04 and not is_water:
         terrain_type = TerrainType.AtmosphereToxique
     elif is_water:
         terrain_type = TerrainType.Eau
     elif temperature < -20.0:
-        # Sub-freezing: ice if any water present, polar desert otherwise
         terrain_type = TerrainType.Glace if water_ratio > 0.15 else TerrainType.Roche
     elif is_polar and height_above_sea < 0.15:
         terrain_type = TerrainType.Glace
     elif temperature < 10.0:
-        # Cold temperate: tundra vegetation needs high water
         terrain_type = TerrainType.Vegetation if water_ratio > cold_veg_threshold else TerrainType.Roche
     elif temperature <= 50.0:
-        # Temperate warm (10–50°C): main biome band
         if water_ratio > temperate_veg_threshold:
-            terrain_type = TerrainType.Vegetation   # forest / prairie
+            terrain_type = TerrainType.Vegetation
         elif noise_r > 0.92:
             terrain_type = TerrainType.Metal
         else:
-            terrain_type = TerrainType.Roche         # semi-arid or arid
+            terrain_type = TerrainType.Roche
     else:
-        # Hot (>50°C): tropical vegetation needs sustained moisture
         terrain_type = TerrainType.Vegetation if water_ratio > hot_veg_threshold else TerrainType.Roche
 
     # ── Water classification ─────────────────────────────────────────────
@@ -920,8 +505,6 @@ def generate_spherical_tiles(
         lat_norm = (lat + 90.0) / 180.0
         lon_norm = (lng + 180.0) / 360.0
 
-        # Pass the smoothed height so terrain assignment uses the same elevation
-        # that Unity will render — coastlines and altitude zones are now consistent.
         t_type, w_class, t_class, water_ratio, temperature, toxin_level = _assign_spherical_tile(
             lat_norm, lon_norm, cell, coherence_override, sea_level, seed,
             height=cell_heights[cell],
@@ -1010,151 +593,3 @@ def summarize_spherical_tiles(tiles: list[GoldbergTileState]) -> ProjectionDebug
     summary.averageWaterRatio = total_water / len(tiles)
     summary.averageTemperature = total_temp / len(tiles)
     return summary
-
-
-# ── Interior zone cell generation ─────────────────────────────────────────────
-
-def generate_interior_cells(cols: int, rows: int, zone_type: ZoneType, seed: int) -> list[SimulationCellState]:
-    """Generate the hex cell grid for an interior zone (cave, building, ship…).
-    Reuses SimulationCellState — same contract as RegionState.cells.
-    """
-    cells: list[SimulationCellState] = []
-    layer = _zone_layer(zone_type)
-
-    for row in range(rows):
-        for col in range(cols):
-            n0 = _tile_noise(col, row, seed, 0)
-            n1 = _tile_noise(col, row, seed, 1)
-            n2 = _tile_noise(col, row, seed, 2)
-
-            terrain_type, water_class, t_class, water_ratio, temperature, toxin_level = _interior_terrain(
-                zone_type, n0, n1, n2
-            )
-            cells.append(SimulationCellState(
-                address=SimulationCellAddress(q=col, r=row),
-                terrainName=_terrain_name(terrain_type, zone_type),
-                terrainType=terrain_type,
-                layer=layer,
-                altitude=n0 * 0.4,
-                temperature=temperature,
-                waterRatio=water_ratio,
-                toxinLevel=toxin_level,
-                windVector=SimulationVector2State(x=0.0, y=0.0),
-                windSpeed=0.0,
-                rainShadow=True,
-                hasRiver=False,
-                flowAccumulation=0,
-                terrainClass=t_class,
-                waterClassification=water_class,
-                soil=SimulationSoilState(
-                    rockHardness=n0 * 0.8 + 0.1,
-                    organicContent=0.0 if zone_type in (ZoneType.Ship, ZoneType.Station, ZoneType.Building) else n1 * 0.1,
-                    porosity=n1 * 0.3,
-                    mineralDensity=n2 * 0.5 + 0.1,
-                    toxicSoil=toxin_level > 0.1,
-                    thermalConductivity=0.4,
-                ),
-            ))
-    return cells
-
-
-def _zone_layer(zone_type: ZoneType) -> WorldLayer:
-    if zone_type in (ZoneType.Cave, ZoneType.NaturalCavern, ZoneType.Underground):
-        return WorldLayer.Underground
-    if zone_type in (ZoneType.Ship, ZoneType.Station):
-        return WorldLayer.Space
-    return WorldLayer.Surface  # Building
-
-
-def _interior_terrain(
-    zone_type: ZoneType, n0: float, n1: float, n2: float
-) -> tuple[TerrainType, WaterClassification, TerrainClass, float, float, float]:
-    """Return (terrain_type, water_class, terrain_class, water_ratio, temperature, toxin_level)."""
-    if zone_type in (ZoneType.Ship, ZoneType.Station):
-        terrain_type = TerrainType.Metal if n0 > 0.15 else TerrainType.Roche
-        water_ratio = max(0.0, n1 * 0.05 - 0.02)
-        temperature = 18.0 + (n2 - 0.5) * 4.0
-        toxin_level = 0.0
-        water_class = WaterClassification.Dry
-        t_class = TerrainClass.Slope
-    elif zone_type == ZoneType.Building:
-        terrain_type = TerrainType.Metal if n0 > 0.30 else TerrainType.Roche
-        water_ratio = max(0.0, n1 * 0.08 - 0.03)
-        temperature = 16.0 + (n2 - 0.5) * 6.0
-        toxin_level = 0.0
-        water_class = WaterClassification.Dry
-        t_class = TerrainClass.Slope
-    elif zone_type in (ZoneType.Cave, ZoneType.NaturalCavern):
-        terrain_type = TerrainType.Roche if n0 > 0.35 else (TerrainType.Glace if n2 < 0.15 else TerrainType.Roche)
-        water_ratio = max(0.0, n1 * 0.35 - 0.05)
-        temperature = -5.0 + n2 * 15.0
-        toxin_level = max(0.0, n0 * 0.12 - 0.06)
-        water_class = WaterClassification.InlandWater if water_ratio > 0.3 else WaterClassification.Dry
-        t_class = TerrainClass.Basin if n0 > 0.6 else TerrainClass.Slope
-    else:  # Underground
-        terrain_type = TerrainType.Roche if n0 > 0.2 else TerrainType.Metal
-        water_ratio = max(0.0, n1 * 0.20 - 0.05)
-        temperature = 8.0 + n2 * 12.0
-        toxin_level = max(0.0, n0 * 0.08 - 0.04)
-        water_class = WaterClassification.Dry
-        t_class = TerrainClass.Ridge if n2 > 0.7 else TerrainClass.Slope
-
-    return terrain_type, water_class, t_class, water_ratio, temperature, toxin_level
-
-
-def _terrain_name(terrain_type: TerrainType, zone_type: ZoneType) -> str:
-    prefix = {
-        ZoneType.Cave: "Cave", ZoneType.NaturalCavern: "Cavern",
-        ZoneType.Building: "Block", ZoneType.Underground: "Deep",
-        ZoneType.Ship: "Hull", ZoneType.Station: "Deck",
-    }.get(zone_type, "")
-    suffix = {
-        TerrainType.Roche: "Rock", TerrainType.Glace: "Ice",
-        TerrainType.AtmosphereToxique: "Toxic", TerrainType.Eau: "Water",
-        TerrainType.Vegetation: "Growth", TerrainType.Metal: "Metal",
-    }.get(terrain_type, "Unknown")
-    return f"{prefix} {suffix}".strip()
-
-
-def compute_body_position_at_tick(
-    body_id: str,
-    tick: int,
-    bodies: dict[str, "AnyBodyState"],
-) -> dict[str, float]:
-    """Return the position of a body relative to its system root in Astronomical Units.
-    Recursively resolves parentId chains. Root body (orbitalParams=None) is at (0, 0, 0).
-    Result dict: {"x": float, "y": float, "z": float} in AU.
-    """
-    body = bodies.get(body_id)
-    if body is None:
-        return {"x": 0.0, "y": 0.0, "z": 0.0}
-
-    params: OrbitalParameters | None = body.orbitalParams  # type: ignore[attr-defined]
-
-    if params is None:
-        # This is the root — sits at the origin
-        return {"x": 0.0, "y": 0.0, "z": 0.0}
-
-    # Compute parent position first (recursive)
-    parent_pos = compute_body_position_at_tick(body.parentId, tick, bodies) if body.parentId else {"x": 0.0, "y": 0.0, "z": 0.0}
-
-    # Kepler position: use simplified circular/elliptical in the ecliptic plane
-    # true_anomaly ≈ mean_anomaly (low-eccentricity approximation, good for gameplay)
-    mean_angle_deg = params.initialPhaseDeg + 360.0 * (tick / max(1, params.periodTicks))
-    angle_rad = math.radians(mean_angle_deg)
-    # Semi-latus rectum: r = a(1 - e²) / (1 + e*cosθ)
-    a = params.semiMajorAxisAU
-    e = params.eccentricity
-    r = a * (1.0 - e * e) / (1.0 + e * math.cos(angle_rad))
-
-    # Apply inclination around the X axis
-    inc_rad = math.radians(params.inclinationDeg)
-    x_orb = r * math.cos(angle_rad)
-    y_orb = r * math.sin(angle_rad) * math.cos(inc_rad)
-    z_orb = r * math.sin(angle_rad) * math.sin(inc_rad)
-
-    return {
-        "x": parent_pos["x"] + x_orb,
-        "y": parent_pos["y"] + y_orb,
-        "z": parent_pos["z"] + z_orb,
-    }

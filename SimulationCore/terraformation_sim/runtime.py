@@ -5,9 +5,12 @@ import math
 import threading
 from uuid import uuid4
 
-from .logic import apply_modifier_to_cell, apply_region_progress, can_apply_action, compute_atmospheric_state, compute_body_position_at_tick, _body_h3_resolution, generate_interior_cells, generate_spherical_tiles, GENERATION_VERSION, process_pending_actions, queue_action, summarize_region_cells, summarize_spherical_tiles, terraform_action_definitions
+from .logic import apply_modifier_to_cell, apply_region_progress, aggregate_tile_deltas, can_apply_action, compute_atmospheric_state, compute_body_position_at_tick, compute_equilibrium_temperature, compute_planetary_irradiance, compute_tile_irradiance, spectral_type_to_luminosity, _body_h3_resolution, generate_interior_cells, generate_spherical_tiles, GENERATION_VERSION, process_pending_actions, queue_action, summarize_region_cells, summarize_spherical_tiles, terraform_action_definitions
 from .models import (
     AnyBodyState,
+    AtmosphericComposition,
+    AtmosphericGas,
+    ATMOSPHERE_PRESETS,
     AtmosphericState,
     BodyBase,
     BodyType,
@@ -205,7 +208,7 @@ class InMemorySimulationRuntime:
                 coherence_override=earth_override,
                 water_level=earth_water,
                 seed=earth_seed,
-                atmosphere_density=0.70,
+                atmosphere=ATMOSPHERE_PRESETS["earth"],
             )
             self._last_event = SimulationEvent(
                 eventId=str(uuid4()),
@@ -264,6 +267,7 @@ class InMemorySimulationRuntime:
             parent_id: str | None = None,
             override: DebugCoherenceOverride | None = None,
             atmosphere_density: float | None = None,
+            atmosphere: "AtmosphericComposition | None" = None,
         ) -> SphericalBodyState:
             if override is None:
                 if water_level > 0.5:
@@ -277,6 +281,7 @@ class InMemorySimulationRuntime:
                 radius_km=radius_km, coherence_override=override,
                 water_level=water_level, seed=seed, parent_id=parent_id,
                 atmosphere_density=atmosphere_density,
+                atmosphere=atmosphere,
             )
             body.systemId = system.systemId
             body.orbitalParams = OrbitalParameters(
@@ -302,8 +307,8 @@ class InMemorySimulationRuntime:
         self._repo.save_solar_system(sol)
 
         _add_body(sol, "Mercury", BodyType.Planet, 2440.0,  0.00, 1002, 0.387,  88,   sun.bodyId, atmosphere_density=0.00)
-        _add_body(sol, "Venus",   BodyType.Planet, 6051.0,  0.00, 1003, 0.723,  225,  sun.bodyId, atmosphere_density=0.95)
-        mars    = _add_body(sol, "Mars",    BodyType.Planet, 3390.0,  0.02, 1005, 1.524,  687,  sun.bodyId, atmosphere_density=0.02)
+        _add_body(sol, "Venus",   BodyType.Planet, 6051.0,  0.00, 1003, 0.723,  225,  sun.bodyId, atmosphere=ATMOSPHERE_PRESETS["venus"])
+        mars    = _add_body(sol, "Mars",    BodyType.Planet, 3390.0,  0.02, 1005, 1.524,  687,  sun.bodyId, atmosphere=ATMOSPHERE_PRESETS["mars"])
 
         # Lune de la Terre
         _add_body(sol, "Luna",    BodyType.Moon,   1737.0,  0.01, 2001, 0.00257, 27,  active_earth.bodyId, atmosphere_density=0.00)
@@ -332,7 +337,48 @@ class InMemorySimulationRuntime:
         self._repo.save_solar_system(kepler)
         kepler_star = _add_star(kepler, "Kepler-442", 513000.0, "K", 3001)
         _add_body(kepler, "Kepler-442b", BodyType.Planet, 7600.0, 0.55, 3002,
-                  0.409, 112, kepler_star.bodyId, DebugCoherenceOverride.Ocean, atmosphere_density=0.65)
+                  0.409, 112, kepler_star.bodyId, DebugCoherenceOverride.Ocean,
+                  atmosphere=AtmosphericComposition(
+                      totalPressureKpa=40.0,
+                      gases=[
+                          AtmosphericGas(name="N2",  fraction=0.70, greenhouseCoeff=0.0,  molarMass=28.0),
+                          AtmosphericGas(name="CO2", fraction=0.15, greenhouseCoeff=1.0,  molarMass=44.0),
+                          AtmosphericGas(name="H2O", fraction=0.05, greenhouseCoeff=0.5,  molarMass=18.0),
+                          AtmosphericGas(name="O2",  fraction=0.10, greenhouseCoeff=0.0,  molarMass=32.0),
+                      ],
+                  ))
+
+        # ── Compute luminosity and equilibrium temperature ─────────────────────
+        # Pass 1: stars only (must complete before planets can reference their luminosity)
+        for body in self._bodies.values():
+            if isinstance(body, SphericalBodyState) and body.bodyType == BodyType.Star:
+                body.luminosityLsun = spectral_type_to_luminosity(body.spectralType, body.radiusKm)
+                self._repo.save_body(body)
+
+        # Pass 2: planets and moons (stars are all resolved now)
+        for body in self._bodies.values():
+            if not isinstance(body, SphericalBodyState):
+                continue
+            if body.bodyType == BodyType.Star or body.orbitalParams is None:
+                continue
+            parent = self._bodies.get(body.parentId or "")
+            if parent is None or not isinstance(parent, SphericalBodyState):
+                continue
+            if parent.bodyType == BodyType.Star:
+                # Planet orbiting a star directly
+                star_luminosity = parent.luminosityLsun
+                star_au = body.orbitalParams.semiMajorAxisAU
+            else:
+                # Moon: use grandparent star + parent planet's star distance
+                grandparent = self._bodies.get(parent.parentId or "")
+                if grandparent is None or not isinstance(grandparent, SphericalBodyState) or grandparent.bodyType != BodyType.Star:
+                    continue
+                star_luminosity = grandparent.luminosityLsun
+                star_au = parent.orbitalParams.semiMajorAxisAU if parent.orbitalParams else 0.0
+            if star_luminosity > 0.0 and star_au > 0.0:
+                irr = compute_planetary_irradiance(star_luminosity, star_au)
+                body.equilibriumTemperature = compute_equilibrium_temperature(irr, body.atmosphere)
+                self._repo.save_body(body)
 
         # Route cachée Sol → Kepler-442
         self._create_stellar_route_locked(
@@ -921,22 +967,45 @@ class InMemorySimulationRuntime:
         water_level: float,
         seed: int,
         parent_id: str | None = None,
-        atmosphere_density: float | None = None,
+        atmosphere_density: float | None = None,  # kept for backward-compat; ignored when atmosphere= is set
+        atmosphere: AtmosphericComposition | None = None,
     ) -> SphericalBodyState:
         """Create and store a SphericalBodyState; tiles generated lazily on first request.
-        atmosphere_density: [0,1]. None = auto-derive from coherence_override preset.
+        Prefer passing atmosphere= (AtmosphericComposition) directly.
+        atmosphere_density is a legacy float and is only used to compute a trivial
+        vacuum/thin/thick selection when no atmosphere object is provided.
         """
-        if atmosphere_density is None:
-            # Default atmosphere density per coherence preset
-            _atmo_defaults = {
-                DebugCoherenceOverride.Ocean:  0.65,
-                DebugCoherenceOverride.Arid:   0.15,
-                DebugCoherenceOverride.Frozen: 0.30,
-                DebugCoherenceOverride.Coast:  0.70,
-                DebugCoherenceOverride.Basin:  0.50,
-                DebugCoherenceOverride.None_:  0.50,
-            }
-            atmosphere_density = _atmo_defaults.get(coherence_override, 0.50)
+        if atmosphere is None:
+            # Legacy path: map float density to nearest preset
+            if atmosphere_density is None:
+                _atmo_defaults = {
+                    DebugCoherenceOverride.Ocean:  0.65,
+                    DebugCoherenceOverride.Arid:   0.15,
+                    DebugCoherenceOverride.Frozen: 0.30,
+                    DebugCoherenceOverride.Coast:  0.70,
+                    DebugCoherenceOverride.Basin:  0.50,
+                    DebugCoherenceOverride.None_:  0.50,
+                }
+                atmosphere_density = _atmo_defaults.get(coherence_override, 0.50)
+            # Map density float to a rough AtmosphericComposition
+            if atmosphere_density <= 0.01:
+                atmosphere = ATMOSPHERE_PRESETS["vacuum"]
+            elif atmosphere_density <= 0.05:
+                atmosphere = AtmosphericComposition(
+                    totalPressureKpa=atmosphere_density * 101.3,
+                    gases=[],
+                )
+            else:
+                # Generic atmosphere proportional to Earth baseline
+                from .models import AtmosphericGas
+                atmosphere = AtmosphericComposition(
+                    totalPressureKpa=atmosphere_density * 101.3,
+                    gases=[
+                        AtmosphericGas(name="N2",  fraction=0.78, greenhouseCoeff=0.0,  molarMass=28.0),
+                        AtmosphericGas(name="CO2", fraction=0.02, greenhouseCoeff=1.0,  molarMass=44.0),
+                        AtmosphericGas(name="O2",  fraction=0.20, greenhouseCoeff=0.0,  molarMass=32.0),
+                    ],
+                )
         h3_res = _body_h3_resolution(radius_km)
         tile_count = 2 + 120 * (7 ** h3_res)  # H3 formula: c(r) = 2 + 120*7^r
         bid = body_id or str(uuid4())
@@ -951,7 +1020,7 @@ class InMemorySimulationRuntime:
             tileCount=tile_count,
             projectionOverride=coherence_override,
             waterLevel=water_level,
-            atmosphereDensity=atmosphere_density,
+            atmosphere=atmosphere,
         )
         self._bodies[bid] = body
         if not self._active_body_id or body_type == BodyType.Planet:
@@ -1159,6 +1228,70 @@ class InMemorySimulationRuntime:
             ))
             return tile.model_copy(deep=True)
 
+    # ── Atmosphere API ─────────────────────────────────────────────────────────
+
+    def get_body_atmosphere(self, body_id: str) -> dict:
+        """Return the atmospheric composition and equilibrium temperature of a body."""
+        with self._lock:
+            body = self._bodies.get(body_id)
+            if body is None:
+                raise KeyError(f"Body not found: {body_id}")
+            if not isinstance(body, SphericalBodyState):
+                raise TypeError(f"Body {body_id} has no atmosphere (interior zone)")
+            return {
+                "atmosphere": body.atmosphere.model_copy(deep=True),
+                "equilibriumTemperature": body.equilibriumTemperature,
+                "luminosityLsun": body.luminosityLsun,
+            }
+
+    def patch_atmosphere(self, body_id: str, gas_name: str, fraction_delta: float) -> AtmosphericComposition:
+        """Add fraction_delta to a named gas in a body's atmosphere (clamped to [0, 1]).
+        The gas must already exist in atmosphere.gases; unknown names raise KeyError.
+        Returns the updated AtmosphericComposition.
+        """
+        with self._lock:
+            body = self._bodies.get(body_id)
+            if body is None:
+                raise KeyError(f"Body not found: {body_id}")
+            if not isinstance(body, SphericalBodyState):
+                raise TypeError(f"Body {body_id} has no atmosphere")
+            gas = next((g for g in body.atmosphere.gases if g.name.upper() == gas_name.upper()), None)
+            if gas is None:
+                raise KeyError(f"Gas '{gas_name}' not tracked in body {body_id} atmosphere")
+            gas.fraction = max(0.0, min(1.0, gas.fraction + fraction_delta))
+            body.isModified = True
+            self._repo.save_body(body)
+            return body.atmosphere.model_copy(deep=True)
+
+    def apply_tile_atmosphere_delta(
+        self,
+        body_id: str,
+        tile_id: str,
+        co2_delta: float = 0.0,
+        o2_delta: float = 0.0,
+    ):
+        """Set per-tick atmospheric deltas on a tile (from a building/plant action).
+        These accumulate and are folded into planet atmosphere by aggregate_tile_deltas().
+        Returns the updated tile.
+        """
+        with self._lock:
+            body = self._bodies.get(body_id)
+            if body is None:
+                raise KeyError(f"Body not found: {body_id}")
+            if not isinstance(body, SphericalBodyState):
+                raise TypeError(f"Body {body_id} is not a spherical body")
+            if not body.tiles:
+                body.tiles = generate_spherical_tiles(
+                    body.h3Resolution, body.projectionOverride, body.waterLevel, body.seed,
+                    atmosphere_density=body.atmosphereDensity,
+                )
+            tile = next((t for t in body.tiles if t.tileId == tile_id), None)
+            if tile is None:
+                raise KeyError(f"Tile {tile_id} not found on body {body_id}")
+            tile.atmosphereDeltaCo2 = co2_delta
+            tile.atmosphereDeltaO2  = o2_delta
+            return tile.model_copy(deep=True)
+
     def register_interior_zone(
         self,
         parent_body_id: str,
@@ -1217,44 +1350,24 @@ class InMemorySimulationRuntime:
     # ── Galaxy layer ───────────────────────────────────────────────────────────
 
     def wipe_galaxy(self) -> dict:
-        """Destroy all galaxy bodies, systems, routes and travels, then re-run bootstrap.
+        """Destroy all galaxy bodies, systems, routes and travels, then re-bootstrap.
         Intended for testing and world-reset workflows.
-        Bodies that belong to the active WorldState (no systemId) are preserved.
+        Re-runs bootstrap_sol() for a full fresh Sol system.
         Returns a summary dict with counts of deleted and recreated items.
         """
         with self._lock:
-            deleted_bodies = 0
+            deleted_bodies = sum(
+                1 for b in self._bodies.values()
+                if isinstance(b, SphericalBodyState) and b.systemId
+            )
             deleted_systems = len(self._solar_systems)
             deleted_routes = len(self._stellar_routes)
             deleted_travels = len(self._space_travels)
 
-            # Delete all galaxy bodies (those with a systemId)
-            galaxy_body_ids = [
-                bid for bid, b in self._bodies.items()
-                if isinstance(b, SphericalBodyState) and b.systemId
-            ]
-            for bid in galaxy_body_ids:
-                self._repo.delete_tile_mutations(bid)
-                self._repo.delete_body(bid)
-                del self._bodies[bid]
-                deleted_bodies += 1
+        # bootstrap_sol acquires the RLock internally; it wipes everything and rebuilds
+        self.bootstrap_sol()
 
-            # Delete all systems, routes, travels from DB
-            for sid in list(self._solar_systems):
-                self._repo.delete_solar_system(sid)
-            for rid in list(self._stellar_routes):
-                self._repo.delete_stellar_route(rid)
-            for tid in list(self._space_travels):
-                self._repo.delete_space_travel(tid)
-
-            # Reset in-memory registries
-            self._solar_systems = {}
-            self._stellar_routes = {}
-            self._space_travels = {}
-
-            # Re-bootstrap
-            self._bootstrap_galaxy_locked()
-
+        with self._lock:
             return {
                 "deleted": {
                     "bodies": deleted_bodies,

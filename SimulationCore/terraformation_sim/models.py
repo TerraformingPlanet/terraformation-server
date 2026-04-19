@@ -333,6 +333,84 @@ class ZoneType(IntEnum):
     Station = 5
 
 
+# ── Atmospheric composition ───────────────────────────────────────────────────
+
+class AtmosphericGas(BaseModel):
+    """One gas species in a planetary atmosphere.
+    greenhouseCoeff is game-balanced: CO₂=1.0, CH₄=28.0, H₂O=0.5, N₂=0.0, O₂=0.0.
+    molarMass in g/mol (informational, used for future pressure / gravity calculations).
+    """
+    name: str = ""
+    fraction: float = 0.0          # volume fraction [0..1]
+    greenhouseCoeff: float = 0.0   # relative greenhouse warming factor
+    molarMass: float = 28.0        # g/mol
+
+
+class AtmosphericComposition(BaseModel):
+    """Full atmospheric composition for a spherical body.
+    gases is the list of tracked gas species; unlisted species are assumed trace.
+    totalPressureKpa is the reference surface pressure.
+    """
+    gases: list[AtmosphericGas] = Field(default_factory=list)
+    totalPressureKpa: float = 0.0  # kPa — Earth≈101.3, Mars≈0.6, vacuum=0.0
+
+    def fraction_of(self, name: str) -> float:
+        """Return the volume fraction of a gas by name, 0.0 if absent."""
+        for g in self.gases:
+            if g.name.upper() == name.upper():
+                return g.fraction
+        return 0.0
+
+    def set_fraction(self, name: str, new_fraction: float) -> None:
+        """Update a gas fraction in place (clamps to [0, 1])."""
+        new_fraction = max(0.0, min(1.0, new_fraction))
+        for g in self.gases:
+            if g.name.upper() == name.upper():
+                g.fraction = new_fraction
+                return
+
+
+# Reference preset atmospheres (used by bootstrap_sol and tests)
+ATMOSPHERE_PRESETS: dict[str, AtmosphericComposition] = {
+    "earth": AtmosphericComposition(
+        totalPressureKpa=101.3,
+        gases=[
+            AtmosphericGas(name="N2",  fraction=0.780, greenhouseCoeff=0.0,  molarMass=28.0),
+            AtmosphericGas(name="O2",  fraction=0.210, greenhouseCoeff=0.0,  molarMass=32.0),
+            AtmosphericGas(name="CO2", fraction=0.000420, greenhouseCoeff=1.0,  molarMass=44.0),
+            AtmosphericGas(name="CH4", fraction=0.0000018, greenhouseCoeff=28.0, molarMass=16.0),
+            AtmosphericGas(name="H2O", fraction=0.010, greenhouseCoeff=0.5,  molarMass=18.0),
+        ],
+    ),
+    "mars": AtmosphericComposition(
+        totalPressureKpa=0.6,
+        gases=[
+            AtmosphericGas(name="CO2", fraction=0.953, greenhouseCoeff=1.0, molarMass=44.0),
+            AtmosphericGas(name="N2",  fraction=0.027, greenhouseCoeff=0.0, molarMass=28.0),
+            AtmosphericGas(name="O2",  fraction=0.001, greenhouseCoeff=0.0, molarMass=32.0),
+        ],
+    ),
+    "venus": AtmosphericComposition(
+        totalPressureKpa=9200.0,
+        gases=[
+            AtmosphericGas(name="CO2", fraction=0.965, greenhouseCoeff=1.0, molarMass=44.0),
+            AtmosphericGas(name="N2",  fraction=0.035, greenhouseCoeff=0.0, molarMass=28.0),
+        ],
+    ),
+    "vacuum": AtmosphericComposition(totalPressureKpa=0.0, gases=[]),
+}
+
+
+class GlobalWindPattern(BaseModel):
+    """Simplified planetary wind pattern (MVP — Hadley cells deferred to later sprint).
+    dominantWindDeg: direction FROM which the prevailing wind blows, in degrees [0, 360).
+    windIntensity: normalised strength [0, 1]. 0=calm, 1=storm-force.
+    Local windVector in SimulationCellState is derived from this at region-open time.
+    """
+    dominantWindDeg: float = 270.0  # westerlies (wind from west)
+    windIntensity: float = 0.3      # moderate
+
+
 class GoldbergTileState(BaseModel):
     """One tile on a spherical body surface — H3 hexagonal hierarchical cell.
     tileId is the H3 cell index string (e.g. '8928308280fffff').
@@ -340,6 +418,15 @@ class GoldbergTileState(BaseModel):
     boundaryLatLons provides the 6 (lat, lon) vertex pairs of the hexagon boundary for exact
     3D projection in Unity (replacing nearest-neighbour lat/lon approximation).
     childZoneIds lists any interior zones accessible from this tile (caves, buildings…).
+
+    Physical fields added for terraformation simulation:
+    - altitude: height relative to sea level, normalised [-1, 1] (negative = submarine).
+    - albedo: surface reflectivity [0=absorb all, 1=reflect all].
+    - solarIrradiance: effective W/m² received at this tile (cos-latitude weighted).
+    - vegetationDensity: fraction of tile covered by vegetation [0, 1].
+    - wildlifeDensity: relative density of surface fauna [0, 1].
+    - atmosphereDeltaCo2/O2: per-tick gas delta produced/consumed by this tile's occupants;
+      aggregated into SphericalBodyState.atmosphere by advance_tick().
     """
     tileId: str = ""
     neighborIds: list[str] = Field(default_factory=list)
@@ -356,6 +443,14 @@ class GoldbergTileState(BaseModel):
     toxinLevel: float = 0.0
     isHabitable: bool = False
     childZoneIds: list[str] = Field(default_factory=list)
+    # ── Physical simulation fields ──────────────────────────────────────────
+    altitude: float = 0.0           # normalised height relative to sea level [-1, 1]
+    albedo: float = 0.15            # surface albedo [0, 1]
+    solarIrradiance: float = 0.0    # W/m² at tile surface
+    vegetationDensity: float = 0.0  # [0, 1]
+    wildlifeDensity: float = 0.0    # [0, 1] — species breakdown in sprint E
+    atmosphereDeltaCo2: float = 0.0 # CO₂ volume fraction delta per tick (from buildings/plants)
+    atmosphereDeltaO2: float = 0.0  # O₂ volume fraction delta per tick
 
 
 # Ticks required to travel 1 light-year along a stellar route (baseline, modifier=1.0)
@@ -402,18 +497,36 @@ class SphericalBodyState(BodyBase):
     (tile delta, terraform action, zone registration). Read-only access never sets this flag.
     generationVersion records which GENERATION_VERSION was active at time of first modification,
     so a future algo change can detect and re-generate stale bodies.
+
+    Atmosphere & climate:
+    - atmosphere: full gas composition + pressure. atmosphereDensity is kept as a
+      convenience property for backward-compat with generation code (= pressure / 101.3).
+    - equilibriumTemperature: planetary mean surface temperature (°C) computed from
+      star luminosity, orbit, albedo and greenhouse effect. Updated each tick.
+    - globalWindPattern: simplified planetary wind (MVP — Hadley cells in later sprint).
+    - luminosityLsun: only meaningful for stars (bodyType==Star). Derived at bootstrap
+      from spectralType + radiusKm. 0.0 for planets/moons.
     """
     surfaceType: Literal["goldberg"] = "goldberg"
     radiusKm: float = 6371.0
     h3Resolution: int = 2  # H3 resolution: 0=122 cells, 1=842 cells, 2=5882 cells
     tileCount: int = 0
-    atmosphereDensity: float = 0.0
     projectionOverride: DebugCoherenceOverride = DebugCoherenceOverride.None_
     waterLevel: float = 0.0
     isModified: bool = False
     generationVersion: str = ""
     summary: ProjectionDebugSummary = Field(default_factory=ProjectionDebugSummary)
     tiles: list[GoldbergTileState] = Field(default_factory=list)
+    # ── Atmosphere & climate ────────────────────────────────────────────────
+    atmosphere: AtmosphericComposition = Field(default_factory=lambda: AtmosphericComposition())
+    equilibriumTemperature: float = -273.15   # °C — updated by compute_equilibrium_temperature
+    globalWindPattern: GlobalWindPattern = Field(default_factory=GlobalWindPattern)
+    luminosityLsun: float = 0.0               # L☉ — stars only
+
+    @property
+    def atmosphereDensity(self) -> float:  # type: ignore[override]
+        """Backward-compat: normalised density [0, 1] ≈ totalPressureKpa / 101.3."""
+        return min(1.0, self.atmosphere.totalPressureKpa / 101.3)
 
 
 class InteriorZoneState(BodyBase):

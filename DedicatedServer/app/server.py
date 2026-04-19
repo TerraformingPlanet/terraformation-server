@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 
 from terraformation_sim import (
     AnyBodyState,
+    AtmosphericComposition,
     BodyBase,
     BodyType,
     DebugCoherenceOverride,
@@ -222,6 +223,54 @@ def get_body_tile_neighbors(body_id: str, tile_id: str) -> list[GoldbergTileStat
     """Return the neighboring tiles (up to 6) of an H3 tile."""
     try:
         return runtime.get_body_tile_neighbors(body_id, tile_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except TypeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ── Atmosphere endpoints ─────────────────────────────────────────────────────
+
+@app.get("/bodies/{body_id}/atmosphere")
+def get_body_atmosphere(body_id: str) -> dict:
+    """Return the full AtmosphericComposition and equilibrium temperature for a body."""
+    try:
+        return runtime.get_body_atmosphere(body_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except TypeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.patch("/bodies/{body_id}/atmosphere", response_model=AtmosphericComposition)
+def patch_body_atmosphere(
+    body_id: str,
+    gas: str,
+    fraction_delta: float,
+) -> AtmosphericComposition:
+    """Apply an additive fraction delta to a named gas in the planet atmosphere.
+    fraction_delta is clamped to [0, 1]. The gas must already be tracked on this body.
+    """
+    try:
+        return runtime.patch_atmosphere(body_id, gas, fraction_delta)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except TypeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/bodies/{body_id}/tiles/{tile_id}/atmosphere-delta", response_model=GoldbergTileState)
+def apply_tile_atmosphere_delta(
+    body_id: str,
+    tile_id: str,
+    co2_delta: float = 0.0,
+    o2_delta: float = 0.0,
+) -> GoldbergTileState:
+    """Set per-tick CO₂/O₂ deltas on a tile (building/plant production).
+    These are aggregated into planet atmosphere on each advance_tick().
+    """
+    try:
+        return runtime.apply_tile_atmosphere_delta(body_id, tile_id, co2_delta=co2_delta, o2_delta=o2_delta)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except TypeError as exc:
