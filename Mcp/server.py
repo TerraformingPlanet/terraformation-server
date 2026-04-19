@@ -8,6 +8,7 @@ Transport:
 """
 
 import os
+import time
 import urllib.parse
 from datetime import datetime
 
@@ -358,6 +359,36 @@ _SMOKE_COMPARE_FIELDS_LOCAL = ["openOceanCells", "coastCells", "inlandWaterCells
                                 "averageWaterRatio", "averageTemperature"]
 
 
+def _build_smoke_projection_summary(gen_stats: dict) -> dict:
+    """Convert generation-stats response to the projection summary shape used by _validate_smoke."""
+    if "error" in gen_stats:
+        return {"isValid": False, "error": gen_stats["error"], "summary": {}}
+    water = gen_stats.get("water_classification", {})
+    total = int(gen_stats.get("total_tiles", 0))
+
+    def _cells(key: str) -> int:
+        entry = water.get(key, {})
+        return int(entry.get("count", 0)) if isinstance(entry, dict) else 0
+
+    temp = gen_stats.get("temperature", {})
+    water_ratio = gen_stats.get("water_ratio", {})
+    summary = {
+        "totalCells": total,
+        "openOceanCells":    _cells("OpenOcean"),
+        "coastCells":        _cells("Coast"),
+        "inlandWaterCells":  _cells("InlandWater"),
+        "frozenWaterCells":  _cells("FrozenWater"),
+        "dryCells":          _cells("Dry"),
+        "averageWaterRatio": float(water_ratio.get("avg", 0.0) if isinstance(water_ratio, dict) else 0.0),
+        "averageTemperature": float(temp.get("avg", 0.0) if isinstance(temp, dict) else 0.0),
+    }
+    return {
+        "isValid": True,
+        "source": "generation-stats",
+        "summary": summary,
+    }
+
+
 def _safe_get(path: str, **params) -> dict:
     try:
         return _get(path, **params)
@@ -473,9 +504,35 @@ def _run_smoke_sequence(preset_name: str, lat: float, lon: float,
     data["stateBefore"]   = _safe_get("/debug/state")
     data["launchResult"]  = _safe_get("/debug/launch-preset", preset=preset_name)
     data["stateAfterLaunch"] = _safe_get("/debug/state")
-    data["projection"]    = _safe_server_get("/projection")
+    # Projection: use DedicatedServer generation-stats with preset-specific params.
+    # The bridge /debug/projection requires the Mercator sphere to have been rendered
+    # at least once (lazy-build), which doesn't happen during automated smoke tests.
+    # The default /projection endpoint always returns the fixed Earth planet — not
+    # useful for preset-specific checks.  generation-stats is preset-aware.
+    _profile = _GENERATION_PROFILES.get(
+        next((k for k in _GENERATION_PROFILES if k.lower() == preset_name.lower()), ""),
+        None,
+    )
+    if _profile is not None:
+        _gen_stats = _safe_server_get(
+            "/debug/generation-stats",
+            coherence=_profile["coherence"],
+            water_level=_profile["water_level"],
+            atmosphere_density=_profile["atmosphere_density"],
+            seed=_profile["seed"],
+        )
+        data["projection"] = _build_smoke_projection_summary(_gen_stats)
+    else:
+        data["projection"] = {"isValid": False, "error": f"No profile for preset '{preset_name}'"}
     data["openRegion"]    = _safe_get("/debug/open-region", lat=lat, lon=lon)
-    data["local"]         = _safe_server_get("/region")
+    # Use the Unity bridge for local data — the DedicatedServer /region returns
+    # a fixed default region that is not updated when a preset is launched in Unity.
+    _bridge_local = _safe_get("/debug/local")
+    # Remap bridge response shape (gridSummary) to the expected shape (summary)
+    # so _validate_smoke field access stays consistent.
+    if "gridSummary" in _bridge_local and "summary" not in _bridge_local:
+        _bridge_local["summary"] = _bridge_local.pop("gridSummary")
+    data["local"]         = _bridge_local
     data["console"]       = _safe_get("/debug/console",
                                       maxEntries=20, minimumSeverity="Warning")
     if capture_screenshot:
