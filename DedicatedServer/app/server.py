@@ -777,3 +777,14 @@ def claim_hex(corp_id: str, body_id: str, tile_id: str) -> CorporationData:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.delete("/game/corporations/{corp_id}/claim-hex", response_model=CorporationData)
+def unclaim_hex(corp_id: str, body_id: str, tile_id: str) -> CorporationData:
+    """Release a previously claimed tile from a corporation."""
+    try:
+        return runtime.unclaim_tile(corp_id, body_id, tile_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))

@@ -138,6 +138,19 @@ class InMemorySimulationRuntime:
             corp.claimedTiles.append(ClaimedTile(bodyId=body_id, tileId=tile_id))
             return corp
 
+    def unclaim_tile(self, corp_id: str, body_id: str, tile_id: str) -> CorporationData:
+        with self._lock:
+            corp = self._corporations.get(corp_id)
+            if corp is None:
+                raise KeyError(f"Corporation '{corp_id}' not found")
+            owner = self._tile_ownership.get(body_id, {}).get(tile_id)
+            if owner != corp_id:
+                raise ValueError(f"Tile '{tile_id}' on body '{body_id}' is not owned by '{corp_id}'")
+            self._tile_ownership[body_id].pop(tile_id, None)
+            corp.claimedTiles = [ct for ct in corp.claimedTiles
+                                  if not (ct.bodyId == body_id and ct.tileId == tile_id)]
+            return corp
+
     def health(self) -> dict:
         with self._lock:
             return {
