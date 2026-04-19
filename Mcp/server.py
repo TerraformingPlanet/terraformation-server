@@ -525,6 +525,10 @@ def _run_smoke_sequence(preset_name: str, lat: float, lon: float,
     else:
         data["projection"] = {"isValid": False, "error": f"No profile for preset '{preset_name}'"}
     data["openRegion"]    = _safe_get("/debug/open-region", lat=lat, lon=lon)
+    # Wait for Unity to regenerate the HexGrid before reading local data.
+    # The open-region request triggers a coroutine; without a delay the next
+    # /debug/local read may still reflect the previous preset's grid.
+    time.sleep(1.5)
     # Use the Unity bridge for local data — the DedicatedServer /region returns
     # a fixed default region that is not updated when a preset is launched in Unity.
     _bridge_local = _safe_get("/debug/local")
