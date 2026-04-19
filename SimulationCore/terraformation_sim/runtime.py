@@ -82,6 +82,10 @@ class InMemorySimulationRuntime:
         self._repo: StateRepository = repository or InMemoryRepository()
         # LOD tile cache: (body_id, h3_resolution) → list[GoldbergTileState] (never persisted)
         self._lod_tile_cache: dict = {}
+        # Region mutation cache: region_key → {(q, r): (water_delta, temp_delta)}
+        # Replayed on every open_region() call so modifications survive region reloads.
+        # Key format: f"{lat:.3f},{lon:.3f}" (granularity ~0.1° ≈ 10 km)
+        self._region_mutations: dict[str, dict[tuple[int, int], tuple[float, float]]] = {}
         # Atmospheric event tracking (Phase 3 — SDK climate events)
         self._last_habitability_bucket: int = -1   # 0=<25% 1=<50% 2=<75% 3=100%
         self._atmosphere_formed_fired: bool = False
@@ -177,6 +181,7 @@ class InMemorySimulationRuntime:
             self._solar_systems = {}
             self._stellar_routes = {}
             self._space_travels = {}
+            self._region_mutations = {}  # wipe persisted region deltas (Sprint C)
 
             # ── Bootstrap Sol ───────────────────────────────────────
             earth_name = "Earth"
@@ -563,6 +568,19 @@ class InMemorySimulationRuntime:
         with self._lock:
             coordinates = SimulationCoordinates(latitude=_clamp01(latitude), longitude=_clamp01(longitude))
             region = self._build_region_state(self._world_state.activePlanetName or "Astra-Prime", coordinates, self._tick_count)
+            # Replay persisted mutations so modifications survive region reloads (Sprint C)
+            region_key = f"{coordinates.latitude:.3f},{coordinates.longitude:.3f}"
+            pending = self._region_mutations.get(region_key)
+            if pending:
+                for i, cell in enumerate(self._region_cells):
+                    k = (cell.address.q, cell.address.r)
+                    if k in pending:
+                        w_delta, t_delta = pending[k]
+                        self._region_cells[i] = apply_modifier_to_cell(
+                            cell, HexStateModifier(waterDelta=w_delta, tempDelta=t_delta)
+                        )
+                region = apply_region_progress(region, self._region_cells)
+                region.atmosphericState = compute_atmospheric_state(self._region_cells)
             self._world_state.hasRegion = True
             self._world_state.region = region
             self._last_event = SimulationEvent(
@@ -652,6 +670,14 @@ class InMemorySimulationRuntime:
                     break
 
             self._world_state.region = apply_region_progress(self._world_state.region, self._region_cells)
+            # Persist delta so it survives region reloads (Sprint C)
+            if self._world_state.hasRegion and (water_delta != 0.0 or temperature_delta != 0.0):
+                region_key = f"{self._world_state.region.coordinates.latitude:.3f},{self._world_state.region.coordinates.longitude:.3f}"
+                k = (target.q, target.r)
+                existing_w, existing_t = self._region_mutations.get(region_key, {}).get(k, (0.0, 0.0))
+                self._region_mutations.setdefault(region_key, {})[k] = (
+                    existing_w + water_delta, existing_t + temperature_delta
+                )
             self._last_event = SimulationEvent(
                 eventId=str(uuid4()),
                 type=SimulationEventType.CellUpdated,

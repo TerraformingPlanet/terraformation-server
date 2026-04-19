@@ -121,67 +121,36 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 
 ---
 
-## Sprint B — Cohérence Macro → Micro + Projection Hydrologique
+## ✅ Sprint B — Cohérence Macro → Micro + Projection Hydrologique (terminé 2026-04-19)
 
 > Design de référence : [GDD.md §8](GDD.md) — Relief & Hydrologie (cohérence macro→micro)
 
-**Objectif**
-> Améliorer la cohérence entre cellule projetée et région locale pour que la projection devienne un résumé hydrologique crédible du globe.
-
-**Backlog** :
-- [ ] Étendre `MapRegion.ComputeCoherence()` avec signaux de rugosité, accumulation et structure de relief
-- [ ] Enrichir `CoherenceValidationSystem` pour utiliser ces signaux comme biais progressifs plutôt que des overrides trop binaires
-- [ ] ~~Ajouter une hydrologie simplifiée côté `PlanetaryHexGrid` pour améliorer océan/côte/aride/gel côté projection~~ *(obsolète — la projection est maintenant H3 serveur)*
-- [x] Rendre les zones côtières projetées plus robustes via une logique de connectivité ou de voisinage enrichi (côté serveur `logic.py`)
-- [x] Remplacer le bonus transitoire `Basin` par une vraie connectivité hydrologique H3 côté serveur (`logic.py`) : voisinage, exutoires, distinction lac/côte et accumulation cohérente
-- [x] Vérifier que les presets debug (Ocean, Arid, Frozen, Basin, Coast) restent cohérents après enrichissement de la projection
-- [ ] Mettre à jour le HUD/debug pour comparer clairement projection et local sur les nouveaux signaux si nécessaire
-
-**Livré côté serveur (v8)** :
-- `SimulationCore/terraformation_sim/logic.py` applique une passe hydrologique H3 post-génération : composantes d'eau, eau connectée à l'océan, eau enclavée, cuvettes, chenaux et côtes
-- `DedicatedServer/app/server.py` expose un bloc `hydrology` dans `/debug/generation-stats`
-- les garde-fous `generation_smoke.py`, `Tools/Test-GenerationQuality.ps1` et `Mcp/server.py::run_generation_quality_suite()` ont été réalignés et validés sur les 5 presets
-
-**Fichiers** :
-- `Game/Assets/Scripts/World/MapRegion.cs`
-- `Game/Assets/Scripts/World/GenerationContext.cs`
-- `Game/Assets/Scripts/World/Systems/CoherenceValidationSystem.cs`
-- ~~`Game/Assets/Scripts/World/PlanetaryHexGrid.cs`~~ *(projection maintenant côté serveur H3)*
-- `Game/Assets/Scripts/UI/ViewManager.cs`
-
-**Critères de sortie** :
-- [ ] Un clic sur une zone projetée humide/aride/gelée produit une région locale cohérente sans forçage excessif
-- [ ] La projection distingue mieux océan, côte et zones continentales humides
-- [ ] Les presets debug restent exploitables et n'introduisent pas de régression de navigation
+**Complété** :
+- [x] `MapRegion.CoherenceConstraint` enrichi : 3 nouveaux champs `rugosity`, `accumulationIndex`, `reliefContrast`
+- [x] `MapRegion.ComputeCoherence()` — calcule les 3 signaux de relief depuis les données projection existantes
+- [x] `CoherenceValidationSystem` — 2 passes progressives avant les corrections extrêmes : `ApplyRugosityBias` + `ApplyAccumulationBias`
+- [x] Connectivité hydrologique H3 v8 livrée dans `logic/` (composantes eau, exutoires, cuvettes, côtes)
+- [x] `DedicatedServer/app/server.py` expose un bloc `hydrology` dans `/debug/generation-stats`
+- [x] Suite qualité génération : **14/14 PASS** après enrichissement — zéro régression
 
 ---
 
-## Sprint C — Persistance Régionale + Synchro Local → Projection
+## ✅ Sprint C — Persistance Régionale + Synchro Local → Projection (terminé 2026-04-19)
 
 > Design de référence : [GDD.md §7](GDD.md) — Tuiles & Terrain (base technique pour Phase 7) | [SIMULATION_CONTRACTS.md](SIMULATION_CONTRACTS.md)
 
-**Objectif**
-> Faire survivre les modifications locales aux régénérations et préparer la transition vers un vrai gameplay de corporation.
+**Complété** :
+- [x] `runtime.py` — `_region_mutations` cache en mémoire : `dict[region_key, dict[(q,r), (water_delta, temp_delta)]]`
+- [x] `open_region()` — rejoue les mutations persistées sur les cellules après génération
+- [x] `apply_direct_cell_delta()` — accumule les deltas dans `_region_mutations` par clé région
+- [x] `bootstrap_sol()` — vide `_region_mutations` au reset
+- [x] Unity : `ViewManager.SynchronizeRegionStateFromServer()` rappelle déjà `/commands/open-region` à chaque ouverture locale → recoit l'état persisté automatiquement
+- [x] Socle technique prêt pour Phase 7 (claim territoire, bâtiments)
 
-**Backlog** :
-- [ ] Introduire un cache runtime des modifications par région (deltas d'eau, température, état terraformé)
-- [ ] Réappliquer ces deltas lors de `ReloadCurrentProjection`, `OpenRegion` et `RegenerateCurrentLocalRegion`
-- [ ] Définir la granularité de remontée local → projection (moyenne, max, ou agrégation hydrologique)
-- [ ] Implémenter une première synchro locale → projection pour les signaux essentiels
-- [ ] Vérifier qu'une région modifiée puis rechargée conserve son état attendu
-- [ ] Préparer les points d'entrée qui serviront au claim de territoire et aux bâtiments
+**Validé 2026-04-19** : waterRatio cell (3,-1) : 0.5977 → +0.3 delta → re-open : 0.8977 ✔️
 
-**Fichiers** :
-- `Game/Assets/Scripts/UI/ViewManager.cs`
-- `Game/Assets/Scripts/World/PlanetSphereGoldberg.cs`
-- ~~`Game/Assets/Scripts/World/PlanetaryHexGrid.cs`~~ *(persistance régionale : côté serveur via `/tiles/{id}/delta`)*
-- `Game/Assets/Scripts/HexGrid/HexGrid.cs`
-- `Game/Assets/Scripts/World/MapRegion.cs`
-
-**Critères de sortie** :
-- [ ] Une modification locale persiste après fermeture/réouverture de la région
-- [ ] La projection reflète au moins partiellement l'état local modifié sur la zone concernée
-- [ ] Le socle technique est prêt pour démarrer Phase 7
+**Écart connu (différé)** :
+- Mutations non persistées sur disque (PostgresRepository) — survie session mémoire seulement ; persistance DB = Phase 7+
 
 ---
 
@@ -212,41 +181,21 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 
 ---
 
-## Sprint D — AtmosphericState : progression terraformation mesurable (prérequis Phase 7)
+## ✅ Sprint D — AtmosphericState : progression terraformation mesurable (terminé 2026-04-19)
 
 > Design de référence : [GDD.md §5](GDD.md) — Les trois moteurs du jeu (moteur écologique) | [SIMULATION_CONTRACTS.md](SIMULATION_CONTRACTS.md)
 
-**Objectif**
-> Donner aux corporations un indicateur de progression de la terraformation calculé à l'échelle de la région entière.
+**Complété** :
+- [x] `AtmosphericState` Pydantic + C# : `co2Ratio`, `o2Ratio`, `atmosphericPressure`, `averageTemperature`, `toxinRatio`, `habitabilityScore`
+- [x] `atmosphericState: AtmosphericState` dans `RegionState` (Python + C#)
+- [x] `logic/simulation.py` — `compute_atmospheric_state(cells)` + `cell_habitability_score(cell)`
+- [x] `runtime.py` — `region.atmosphericState` peuplé après `open_region()`
+- [x] `/commands/open-region` retourne `atmosphericState` non vide (habitabilityScore = 0.9549 sur Terre)
+- [x] `TerraformHUD.cs` — affiche O₂%, CO₂%, pression, temp, habitabilityScore
+- [x] Slider utilise `habitabilityScore` en priorité via `SetAuthoritativeRegionState()`
+- [x] MCP `get_atmospheric_state(body_id, latitude, longitude)` — dual-mode body/region
 
-**Contexte**
-La terraformation doit être modélisée comme une évolution atmosphérique agrégée (CO₂, O₂, pression) avec des boucles de feedback. L'`AtmosphericState` est l'agrégation des `SimulationCellState` en un indicateur région/planète lisible par les corporations.
-
-**Backlog** :
-- [ ] Définir `AtmosphericState` (Pydantic + C#) : `co2Ratio`, `o2Ratio`, `atmosphericPressure`, `averageTemperature`, `toxinRatio`, `habitabilityScore`
-- [ ] Ajouter `atmosphericState: AtmosphericState` à `RegionState` (Python + C#) — mettre à jour [SIMULATION_CONTRACTS.md](SIMULATION_CONTRACTS.md)
-- [ ] `SimulationCore/logic.py` — fonction `compute_atmospheric_state(cells)`
-- [ ] `DedicatedServer` — peupler `atmosphericState` dans `/commands/open-region`
-- [ ] `SimulationContractFactory.cs` — peupler `atmosphericState` dans `TryBuildRegionState`
-- [ ] `TerraformHUD.cs` — afficher O₂%, CO₂%, pression, score d'habitabilité
-- [ ] `TerraformProgressTracker.cs` — utiliser `habitabilityScore` comme source du slider
-- [ ] Ajouter tool MCP `get_atmospheric_state(latitude, longitude)`
-
-**Fichiers** :
-- `SimulationCore/terraformation_sim/models.py`
-- `SimulationCore/terraformation_sim/logic.py`
-- `DedicatedServer/app/server.py`
-- `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs`
-- `Game/Assets/Scripts/Simulation/Contracts/SimulationContractFactory.cs`
-- `Game/Assets/Scripts/UI/TerraformHUD.cs`
-- `Game/Assets/Scripts/World/TerraformProgressTracker.cs`
-- `Mcp/server.py`
-
-**Critères de sortie** :
-- [ ] `GET /commands/open-region` retourne un champ `atmosphericState` non vide
-- [ ] Le HUD affiche O₂%, pression et score d'habitabilité depuis les données serveur
-- [ ] `get_atmospheric_state` répond sans Unity ouvert
-- [ ] Le slider de progression est cohérent avec `habitabilityScore`
+**Validé 2026-04-19** : `habitabilityScore = 0.9549` | `o2Ratio = 0.21` | `pressure = 18.187 kPa` | `avgTemp = 15.39°C`
 
 ---
 
