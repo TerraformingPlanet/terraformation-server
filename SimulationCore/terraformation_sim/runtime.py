@@ -728,7 +728,7 @@ class InMemorySimulationRuntime:
         A cell is flagged if its waterClassification contradicts its waterRatio:
         - OpenOcean but waterRatio < 0.60
         - FrozenWater but temperature > 0°C
-        - Dry but waterRatio > 0.40
+        - Dry but waterRatio > 0.45  (matches actual Dry classification boundary)
         """
         with self._lock:
             if not self._region_cells:
@@ -746,7 +746,7 @@ class InMemorySimulationRuntime:
                 if wc == WaterClassification.FrozenWater and temp > 0.0:
                     issues.append({"q": q, "r": r, "rule": "frozen-too-warm",
                                    "detail": f"FrozenWater but temperature={temp}°C"})
-                if wc == WaterClassification.Dry and wr > 0.40:
+                if wc == WaterClassification.Dry and wr > 0.45:
                     issues.append({"q": q, "r": r, "rule": "dry-high-water",
                                    "detail": f"Dry but waterRatio={wr}"})
             return {

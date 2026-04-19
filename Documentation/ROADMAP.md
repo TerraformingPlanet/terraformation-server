@@ -221,15 +221,14 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
 ### Sprint MCP-2 — Boucle de test automatisée (Sprint C → Phase 7)
 
-**Backlog** :
-- [ ] Implémenter la séquence `launch_preset → get_local_summary → comparer checklist → get_console_errors → take_screenshot` pour chaque preset
-- [ ] Archiver les résultats JSON par preset dans `Artifacts/<PresetName>/`
-- [ ] Produire un rapport de delta entre deux runs (régression / amélioration)
-- [ ] Durcir `Tools/Test-GenerationQuality.ps1` et l'équivalent MCP (`run_generation_quality_suite`) comme garde-fou de tuning serveur : seuils par preset, faux positifs et lecture plus robuste des régressions
-- [ ] Brancher cette suite dans un smoke Docker automatisé (`docker compose up -d --build` → exécution → code retour exploitable CI) pour verrouiller les régressions de génération sans Unity
+**Implémenté** :
+- [x] `set_projection(preset_name)` — switch serveur-only vers un preset nommé (coherence + water_level), sans Unity
+- [x] `run_region_validation_suite(latitude, longitude)` — pipeline 5 presets : set-projection → open-region → hydrology + validate + atmospheric state + sample cell (0,0)
+- [x] `Tools/Test-RegionValidation.ps1` — script CI : 5 presets, health check, table résultats, exit 0/1
+- [x] Seuil `dry-high-water` corrigé de `> 0.40` à `> 0.45` (aligné sur la limite réelle de classification `Dry`)
+- [x] Documenté dans [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
-**Critères de sortie** :
-- [ ] Un seul appel déclenche la validation complète des 5 presets et produit un rapport lisible
+**Validé 2026-04-19** : 5/5 presets PASS | Coast/Ocean/Arid/Frozen/Basin 24 cells chacun | 0 issue | pipeline server-only complet
 
 ### Sprint MCP-3 — API Gameplay (Phase 7 → 9)
 

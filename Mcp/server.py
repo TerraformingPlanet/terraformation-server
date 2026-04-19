@@ -956,6 +956,141 @@ def compare_presets(preset_a: str, preset_b: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Sprint MCP-2 — Region validation pipeline (server-only, no Unity needed)
+# ---------------------------------------------------------------------------
+
+@mcp.tool
+def set_projection(preset_name: str) -> dict:
+    """
+    Set the active server projection to a named preset.
+    Configures coherence override and water level so that subsequent open_server_region
+    calls return cells matching the preset biome.
+
+    This is the server-side equivalent of launching a preset in Unity.
+    Does not require Unity Play Mode.
+
+    Args:
+        preset_name: One of 'Ocean', 'Arid', 'Frozen', 'Coast', 'Basin'.
+    """
+    key = next((k for k in _GENERATION_PROFILES if k.lower() == preset_name.lower()), None)
+    if key is None:
+        return {"error": f"Unknown preset '{preset_name}'. Valid: {list(_GENERATION_PROFILES)}"}
+    profile = _GENERATION_PROFILES[key]
+    return _server_post(
+        "/commands/set-projection",
+        projection_override=profile["coherence"],
+        water_level=profile["water_level"],
+    )
+
+
+@mcp.tool
+def run_region_validation_suite(latitude: float = 0.47, longitude: float = 0.18) -> dict:
+    """
+    Server-only region validation pipeline across all 5 reference presets.
+    Does NOT require Unity Play Mode.
+
+    For each preset:
+      1. set-projection (coherence + water_level)
+      2. open-region at (latitude, longitude)
+      3. GET /debug/hydrology  → water distribution
+      4. GET /debug/validate   → coherence checks
+      5. GET /debug/cell (0,0) → sample cell detail
+      6. atmospheric state from region
+
+    Returns per-preset results + global passed/failureCount.
+
+    Args:
+        latitude:  Normalized latitude [0, 1] to sample (default 0.47 = mid-latitude).
+        longitude: Normalized longitude [0, 1] to sample (default 0.18).
+    """
+    preset_results: list[dict] = []
+    failures_total = 0
+
+    for preset_name, profile in _GENERATION_PROFILES.items():
+        row: dict = {"preset": preset_name}
+
+        # 1. Set projection
+        try:
+            _server_post(
+                "/commands/set-projection",
+                projection_override=profile["coherence"],
+                water_level=profile["water_level"],
+            )
+        except Exception as exc:
+            row["error"] = f"set-projection failed: {exc}"
+            preset_results.append(row)
+            failures_total += 1
+            continue
+
+        # 2. Open region
+        try:
+            region = _server_post("/commands/open-region", latitude=latitude, longitude=longitude)
+            row["cellCount"] = len(region.get("cells", []))
+            atm = region.get("atmosphericState", {})
+            row["atmosphericState"] = {
+                "habitabilityScore": atm.get("habitabilityScore", 0.0),
+                "o2Ratio":           atm.get("o2Ratio", 0.0),
+                "pressure":          atm.get("atmosphericPressure", 0.0),
+                "avgTemp":           atm.get("averageTemperature", 0.0),
+            }
+        except Exception as exc:
+            row["error"] = f"open-region failed: {exc}"
+            preset_results.append(row)
+            failures_total += 1
+            continue
+
+        # 3. Hydrology
+        try:
+            row["hydrology"] = _server_get("/debug/hydrology")
+        except Exception as exc:
+            row["hydrology"] = {"error": str(exc)}
+
+        # 4. Validation
+        try:
+            val = _server_get("/debug/validate")
+            row["validation"] = {
+                "passed":     val.get("passed", False),
+                "issueCount": val.get("issueCount", 0),
+                "totalCells": val.get("totalCells", 0),
+                "issues":     val.get("issues", []),
+            }
+            if not val.get("passed", True):
+                failures_total += val.get("issueCount", 0)
+        except Exception as exc:
+            row["validation"] = {"error": str(exc)}
+
+        # 5. Sample cell (0, 0)
+        try:
+            cell = _server_get("/debug/cell", q=0, r=0)
+            row["sampleCell"] = {
+                "q": cell.get("address", {}).get("q", 0),
+                "r": cell.get("address", {}).get("r", 0),
+                "waterRatio":          round(cell.get("waterRatio", 0.0), 3),
+                "temperature":         round(cell.get("temperature", 0.0), 1),
+                "waterClassification": cell.get("waterClassification", "?"),
+                "terrainType":         cell.get("terrainType", "?"),
+            }
+        except Exception:
+            row["sampleCell"] = None
+
+        preset_results.append(row)
+
+    all_passed = all(
+        r.get("validation", {}).get("passed", True)
+        and "error" not in r
+        for r in preset_results
+    )
+
+    return {
+        "latitude":     latitude,
+        "longitude":    longitude,
+        "presets":      preset_results,
+        "passed":       all_passed,
+        "failureCount": failures_total,
+    }
+
+
 @mcp.tool
 def diagnose_hydrology_mismatch(preset_name: str) -> dict:
     """

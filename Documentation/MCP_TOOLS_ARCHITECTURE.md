@@ -195,6 +195,8 @@ Le serveur MCP a maintenant un découpage fonctionnel initial entre ces deux fam
 | `get_cell_detail` | `/debug/cell?q=&r=` | simulation-server — Sprint MCP-1 |
 | `get_hydrology_stats` | `/debug/hydrology` | simulation-server — Sprint MCP-1 |
 | `run_validation` | `/debug/validate` | simulation-server — Sprint MCP-1 |
+| `set_projection` | `/commands/set-projection` | simulation-server — Sprint MCP-2 |
+| `run_region_validation_suite` | `/commands/set-projection` + `/commands/open-region` + `/debug/*` | simulation-server — Sprint MCP-2 |
 
 La séparation des responsabilités est stable. `get_view_state` est le seul tool définitivement ancré sur le bridge Unity.
 
@@ -570,6 +572,8 @@ Tools exposes actuellement:
 - `get_cell_detail` *(Sprint MCP-1)*
 - `get_hydrology_stats` *(Sprint MCP-1)*
 - `run_validation` *(Sprint MCP-1)*
+- `set_projection` *(Sprint MCP-2)*
+- `run_region_validation_suite` *(Sprint MCP-2)*
 
 Contraintes actuelles:
 
