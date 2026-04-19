@@ -253,46 +253,81 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
 ---
 
-## Phase 7 — Système de Corporation
+## Phase 7 — Gameplay Corporation v1
 
 **Prérequis** : Sprint C (persistance régionale) + Sprint D (AtmosphericState) terminés. Phase 6.9 (hiérarchie Cosmos) ✅
 
-### Tâches restantes
+> Design de référence : [GDD_Synthese.md](description_jeu/GDD_Synthese.md)
+
+### Phase 7.1 — Propriété de tuile
 - [ ] Créer `CorporationData` côté Python `SimulationCore` + contrat C# miroir
-- [ ] Implémenter le claim d'un hex — route `POST /game/corporations/{id}/claim-hex` sur `DedicatedServer`
+- [ ] Implémenter le claim d'un hex libre — `POST /game/corporations/{id}/claim-hex`
+- [ ] Modéliser la propriété : tuile appartient à un État ou une corpo (ou personne)
 - [ ] Afficher les hexes possédés (bordure colorée par corpo) — couche ownership sur la grille Unity
-- [ ] Implémenter la construction de bâtiments sur un hex (mine, serre, raffinerie, centrale)
-- [ ] Modéliser la chaîne de valeur par type de bâtiment : extraction → raffinage → transport → vente
-- [ ] Calculer la production automatique par tick côté `DedicatedServer`
-- [ ] Afficher un HUD de base (solde, ressources, score) + barre atmosphérique
-- [ ] Afficher un scoreboard avec toutes les corpos
 - [ ] Exposer `GET /game/corporations` sur `DedicatedServer` pour le MCP
 
+### Phase 7.2 — Bâtiments v1 (modèle entrée → sortie)
+- [ ] Implémenter le modèle tick-based : entrées (ressources + travailleurs + énergie) → sorties (ressources + déchets)
+- [ ] Types de bâtiments initiaux : mine, ferme, centrale énergetique, bâtiment de recherche
+- [ ] Ratio travailleurs 0→100% : 100% = plein rendement, 0% = bâtiment abandonné
+- [ ] Réseau énergétique limitrophe : centrale → segments → tuiles adjacentes
+- [ ] Épuisement de ressource de tuile + reconversion possible
+- [ ] Calcul automatique de la production par tick côté `DedicatedServer`
+- [ ] Déchets s'accumulent sur la tuile (impact moteur écologique)
+
+### Phase 7.3 — Marché local v1
+- [ ] Catégories sociales de population (pauvres → classes moyennes → riches) avec besoins différents
+- [ ] Offre/demande dynamique à chaque tick, propagation des prix atténuée par la distance
+- [ ] Mobilité sociale : richesse qui évolue selon l'emploi, migrations sur événement
+- [ ] Marché national régulé par l'État (taxes, quotas)
+- [ ] Afficher un HUD de base (solde, ressources, score) + barre atmosphérique
+
+### Phase 7.4 — Contrats v1
+- [ ] Contrats État ↔ Corporation et Corporation ↔ Corporation
+- [ ] Types : livraison de ressources, contrôle territorial, exploration, présence militaire
+- [ ] Diffusion publique (enchères, le proposeur choisit) et privée (direct, validation bilatérale)
+- [ ] Durée fixe et open-ended, rupture possible avec pénalités
+- [ ] Diffusion de connaissance via contrat (corpo → État, corpo → corpo)
+
+### Phase 7.5 — Réputation, États et nationalisation
+- [ ] Réputation globale + réputation bilatérale par paire
+- [ ] Seuil de tolérance de l'État calculé selon puissance, comportement, contrats
+- [ ] Types d'État (capitaliste, nationaliste…) + taux de corruption (passif et exploitable)
+- [ ] Processus de nationalisation progressif (délai = bureaucratie + corruption)
+- [ ] Fenêtre de réaction pour la corpo (corruption, contrat spécial)
+- [ ] Afficher un scoreboard avec toutes les corpos
+
 **Cible**
-> Une corpo joueur qui claim des hexes, construit des mines, accumule des crédits et monte au classement. `habitabilityScore` est le KPI commun.
+> Une corpo joueur qui claim des hexes, construit des mines, signe des contrats avec les États, accumule des crédits et monte au classement. `habitabilityScore` est le KPI environnemental commun.
 
 ---
 
-## Phase 8 — Système d'Événements
+## Phase 8 — Système d'Événements & Agents LLM
 
-- [ ] `EventData` (ScriptableObject) : nom, description, effets, poids de probabilité
-- [ ] Événements de base : RencontreAlienne, TempêteSolaire, DécouverteMinière, CriseÉconomique, SabotageCorpo
+- [ ] `EventData` : nom, description, effets, poids de probabilité, déclencheur (tick ou condition)
+- [ ] Événements de base : RencontreAlienne, TempêteSolaire, DécouverteMinière, CriseÉconomique, SabotageCorpo, Rébellion, MigrationPopulation
 - [ ] `EventManager` : tirage pondéré à chaque tick serveur
 - [ ] Popup UI de notification
+- [ ] Intégration agent LLM via MCP : appelé sur événement significatif ou toutes les N ticks
+- [ ] Mémoire contextuelle par entité (profil, événementielle, relationnelle)
+- [ ] Agent maître de jeu : peut déclencher des événements scénarisés
 
-**Cible** : événements qui modifient l'état de la partie en temps réel
+**Cible** : événements qui modifient l'état de la partie en temps réel, avec un agent LLM capable de réagir stratégiquement pour les États et corporations IA
 
 ---
 
-## Phase 9 — Économie & Bourse Commune
+## Phase 9 — Économie avancée & Routes commerciales
 
 - [ ] Ressources tradables : fer, O₂, eau, énergie, tech, nourriture
-- [ ] `MarketManager` avec order book simplifié
+- [ ] `MarketManager` avec order book simplifié, propagation hiérarchique (tuile → planète → système)
 - [ ] Fluctuation des prix (offre/demande par tick)
 - [ ] UI de marché pour les corpos joueurs
 - [ ] Corpos IA participantes au marché
+- [ ] Routes commerciales : exploration → construction → propagation des prix entre tuiles connectées
+- [ ] Routes spatiales (inter-planètes/systèmes) + infrastructure spatioport
+- [ ] Organisme inter-étatique optionnel (marché global corruptible)
 
-**Cible** : bourse qui fluctue en temps réel selon les actions des joueurs et des IA
+**Cible** : bourse qui fluctue en temps réel, marchés connectés par routes, possibilité de marché global inter-étatique
 
 ---
 
