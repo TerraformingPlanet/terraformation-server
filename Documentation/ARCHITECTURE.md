@@ -96,6 +96,14 @@ Le client Unity commence aussi à être repositionné comme **adaptateur de snap
 - Permet de modifier les données sans recompiler le code
 - Facilite l'équilibrage en cours de développement
 
+### Icônes UI bâtiments
+- Les bâtiments gardent leur définition métier dans `Economy/BuildingData.cs` et leurs contrats réseau dans `SimulationContracts.cs`
+- L'iconographie UI des bâtiments est une couche de présentation séparée côté client Unity
+- `GameHUDBuildingIcons.cs` mappe `CorpBuildingType` vers un libellé, une teinte et un token d'icône
+- La source visuelle actuelle est une police locale `Font Awesome 7 Free-Solid-900.otf` placée sous `Assets/Resources/Fonts/`
+- `GameHUD.cs` tente de créer un `TMP_FontAsset` dynamique à runtime ; si la police ou les glyphes sont indisponibles, le HUD retombe sur un fallback texte (`M`, `F`, `E`, `R`)
+- Conséquence : la logique gameplay ne dépend jamais d'un glyph, d'un nom d'icône ou d'un asset UI particulier ; la source visuelle pourra être remplacée plus tard par un `TMP Sprite Asset` sans modifier les types métier
+
 ### Système de Vues 3 Niveaux
 Implémenté dans une seule scène `Game.unity` — 3 racines de GameObject activées/désactivées par `ViewManager`.
 

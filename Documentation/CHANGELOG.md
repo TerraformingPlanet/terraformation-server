@@ -4,6 +4,97 @@ Historique des phases et sprints complétés. Pour le backlog actif, voir [ROADM
 
 ---
 
+## ✅ Phase 8 — Système d'Événements (M1–M3) (2026-04-21)
+
+**Complété** :
+- [x] `EventType` IntEnum (7 types : RencontreAlienne, TempeteSolaire, DecouverteMiniere, CriseEconomique, SabotageCorpo, Rebellion, MigrationPopulation)
+- [x] `EventEffect` BaseModel (resourceType, resourceDelta, creditsDelta, reputationDelta, populationDelta)
+- [x] `EventData` BaseModel (id, eventType, name, description, tick, affectedEntityId, affectedEntityType, effect, isResolved)
+- [x] `logic/events.py` : `GAME_EVENT_CONFIGS` (7 entrées pondérées), `draw_event()`, `apply_event_to_corporation()`
+- [x] `runtime.py` : `_game_events` registry + wipe dans `bootstrap_sol()`, `_process_event_tick_locked()` (p=5%/tick), `list_game_events(limit=20)`
+- [x] `GET /game/events?limit=N` endpoint FastAPI
+- [x] MCP tool `list_game_events(limit=20)`
+- [x] Miroirs C# : `GameEventType`, `GameEventEffect`, `GameEventData`, `GameEventList` dans `SimulationContracts.cs` (0 erreur validé)
+- [x] 8/8 tests Python — `SimulationCore/tests/test_phase8_events.py`
+
+**En attente** : M4 popup UI HUD + Phase 8.5 intégration agent LLM
+
+---
+
+## ✅ Phase 9.5 — Ressources tradables & MarketManager global (2026-04-20)
+
+**Complété** :
+- [x] `ResourceType` étendu : `Iron=5`, `Oxygen=6`, `Water=7`, `Tech=8`
+- [x] `CorpResourceType` C# mirror étendu dans `SimulationContracts.cs`
+- [x] `TRADABLE_RESOURCES` mis à jour dans `logic/market.py`
+- [x] `GlobalMarketState` BaseModel (`systemId`, `listings`, `tick`, `marketCount`)
+- [x] `compute_global_market()` fonction pure (moyenne pondérée par supply)
+- [x] `get_global_market()` méthode runtime thread-safe
+- [x] `GET /game/market/global/{system_id}` endpoint FastAPI
+- [x] MCP tool `get_global_market(system_id="sol")`
+- [x] `GlobalMarketState` struct C# + `GlobalMarketStateWrapper` dans `SimulationContracts.cs`
+- [x] `GameHUD.cs` : 3 switch statements étendus (Iron/Oxygen/Water/Tech)
+- [x] `test_phase95_resources.py` (4/4) + `test_phase95_global_market.py` (4/4)
+
+---
+
+## ✅ Phase 7.5 — États, Réputation, Nationalisation, Scoreboard (2026-04-20)
+
+**Complété** :
+- [x] `StateType` (Capitalist=0, Nationalist=1) + `StateData` (id, name, stateType, tileIds, bureaucracy, corruptionRate, toleranceThreshold)
+- [x] `ReputationEventReason` (ContractCompleted…CorruptionDetected) + `ReputationEvent` (sourceId, targetId, deltaGlobal, deltaBilateral, reason, tick)
+- [x] `NationalizationProcess` (id, stateId, corpId, tileId, startTick, completionTick, cancelled)
+- [x] `ScoreboardEntry` (corpId, corpName, credits, tileCount, globalReputation, score)
+- [x] `CorporationData.globalReputation: float = 0.0` — champ ajouté
+- [x] Miroirs C# : `CorpStateType`, `CorpReputationEventReason`, `SimStateData`, `NationalizationProcess`, `ScoreboardEntry` dans `SimulationContracts.cs`
+- [x] 9 endpoints FastAPI : `/game/states`, `/game/states/{id}`, `/game/reputation`, `/game/nationalizations`, `/game/nationalizations/{id}/corrupt`, `/game/scoreboard`
+- [x] 8 tools MCP : `create_state`, `list_states`, `get_state`, `get_reputation`, `list_reputations`, `list_nationalizations`, `corrupt_nationalization`, `get_scoreboard`
+- [x] Unity HUD : scoreboard strip + panneau de nationalisation dans `GameHUD.cs`
+
+**Résumé** :
+> States & Reputation layer complet — les États peuvent nationaliser les tuiles des corpos avec un processus progressif (délai = bureaucratie + corruption). Les corpos peuvent tenter de corrompre le processus. Le scoreboard classe toutes les corpos par score composite. 8 couches d'interaction État ↔ Corporation.
+
+---
+
+## ✅ Phase 7.2 — HUD Bâtiments : Icônes UI Font Awesome (2026-04-20)
+
+**Complété** :
+- [x] `GameHUDBuildingIcons.cs` — table centralisée `CorpBuildingType -> displayName + unicode Font Awesome + fallback + teinte`
+- [x] `GameHUD.cs` — preview d'icône dans la zone "Construire un bâtiment" du RightPanel
+- [x] `GameHUD.cs` — liste des bâtiments de la tuile rendue en lignes `icône + libellé + état (tick, staff)`
+- [x] `Assets/Resources/Fonts/Font Awesome 7 Free-Solid-900.otf` — police locale importée pour l'UI bâtiments
+- [x] `GameHUD.cs` — création dynamique de `TMP_FontAsset` + préchargement des glyphes requis
+- [x] Fallback sûr si la police n'est pas chargée : lettres visibles au lieu de glyphes manquants
+
+**Décision** :
+> Font Awesome est utilisé comme source d'icônes UI pour le HUD bâtiments uniquement. Les types gameplay (`CorpBuildingType`, `CorpBuilding`, `BuildingData`) restent indépendants de cette représentation visuelle.
+
+---
+
+## ✅ Phase 7.1 — Ownership Borders & Claim/Unclaim UI (2026-04-19)
+
+**Commits** : `2664364`, `40da8c4`, `fad0973`, `ec65103`, `03e6a49`, `898f274`
+
+**Complété** :
+- [x] `GetBoundaryLoops()` réécrit (algorithme Goldberg edge-map)
+- [x] `OwnershipBorderRenderer.cs` — dessine les LineRenderers de bordures colorées par corpo sur le globe
+- [x] `GameHUD.cs` (~650 lignes) — HUD unifié code-driven : TopBar, LeftPanel (progression terraformation), RightPanel (inspecteur tuile + Claim/Unclaim + création corpo), DebugDrawer (F10)
+- [x] `TerraformHUD.cs` — events `OnProgressUpdated` + `OnRegionStateChanged`
+- [x] `ViewManager.GoBackOneLevel()` public
+- [x] Nettoyage ancien Canvas UI (ProgressSlider, SelectedHexPanel désactivés)
+- [x] Fix bug guard `OnH3TileResolved` (FindObjectsInactive + suppression check PlanetSubView)
+- [x] Fix clic globe → utilise centroïde face survolée (hover) pour cohérence H3
+- [x] Détection propriétaire tuile dans RightPanel (badge coloré + nom corpo)
+- [x] `CorporationData` + `ClaimedTile` côté Python `SimulationCore` + contrat C# miroir
+- [x] `CorporationRegistry` in-memory dans `InMemorySimulationRuntime` (`_corporations`, `_tile_ownership`)
+- [x] `POST /game/corporations/{id}/claim-hex?body_id=&tile_id=` — claim un hex libre (409 si déjà pris)
+- [x] `bootstrap_sol()` vide `_corporations` et `_tile_ownership`
+
+**Résultat validé en Play Mode** :
+> Clic tuile → RightPanel avec Claim/Unclaim ✓ | Tuile claimée → nom + badge couleur corpo ✓ | Bordures rouges ownership visibles sur globe ✓ | Hover et clic cohérents ✓
+
+---
+
 ## ✅ Phase 6.75 — Split Simulation / Client / MCP (2026-04-19)
 
 **Complété** :

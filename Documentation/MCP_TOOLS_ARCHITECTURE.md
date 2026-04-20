@@ -202,6 +202,102 @@ Le serveur MCP a maintenant un découpage fonctionnel initial entre ces deux fam
 | `get_corporations_list` | `/game/corporations` | simulation-server — Sprint MCP-3 |
 | `get_corporation_state` | `/game/corporations/{id}` | simulation-server — Sprint MCP-3 |
 | `create_corporation` | `/game/corporations` (POST) | simulation-server admin — Sprint MCP-3 |
+| `get_market_state` | `/game/market/{corp_id}` | simulation-server — Phase 7.3 |
+| `get_global_market` | `/game/market/global/{system_id}` | simulation-server — Phase 9.5 |
+
+### get_market_state
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/market/{corp_id}`
+- **Paramètres** : `corp_id: str`
+- **Retour** : `LocalMarketState` (corpId, listings[], taxRate, tickComputed)
+- **Phase** : 7.3
+- **Remarque** : Ne nécessite pas Unity en Play Mode.
+
+### get_global_market
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/market/global/{system_id}`
+- **Paramètres** : `system_id: str` (default "sol")
+- **Retour** : `GlobalMarketState` (systemId, listings[], tick, marketCount)
+- **Phase** : 9.5
+- **Remarque** : Agrège les marchés locaux par ResourceType, calcule le prix moyen pondéré par l'offre. Ne nécessite pas Unity en Play Mode.
+
+## Phase 7.4 — Contract Tools
+
+| Tool                  | HTTP call                               | Description                                      |
+|-----------------------|-----------------------------------------|--------------------------------------------------|
+| `list_contracts`      | GET /game/contracts?corp_id=            | List contracts for a corp (or all)               |
+| `list_public_contracts` | GET /game/contracts/public            | List open public contracts available for bidding |
+| `propose_contract`    | POST /game/contracts                    | Propose a new resource-delivery contract         |
+| `bid_on_contract`     | POST /game/contracts/{id}/bid           | Submit a bid on a public contract                |
+| `confirm_bidder`      | POST /game/contracts/{id}/confirm       | Proposer confirms a candidate → status=Active    |
+| `accept_contract`     | POST /game/contracts/{id}/accept        | Accept a private contract                        |
+| `break_contract`      | POST /game/contracts/{id}/break         | Break an active contract (penalty applies)       |
+
+All tools do not require Unity in Play Mode.
+
+## Phase 7.5 — States, Reputation & Scoreboard Tools
+
+| Tool | HTTP call | Description |
+|------|-----------|-------------|
+| `create_state` | POST /game/states | Créer un État (nom, type, hexes, bureaucratie, corruption, seuil) |
+| `list_states` | GET /game/states | Lister tous les États |
+| `get_state` | GET /game/states/{state_id} | Détail d'un État |
+| `get_reputation` | GET /game/reputation?source_id=&target_id= | Réputation globale + bilatérale entre deux entités |
+| `list_reputations` | GET /game/reputation?corp_id= | Toutes les réputations impliquant une corpo |
+| `list_nationalizations` | GET /game/nationalizations?corp_id= | Processus de nationalisation en cours (filtre corpo optionnel) |
+| `corrupt_nationalization` | POST /game/nationalizations/{process_id}/corrupt | Tenter de corrompre un processus de nationalisation (bribe_amount) |
+| `get_scoreboard` | GET /game/scoreboard | Classement de toutes les corpos (score composite) |
+
+### Détail des tools
+
+**`create_state`**
+- **Famille** : simulation-server admin
+- **Endpoint** : `POST /game/states`
+- **Paramètres** : `name: str`, `state_type: int` (0=Capitalist, 1=Nationalist), `tile_ids: list[str]`, `bureaucracy: float`, `corruption_rate: float`, `tolerance_threshold: float`
+- **Retour** : `StateData`
+
+**`list_states`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/states`
+- **Retour** : `list[StateData]`
+
+**`get_state`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/states/{state_id}`
+- **Paramètres** : `state_id: str`
+- **Retour** : `StateData`
+
+**`get_reputation`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/reputation?source_id=&target_id=`
+- **Paramètres** : `source_id: str`, `target_id: str`
+- **Retour** : `{ globalReputation, bilateralReputation, reputationEvents[] }`
+
+**`list_reputations`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/reputation?corp_id=`
+- **Paramètres** : `corp_id: str`
+- **Retour** : liste des événements de réputation impliquant la corpo
+
+**`list_nationalizations`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/nationalizations?corp_id=`
+- **Paramètres** : `corp_id: str` (optionnel — vide = tous)
+- **Retour** : `list[NationalizationProcess]`
+
+**`corrupt_nationalization`**
+- **Famille** : simulation-server
+- **Endpoint** : `POST /game/nationalizations/{process_id}/corrupt`
+- **Paramètres** : `process_id: str`, `corp_id: str`, `bribe_amount: float`
+- **Retour** : `{ success, cancelled, message }`
+- **Remarque** : succès dépend du `corruptionRate` de l'État et du montant de la corruption.
+
+**`get_scoreboard`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/scoreboard`
+- **Retour** : `list[ScoreboardEntry]` triée par score décroissant
+
+All Phase 7.5 tools do not require Unity in Play Mode.
 
 La séparation des responsabilités est stable. `get_view_state` est le seul tool définitivement ancré sur le bridge Unity.
 
@@ -1072,3 +1168,42 @@ Ce lot n'est pas un chantier secondaire. Il sert directement a:
 - accelerer le debug de Phase 6.5
 - fiabiliser les presets et la coherence projection/local
 - preparer la persistance regionale et les futures regressions gameplay
+
+## Phase 8 — Gameplay Events Tools
+
+**`list_game_events`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/events?limit=`{n}
+- **Paramètres** : `limit: int` (1–200, défaut 20)
+- **Retour** : `list[EventData]` — derniers événements narratifs (latest first)
+- **Modèles** : `EventType`, `EventData`, `EventEffect`  
+- Pas de Play Mode requis.
+
+---
+
+## Phase 8.5 — Agent LLM Tools
+
+Trois tools pour piloter, inspecter et déclencher l'agent LLM qui contrôle les États IA.
+
+**`get_agent_context`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/agent/context/{state_id}`  
+- **Paramètres** : `state_id: str`  
+- **Retour** : snapshot JSON {stateId, tick, state, scoreboard, recentEvents, reputations, memory}
+- Pas de Play Mode requis.
+
+**`run_agent_for_state`**
+- **Famille** : simulation-server
+- **Endpoint** : `POST /game/agent/run/{state_id}`  
+- **Paramètres** : `state_id: str`  
+- **Retour** : `AgentAction` (entityId, actionType, params, reasoning)
+- Requires LLM_BASE_URL / LLM_API_KEY sur le serveur.
+- Pas de Play Mode requis.
+
+**`get_agent_memory`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/agent/memory/{state_id}`  
+- **Paramètres** : `state_id: str`  
+- **Retour** : `AgentMemory` (entityId, entityType, recentDecisions[], relationshipNotes{}, lastTickActed)
+- Retourne une mémoire vide si l'agent n'a pas encore agi.
+- Pas de Play Mode requis.

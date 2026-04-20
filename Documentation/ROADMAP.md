@@ -13,7 +13,7 @@ Chaque phase a une cible claire. **Ne pas passer à la suivante avant d'avoir at
 > | Étape | Document | Ce qu'on y cherche |
 > |-------|----------|--------------------|
 > | 1 | Ce fichier (ROADMAP) | Tâche exacte + critères de sortie (tableau récapitulatif en bas) |
-> | 2 | [GDD.md §lié](GDD.md) | Design intent : pourquoi la mécanique existe, comment elle se comporte |
+> | 2 | [Description_du_jeu.md §lié](description_jeu/Description_du_jeu.md) | Design intent : pourquoi la mécanique existe, comment elle se comporte |
 > | 3 | [ARCHITECTURE.md](ARCHITECTURE.md) | Contraintes de stack, couches autorisées, décisions techniques prises |
 > | 4 | [REPOSITORY_STRUCTURE.md](REPOSITORY_STRUCTURE.md) | Où placer les fichiers, conventions de nommage |
 >
@@ -240,7 +240,7 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 - [x] `get_corporation_state(corporation_id)` → `GET /game/corporations/{id}`
 - [x] `create_corporation(name, is_ai)` → `POST /game/corporations` (admin MCP)
 - [x] Règle respectée : les writes gameplay (claim) passent par Mirror, jamais par cette API
-- [ ] `get_market_state` — différé Phase 7.3 (marché dynamique inexistant)
+- [x] `get_market_state` — différé Phase 7.3 (marché dynamique inexistant)
 - [ ] `get_active_events` — différé Phase 7.4 (contrats/événements inexistants)
 
 ---
@@ -259,7 +259,7 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
 **Prérequis** : Sprint C (persistance régionale) + Sprint D (AtmosphericState) terminés. Phase 6.9 (hiérarchie Cosmos) ✅
 
-> Design de référence : [GDD.md §10-15](GDD.md) — Corporations, États, Marchés, Contrats, Contrôle de tuiles
+> Design de référence : [Description_du_jeu.md §11-16](description_jeu/Description_du_jeu.md) — Corporations, États, Marchés, Contrats, Contrôle de tuiles
 
 ### Phase 7.1 — Propriété de tuile
 
@@ -291,8 +291,12 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 - [x] **B3** — `DedicatedServer/app/server.py` : `POST /game/corporations/{id}/buildings`, `GET /game/corporations/{id}/buildings`, `DELETE /game/corporations/{id}/buildings/{building_id}`, `PATCH /game/corporations/{id}/buildings/{building_id}/workers`
 - [x] **B4** — `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` : `CorpBuildingType` enum + `CorpBuilding` struct miroir (renommés pour éviter conflit Economy/BuildingData)
 - [x] **B5** — `Game/Assets/Scripts/UI/GameHUD.cs` : section Bâtiments dans RightPanel (visible si tuile claimée par la corpo locale)
+- [x] **B5.1** — `Game/Assets/Scripts/UI/GameHUDBuildingIcons.cs` + `Assets/Resources/Fonts/Font Awesome 7 Free-Solid-900.otf` : couche d'icônes UI des bâtiments avec mapping `CorpBuildingType -> icon token`, preview dans le RightPanel, rendu Font Awesome si disponible et fallback texte sinon
 
 ### Phase 7.3 — Marché local v1
+
+> Design de référence : [Description_du_jeu.md §13](description_jeu/Description_du_jeu.md) — Marchés | [questions/marche_local.md](description_jeu/questions/marche_local.md)
+
 - [ ] Catégories sociales de population (pauvres → classes moyennes → riches) avec besoins différents
 - [ ] Offre/demande dynamique à chaque tick, propagation des prix atténuée par la distance
 - [ ] Mobilité sociale : richesse qui évolue selon l'emploi, migrations sur événement
@@ -300,6 +304,9 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 - [ ] Afficher un HUD de base (solde, ressources, score) + barre atmosphérique
 
 ### Phase 7.4 — Contrats v1
+
+> Design de référence : [Description_du_jeu.md §14](description_jeu/Description_du_jeu.md) — Contrats | [questions/contrats.md](description_jeu/questions/contrats.md)
+
 - [ ] Contrats État ↔ Corporation et Corporation ↔ Corporation
 - [ ] Types : livraison de ressources, contrôle territorial, exploration, présence militaire
 - [ ] Diffusion publique (enchères, le proposeur choisit) et privée (direct, validation bilatérale)
@@ -307,6 +314,8 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 - [ ] Diffusion de connaissance via contrat (corpo → État, corpo → corpo)
 
 ### Phase 7.5 — Réputation, États et nationalisation
+
+> Design de référence : [Description_du_jeu.md §12](description_jeu/Description_du_jeu.md) — États | [questions/perte_de_controle_tuile.md](description_jeu/questions/perte_de_controle_tuile.md) | [questions/contrats.md](description_jeu/questions/contrats.md) §Réputation
 - [ ] Réputation globale + réputation bilatérale par paire
 - [ ] Seuil de tolérance de l'État calculé selon puissance, comportement, contrats
 - [ ] Types d'État (capitaliste, nationaliste…) + taux de corruption (passif et exploitable)
@@ -321,40 +330,123 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
 ## Phase 8 — Système d'Événements & Agents LLM
 
-> Design de référence : [GDD.md §16-17](GDD.md) — Événements, IA & Agents LLM
+> Design de référence : [Description_du_jeu.md §17-18](description_jeu/Description_du_jeu.md) — Événements, IA & Agents LLM | [questions/ia_modele_langage.md](description_jeu/questions/ia_modele_langage.md)
 
-- [ ] `EventData` : nom, description, effets, poids de probabilité, déclencheur (tick ou condition)
-- [ ] Événements de base : RencontreAlienne, TempêteSolaire, DécouverteMinière, CriseÉconomique, SabotageCorpo, Rébellion, MigrationPopulation
-- [ ] `EventManager` : tirage pondéré à chaque tick serveur
-- [ ] Popup UI de notification
-- [ ] Intégration agent LLM via MCP : appelé sur événement significatif ou toutes les N ticks
-- [ ] Mémoire contextuelle par entité (profil, événementielle, relationnelle)
-- [ ] Agent maître de jeu : peut déclencher des événements scénarisés
+#### M1 — Modèles Python (✅ terminée)
+- [x] `EventType` IntEnum (7 types) + `EventEffect` + `EventData` Pydantic dans `models.py`
+- [x] Miroir C# `GameEventType`, `GameEventEffect`, `GameEventData`, `GameEventList` dans `SimulationContracts.cs`
+- [x] 8/8 tests — `SimulationCore/tests/test_phase8_events.py`
 
-**Cible** : événements qui modifient l'état de la partie en temps réel, avec un agent LLM capable de réagir stratégiquement pour les États et corporations IA
+#### M2 — EventManager côté serveur (✅ terminée)
+- [x] `logic/events.py` : `GAME_EVENT_CONFIGS` (7 entrées pondérées), `draw_event()`, `apply_event_to_corporation()`
+- [x] `_game_events` registry dans `runtime.py` + wipe dans `bootstrap_sol()`
+- [x] `_process_event_tick_locked()` intégré dans `_advance_tick_locked()` (probabilité 5%/tick)
+- [x] `list_game_events(limit=20)` méthode publique thread-safe
+
+#### M3 — Endpoint & MCP (✅ terminée)
+- [x] `GET /game/events?limit=N` → `list[EventData]` dans `server.py`
+- [x] MCP tool `list_game_events(limit=20)` dans `Mcp/server.py`
+
+#### M4 — UI popup notification (✅ terminée)
+- [x] Popup HUD déclenché quand un nouvel événement arrive (poll au tick)
+  - `BuildEventToastPanel()` : panel bas-centre, fond semi-opaque, dismiss auto 6s
+  - `PollEventToastLoop()` : poll toutes les 10s, compare `_lastKnownEventId`
+  - `ShowEventToast(GameEventData)` : couleur accent par type, texte riche TMP
+  - `AutoDismissToast(float)` : coroutine dismiss
+  - `GameEventListWrapper` : désérialiseur JSON local
+
+#### Phase 8.5 — Intégration agent LLM pour les États IA (✅ terminée)
+
+- [x] **M1** — Modèles Python (`AgentActionType`, `AgentAction`, `AgentMemory`, `isAiControlled` dans `StateData`) + miroirs C# + exports `__init__` + `CreateStateRequest` + tests 5/5
+- [x] **M2** — `logic/agent.py` : `build_system_prompt`, `build_state_context`, `call_llm_json`, `call_llm_tools`, `parse_action_from_json`, `parse_action_from_tool_call`, `run_agent` + `.env.example` + docker-compose env vars LLM
+- [x] **M3** — `runtime.py` : `_agent_memories` registry, `run_agent_for_state()`, `_run_agent_for_state_bg()`, `_apply_agent_action_locked()`, `_update_agent_memory_locked()`, `get_agent_context()`, `get_agent_memory()`, hook dans `_advance_tick_locked()` tous les `AGENT_TICK_INTERVAL` ticks
+- [x] **M4** — 3 endpoints DedicatedServer : `GET /game/agent/context/{id}`, `POST /game/agent/run/{id}`, `GET /game/agent/memory/{id}`
+- [x] **M5** — 3 tools MCP : `get_agent_context`, `run_agent_for_state`, `get_agent_memory` + section Phase 8.5 dans `MCP_TOOLS_ARCHITECTURE.md`
+- [x] **M6** — Skill `.github/skills/llm-agent-entity/SKILL.md` créé
+
+**Cible atteinte** : agent LLM opérationnel par État IA — mémoire contextuelle, actions stratégiques à chaque `AGENT_TICK_INTERVAL`, endpoints REST + tools MCP exposés, skill de référence créé
 
 ---
 
 ## Phase 9 — Économie avancée & Routes commerciales
 
-> Design de référence : [GDD.md §12](GDD.md) — Marchés, Routes commerciales, Organisme inter-étatique
+> Design de référence : [Description_du_jeu.md §13](description_jeu/Description_du_jeu.md) — Marchés, Routes commerciales, Organisme inter-étatique
 
-- [ ] Ressources tradables : fer, O₂, eau, énergie, tech, nourriture
-- [ ] `MarketManager` avec order book simplifié, propagation hiérarchique (tuile → planète → système)
-- [ ] Fluctuation des prix (offre/demande par tick)
-- [ ] UI de marché pour les corpos joueurs
-- [ ] Corpos IA participantes au marché
-- [ ] Routes commerciales : exploration → construction → propagation des prix entre tuiles connectées
-- [ ] Routes spatiales (inter-planètes/systèmes) + infrastructure spatioport
-- [ ] Organisme inter-étatique optionnel (marché global corruptible)
+### Phase 9.1 — Modèles Python (✅ terminée)
+- [x] `ExpeditionUnit`, `TradeRoute`, enums `TradeRouteType/Status/ExpeditionStatus` dans `models.py`
+- [x] 12/12 tests roundtrip — `SimulationCore/tests/test_phase9_models.py`
+- [x] Contrats C# miroir dans `SimulationContracts.cs` : `CorpTradeRoute`, `CorpExpeditionUnit`, enums
+
+### Phase 9.2 — Runtime & Server (✅ terminée)
+- [x] `SimulationRuntime` : 5 méthodes publiques + 4 processors tick (`runtime.py`)
+- [x] `expeditions.py` : fonctions pures (path, ticks, efficacité, propagation prix)
+- [x] 5 endpoints FastAPI : POST/GET `/game/expeditions`, GET/DELETE `/game/trade-routes`
+- [x] 5 outils MCP : `launch_expedition`, `list_expeditions`, `list_trade_routes`, `get_trade_routes_by_tile`, `suspend_trade_route`
+- [x] 8/8 tests runtime — `SimulationCore/tests/test_phase9_runtime.py`
+
+### Phase 9.3 — UI GameHUD (✅ terminée)
+- [x] **U1** — Panel « Routes commerciales » : listing routes par tuile (type, from→to, efficacité, statut)
+- [x] **U2** — Panel « Expéditions » visible sur tuile claimée avec port
+- [x] **U3** — Input + bouton « Lancer expédition » (désactivé si aucun port sur tuile)
+- [x] **U4** — Liste expéditions en cours (ticksRemaining/totalTicks, type, status InTransit)
+- [x] Icons Road/SeaPort/Spaceport dans `GameHUDBuildingIcons.cs`
+- [x] Dropdown construction étendu (7 types) dans `GameHUD.cs`
+
+### Phase 9.4 — Évolutions & sparkline UI (✅ terminée)
+- [x] **M1** — Fluctuation des prix (offre/demande par tick), `priceVelocity` + sparkline UI
+  - `priceVelocity: float` — fractional price change per tick (pour détection tendance)
+  - `priceHistory: list[float]` — last 10 prices (pour sparkline ASCII ▁▂▃▄▅▆▇█)
+  - Sparkline visible dans GameHUD panel Marché (ligne par ressource + vélocité colorée)
+  - 4/4 tests Python passent, validation C# 0 erreur
+- [ ] Ressources tradables : fer, O₂, eau, énergie, tech, nourriture (Phase 9.5+)
+- [ ] `MarketManager` avec order book simplifié, propagation hiérarchique (Phase 9.5+)
+- [ ] Corpos IA participantes au marché (Phase 11)
+- [ ] Organisme inter-étatique optionnel (marché global corruptible) (Phase 9.5+)
 
 **Cible** : bourse qui fluctue en temps réel, marchés connectés par routes, possibilité de marché global inter-étatique
 
 ---
 
+## Phase 9.5 — Ressources tradables & MarketManager
+
+> Design de référence : [Description_du_jeu.md §10](description_jeu/Description_du_jeu.md) — Ressources | [Description_du_jeu.md §13](description_jeu/Description_du_jeu.md) — Marchés, propagation hiérarchique
+
+### Objectifs
+- Étendre `ResourceType` avec de nouvelles ressources commercialisables (fer, O₂, eau, tech)
+- Implémenter un `MarketManager` global avec propagation hiérarchique : tuile → planète → système
+- Exposer un endpoint `GET /game/market/global` + outil MCP `get_global_market`
+- Refléter les nouveaux types dans l'UI GameHUD (onglet Marché étendu)
+
+### Tâches
+
+#### M1 — Nouveaux ResourceType (Python + C#) ✅
+- [x] Ajouter dans `models.py` : `Iron = 5`, `Oxygen = 6`, `Water = 7`, `Tech = 8`
+- [x] Miroir C# dans `SimulationContracts.cs` : `CorpResourceType`
+- [x] Mettre à jour `SIMULATION_CONTRACTS.md`
+- [x] Tests round-trip nouveaux types — `test_phase95_resources.py` (4/4 PASS)
+
+#### M2 — GlobalMarketState (Python + C#) ✅
+- [x] `GlobalMarketState(BaseModel)` : `listings: list[ResourceListing]`, `tick: int`, `systemId: str`, `marketCount: int`
+- [x] Propagation : `compute_global_market(local_markets) → GlobalMarketState` dans `logic/market.py` (weighted avg par supply)
+- [x] `get_global_market(system_id)` public method dans `runtime.py` (thread-safe)
+- [x] Miroir C# `GlobalMarketState` + `GlobalMarketStateWrapper`
+- [x] Tests propagation — `test_phase95_global_market.py` (4/4 PASS)
+
+#### M3 — Endpoint & MCP tool ✅
+- [x] `GET /game/market/global` → `GlobalMarketState` dans `server.py`
+- [x] MCP tool `get_global_market(system_id)` dans `Mcp/server.py`
+- [x] Mettre à jour `MCP_TOOLS_ARCHITECTURE.md`
+
+#### M4 — UI GameHUD ✅
+- [x] Étendre le panel Marché : afficher tous les `ResourceType` (pas seulement Food)
+- [x] Icônes ou labels courts pour Iron/O₂/Eau/Tech dans les 3 switch statements
+- [ ] Sparkline + vélocité pour les nouveaux types (optionnel, reporté Phase 10)
+
+---
+
 ## Phase 10 — Multijoueur Réseau
 
-> Design de référence : [GDD.md §18](GDD.md) — Multijoueur
+> Design de référence : [Description_du_jeu.md §19](description_jeu/Description_du_jeu.md) — Multijoueur
 
 - [ ] Intégrer Mirror Networking
 - [ ] Serveur dédié autoritaire (client-serveur, pas P2P)
@@ -390,12 +482,15 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 |---|---|---|
 | 0–6.9, Sprint 0 | Fondations, grille, génération, vues, terraformation, cosmos, split sim | ✅ Voir [CHANGELOG.md](CHANGELOG.md) |
 | 6.75 | Isolation bridge Unity | ✅ Voir [CHANGELOG.md](CHANGELOG.md) |
-| 6.5 + Sprints A→D | Hydrologie, cohérence, persistance, AtmosphericState | 🔄 En cours |
-| MCP-1, 2, 3 | Outils cellule, tests auto, API gameplay | ⬜ À faire |
+| 6.5 + Sprints A→D | Hydrologie, cohérence, persistance, AtmosphericState | ✅ Terminé 2026-04-19 |
+| MCP-1, 2, 3 | Outils cellule, tests auto, API gameplay | ✅ Terminé 2026-04-19 |
 | 7.1 | Propriété de tuile + Ownership UI | ✅ Terminé 2026-04-19 |
 | 7.2 | Bâtiments v1 | ✅ Terminé 2026-04-19 |
-| 8 | Événements | ⬜ À faire |
-| 9 | Économie & Bourse | ⬜ À faire |
+| 7.3 | Marché local v1 | ✅ Terminé |
+| 7.4 | Contrats v1 | ✅ Terminé |
+| 7.5 | Réputation, États, Nationalisation | ✅ Terminé |
+| 8 | Événements — M1✅ M2✅ M3✅ M4✅ | ✅ COMPLET |
+| 9 | Économie & Bourse — 9.1/9.2/9.3/9.4 ✅ | 🔄 9.5 COMPLET (M1✅ M2✅ M3✅ M4✅) |
 | 10 | Multijoueur Réseau | ⬜ À faire |
 | 11 | IA Corporations | ⬜ À faire |
 | 12 | Polish | ⬜ Continu |
