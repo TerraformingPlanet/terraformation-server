@@ -456,6 +456,7 @@ def generate_spherical_tiles(
     water_level: float,
     seed: int,
     atmosphere_density: float = 0.5,
+    planet_irradiance_wm2: float = 0.0,
 ) -> list[GoldbergTileState]:
     """Generate tiles for a spherical body using H3 hexagonal hierarchical indexing.
     Each tile corresponds to one H3 cell at the given resolution (0, 1 or 2).
@@ -517,7 +518,7 @@ def generate_spherical_tiles(
         altitude = (raw_height - sea_level) / max(abs(raw_height - sea_level) + 1e-6, 0.3)
         altitude = max(-1.0, min(1.0, altitude))
         albedo = compute_tile_albedo(t_type, w_class)
-        irradiance = compute_tile_irradiance(lat, 0.0)  # planet_irradiance populated post-bootstrap
+        irradiance = compute_tile_irradiance(lat, planet_irradiance_wm2)
         veg_density = 1.0 if t_type == TerrainType.Vegetation else 0.0
 
         neighbors = sorted(set(_h3.grid_disk(cell, 1)) - {cell})
