@@ -8,6 +8,9 @@ from terraformation_sim import (
     CorporationData,
     BuildingData,
     BuildingType,
+    LocalMarketState,
+    GlobalMarketState,
+    ContractData,
     AnyBodyState,
     AtmosphericComposition,
     BodyBase,
@@ -35,6 +38,14 @@ from terraformation_sim import (
     TravelStatus,
     WorldState,
     ZoneType,
+    StateType,
+    StateData,
+    NationalizationProcess,
+    ScoreboardEntry,
+    EventData,
+    EventType,
+    AgentAction,
+    AgentMemory,
 )
 
 
@@ -833,3 +844,280 @@ def set_worker_ratio(corp_id: str, building_id: str, worker_ratio: float) -> Bui
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+
+# ── Game layer — Local Market (Phase 7.3) ─────────────────────────────────────
+
+@app.get("/game/market", response_model=list[LocalMarketState])
+def list_market_states() -> list[LocalMarketState]:
+    """List all corporation market states."""
+    return runtime.list_market_states()
+
+
+@app.get("/game/market/global/{system_id}", response_model=GlobalMarketState)
+def get_global_market(system_id: str) -> GlobalMarketState:
+    """Get aggregated market state for a system (Phase 9.5)."""
+    return runtime.get_global_market(system_id)
+
+
+@app.get("/game/market/{corp_id}", response_model=LocalMarketState)
+def get_market_state(corp_id: str) -> LocalMarketState:
+    """Get the local market state for a corporation."""
+    result = runtime.get_market_state(corp_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No market state for corporation '{corp_id}'")
+    return result
+
+
+# ── Game layer — Contracts (Phase 7.4) ────────────────────────────────────────
+
+class ContractProposalRequest(_BaseModel):
+    proposerId: str
+    resourceType: str
+    resourceAmount: float
+    rewardCredits: float
+    penaltyCredits: float = 0.0
+    durationTicks: int = 0
+    visibility: str = "Private"
+    targetId: str = ""
+    biddingWindowTicks: int = 5
+    knowledgeBonus: float = 0.0
+
+
+class BidRequest(_BaseModel):
+    bidderId: str
+
+
+class ConfirmBidderRequest(_BaseModel):
+    proposerId: str
+    bidderId: str
+
+
+class AcceptContractRequest(_BaseModel):
+    acceptorId: str
+
+
+class BreakContractRequest(_BaseModel):
+    corpId: str
+
+
+@app.post("/game/contracts", response_model=ContractData, status_code=201)
+def propose_contract(body: ContractProposalRequest) -> ContractData:
+    """Propose a new resource-delivery contract."""
+    try:
+        return runtime.propose_contract(
+            proposer_id=body.proposerId,
+            resource_type=body.resourceType,
+            resource_amount=body.resourceAmount,
+            reward_credits=body.rewardCredits,
+            penalty_credits=body.penaltyCredits,
+            duration_ticks=body.durationTicks,
+            visibility=body.visibility,
+            target_id=body.targetId,
+            bidding_window_ticks=body.biddingWindowTicks,
+            knowledge_bonus=body.knowledgeBonus,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.get("/game/contracts", response_model=list[ContractData])
+def list_contracts(corp_id: str = "") -> list[ContractData]:
+    """List contracts. If corp_id provided, filter to contracts involving that corporation."""
+    return runtime.list_contracts(corp_id if corp_id else None)
+
+
+@app.get("/game/contracts/public", response_model=list[ContractData])
+def list_public_contracts() -> list[ContractData]:
+    """List all open public contracts available for bidding."""
+    return runtime.list_public_contracts()
+
+
+@app.get("/game/contracts/{contract_id}", response_model=ContractData)
+def get_contract(contract_id: str) -> ContractData:
+    """Get a single contract by ID."""
+    result = runtime.get_contract(contract_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Contract '{contract_id}' not found")
+    return result
+
+
+@app.post("/game/contracts/{contract_id}/bid", response_model=ContractData)
+def bid_on_contract(contract_id: str, body: BidRequest) -> ContractData:
+    """Submit a bid on a public contract."""
+    try:
+        return runtime.bid_on_contract(contract_id, body.bidderId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.post("/game/contracts/{contract_id}/confirm", response_model=ContractData)
+def confirm_bidder(contract_id: str, body: ConfirmBidderRequest) -> ContractData:
+    """Proposer confirms a candidate to activate a public contract."""
+    try:
+        return runtime.confirm_bidder(contract_id, body.proposerId, body.bidderId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.post("/game/contracts/{contract_id}/accept", response_model=ContractData)
+def accept_contract(contract_id: str, body: AcceptContractRequest) -> ContractData:
+    """Accept a private contract directed at the given corporation."""
+    try:
+        return runtime.accept_contract(contract_id, body.acceptorId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.post("/game/contracts/{contract_id}/break", response_model=ContractData)
+def break_contract(contract_id: str, body: BreakContractRequest) -> ContractData:
+    """Break an active contract (penalty applies)."""
+    try:
+        return runtime.break_contract(contract_id, body.corpId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+# ── Game layer — States & Reputation (Phase 7.5) ───────────────────────────────────────
+
+class CreateStateRequest(_BaseModel):
+    name: str
+    stateType: StateType = StateType.Capitalist
+    tileIds: list[str] = []
+    bureaucracy: float = 0.1
+    corruptionRate: float = 0.1
+    toleranceThreshold: float = 0.5
+    isAiControlled: bool = False
+
+
+class CorruptNationalizationRequest(_BaseModel):
+    corpId: str
+    bribeAmount: float
+
+
+class CancelContractNationalizationRequest(_BaseModel):
+    contractId: str
+
+
+@app.post("/game/states", response_model=StateData)
+def create_state(body: CreateStateRequest) -> StateData:
+    """Register a new in-game State."""
+    return runtime.create_state(
+        name=body.name,
+        state_type=body.stateType,
+        tile_ids=body.tileIds,
+        bureaucracy=body.bureaucracy,
+        corruption_rate=body.corruptionRate,
+        tolerance_threshold=body.toleranceThreshold,
+        is_ai_controlled=body.isAiControlled,
+    )
+
+
+@app.get("/game/states", response_model=list[StateData])
+def list_states() -> list[StateData]:
+    """Return all registered States."""
+    return runtime.list_states()
+
+
+@app.get("/game/states/{state_id}", response_model=StateData)
+def get_state(state_id: str) -> StateData:
+    """Return a single State by ID."""
+    state = runtime.get_state(state_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"State '{state_id}' not found")
+    return state
+
+
+@app.get("/game/reputation/{source_id}/{target_id}", response_model=float)
+def get_bilateral_reputation(source_id: str, target_id: str) -> float:
+    """Bilateral reputation score from source toward target."""
+    return runtime.get_reputation(source_id, target_id)
+
+
+@app.get("/game/reputation/{corp_id}", response_model=dict[str, float])
+def get_corp_reputations(corp_id: str) -> dict[str, float]:
+    """All bilateral reputation scores where corp_id is the source."""
+    return runtime.list_reputations(corp_id)
+
+
+@app.get("/game/nationalizations", response_model=list[NationalizationProcess])
+def list_nationalizations(corp_id: str | None = None) -> list[NationalizationProcess]:
+    """Return nationalisation processes. Filter by corp_id if provided."""
+    return runtime.list_nationalizations(corp_id)
+
+
+@app.post("/game/nationalizations/{process_id}/corrupt", response_model=NationalizationProcess)
+def corrupt_nationalization(
+    process_id: str, body: CorruptNationalizationRequest
+) -> NationalizationProcess:
+    """Attempt to cancel a nationalisation via bribery."""
+    try:
+        return runtime.corrupt_nationalization(process_id, body.corpId, body.bribeAmount)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.post("/game/nationalizations/{process_id}/cancel-contract", response_model=NationalizationProcess)
+def cancel_nationalization_via_contract(
+    process_id: str, body: CancelContractNationalizationRequest
+) -> NationalizationProcess:
+    """Cancel a nationalisation by honouring a contract with the State."""
+    try:
+        return runtime.cancel_nationalization_via_contract(process_id, body.contractId)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.get("/game/scoreboard", response_model=list[ScoreboardEntry])
+def get_scoreboard() -> list[ScoreboardEntry]:
+    """Return all corporations sorted by composite score descending."""
+    return runtime.get_scoreboard()
+
+
+# ── Gameplay Events (Phase 8) ─────────────────────────────────────────────────
+
+@app.get("/game/events", response_model=list[EventData])
+def list_game_events(limit: int = 20) -> list[EventData]:
+    """List the most recent gameplay events (latest first, max 200)."""
+    safe_limit = max(1, min(limit, 200))
+    return runtime.list_game_events(safe_limit)
+
+
+# ── Agent LLM (Phase 8.5) ───────────────────────────────────────────────
+
+@app.get("/game/agent/context/{state_id}")
+def get_agent_context(state_id: str) -> dict:
+    """Return the LLM context snapshot for an AI-controlled state (debug/MCP)."""
+    ctx = runtime.get_agent_context(state_id)
+    if ctx is None:
+        raise HTTPException(status_code=404, detail=f"State {state_id!r} not found")
+    return ctx
+
+
+@app.post("/game/agent/run/{state_id}", response_model=AgentAction)
+def run_agent_for_state(state_id: str) -> AgentAction:
+    """Synchronously trigger one LLM agent decision cycle for the given state."""
+    try:
+        return runtime.run_agent_for_state(state_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/game/agent/memory/{state_id}", response_model=AgentMemory)
+def get_agent_memory(state_id: str) -> AgentMemory:
+    """Return the rolling agent memory for the given state."""
+    mem = runtime.get_agent_memory(state_id)
+    if mem is None:
+        # Return empty memory rather than 404 — caller may query before first run
+        return AgentMemory(entityId=state_id)
+    return mem

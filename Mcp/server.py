@@ -1863,6 +1863,344 @@ def create_corporation(name: str, is_ai: bool = False) -> dict:
         return response.json()
 
 
+@mcp.tool
+def get_market_state(corp_id: str) -> dict:
+    """
+    Get the local market state for a corporation (prices, supply, demand per resource).
+    Does not require Unity in Play Mode.
+
+    Args:
+        corp_id: The corporation ID to query.
+    """
+    return _server_get(f"/game/market/{corp_id}")
+
+
+@mcp.tool
+def get_global_market(system_id: str = "sol") -> dict:
+    """
+    Get the aggregated market state for a system (Phase 9.5).
+    Aggregates supply, demand, and weighted average price per resource type across all territories.
+    Does not require Unity in Play Mode.
+
+    Args:
+        system_id: System ID to aggregate (default "sol").
+    """
+    return _server_get(f"/game/market/global/{system_id}")
+
+
+# ── Contract tools (Phase 7.4) ────────────────────────────────────────────────
+
+@mcp.tool
+def list_contracts(corp_id: str = "") -> dict:
+    """
+    List contracts. If corp_id is provided, filter to contracts involving that corporation.
+    Does not require Unity in Play Mode.
+
+    Args:
+        corp_id: Optional corporation ID to filter by. Leave empty for all contracts.
+    """
+    url = "/game/contracts"
+    if corp_id:
+        url += f"?corp_id={corp_id}"
+    return _server_get(url)
+
+
+@mcp.tool
+def list_public_contracts() -> dict:
+    """
+    List all open public contracts currently available for bidding.
+    Does not require Unity in Play Mode.
+    """
+    return _server_get("/game/contracts/public")
+
+
+@mcp.tool
+def propose_contract(
+    proposer_id: str,
+    resource_type: str,
+    resource_amount: float,
+    reward_credits: float,
+    penalty_credits: float = 0.0,
+    duration_ticks: int = 0,
+    visibility: str = "Private",
+    target_id: str = "",
+    bidding_window_ticks: int = 5,
+    knowledge_bonus: float = 0.0,
+) -> dict:
+    """
+    Propose a new resource-delivery contract.
+    Does not require Unity in Play Mode.
+
+    Args:
+        proposer_id: The corporation proposing the contract.
+        resource_type: Resource name (e.g. 'Food', 'Metal').
+        resource_amount: Total amount to deliver.
+        reward_credits: Credits paid to acceptor on completion.
+        penalty_credits: Credits deducted on breach (default 0).
+        duration_ticks: Max ticks to fulfil (0 = unlimited).
+        visibility: 'Private' (directed) or 'Public' (open bidding).
+        target_id: Target corp ID for private contracts.
+        bidding_window_ticks: Ticks the bidding window stays open (default 5).
+        knowledge_bonus: Research points bonus on completion (default 0).
+    """
+    return _server_post("/game/contracts", {
+        "proposerId":         proposer_id,
+        "resourceType":       resource_type,
+        "resourceAmount":     resource_amount,
+        "rewardCredits":      reward_credits,
+        "penaltyCredits":     penalty_credits,
+        "durationTicks":      duration_ticks,
+        "visibility":         visibility,
+        "targetId":           target_id,
+        "biddingWindowTicks": bidding_window_ticks,
+        "knowledgeBonus":     knowledge_bonus,
+    })
+
+
+@mcp.tool
+def bid_on_contract(contract_id: str, bidder_id: str) -> dict:
+    """
+    Submit a bid on a public contract.
+    Does not require Unity in Play Mode.
+
+    Args:
+        contract_id: The contract to bid on.
+        bidder_id: The corporation placing the bid.
+    """
+    return _server_post(f"/game/contracts/{contract_id}/bid", {"bidderId": bidder_id})
+
+
+@mcp.tool
+def confirm_bidder(contract_id: str, proposer_id: str, bidder_id: str) -> dict:
+    """
+    Proposer confirms a candidate bidder to activate a public contract.
+    Does not require Unity in Play Mode.
+
+    Args:
+        contract_id: The contract to activate.
+        proposer_id: The proposing corporation (must match contract).
+        bidder_id: The chosen bidder to activate the contract with.
+    """
+    return _server_post(f"/game/contracts/{contract_id}/confirm", {
+        "proposerId": proposer_id,
+        "bidderId":   bidder_id,
+    })
+
+
+@mcp.tool
+def accept_contract(contract_id: str, acceptor_id: str) -> dict:
+    """
+    Accept a private contract directed at the given corporation.
+    Does not require Unity in Play Mode.
+
+    Args:
+        contract_id: The contract to accept.
+        acceptor_id: The corporation accepting (must be the targetId).
+    """
+    return _server_post(f"/game/contracts/{contract_id}/accept", {"acceptorId": acceptor_id})
+
+
+@mcp.tool
+def break_contract(contract_id: str, corp_id: str) -> dict:
+    """
+    Break an active contract. Penalty credits are deducted from the breaching corporation.
+    Does not require Unity in Play Mode.
+
+    Args:
+        contract_id: The contract to break.
+        corp_id: The corporation breaking the contract.
+    """
+    return _server_post(f"/game/contracts/{contract_id}/break", {"corpId": corp_id})
+
+
+# ── Phase 7.5 — States & Reputation ──────────────────────────────────────────
+
+
+@mcp.tool
+def create_state(
+    name: str,
+    state_type: int = 0,
+    tile_ids: list[str] | None = None,
+    bureaucracy: float = 0.1,
+    corruption_rate: float = 0.1,
+    tolerance_threshold: float = 0.5,
+) -> dict:
+    """
+    Register a new in-game State on the server.
+    Does not require Unity in Play Mode.
+
+    Args:
+        name: Display name of the State.
+        state_type: 0=Capitalist (high tolerance), 1=Nationalist (low tolerance).
+        tile_ids: H3 tile IDs that belong to this State's territory.
+        bureaucracy: 0..1 — multiplier on nationalisation delay.
+        corruption_rate: 0..1 — reduces delay, enables bribery.
+        tolerance_threshold: Tolerance score above which nationalisation triggers.
+    """
+    return _server_post("/game/states", {
+        "name": name,
+        "stateType": state_type,
+        "tileIds": tile_ids or [],
+        "bureaucracy": bureaucracy,
+        "corruptionRate": corruption_rate,
+        "toleranceThreshold": tolerance_threshold,
+    })
+
+
+@mcp.tool
+def list_states() -> dict:
+    """
+    Return all registered States.
+    Does not require Unity in Play Mode.
+    """
+    return _server_get("/game/states")
+
+
+@mcp.tool
+def get_state(state_id: str) -> dict:
+    """
+    Return a single State by ID.
+    Does not require Unity in Play Mode.
+
+    Args:
+        state_id: UUID of the State.
+    """
+    return _server_get(f"/game/states/{state_id}")
+
+
+@mcp.tool
+def get_reputation(source_id: str, target_id: str) -> dict:
+    """
+    Return the bilateral reputation score from source_id toward target_id.
+    Does not require Unity in Play Mode.
+
+    Args:
+        source_id: Entity (State or corp) that observed the target's behaviour.
+        target_id: Entity whose reputation is being queried.
+    """
+    return _server_get(f"/game/reputation/{source_id}/{target_id}")
+
+
+@mcp.tool
+def list_reputations(corp_id: str) -> dict:
+    """
+    Return all bilateral reputation scores where corp_id is the source observer.
+    Does not require Unity in Play Mode.
+
+    Args:
+        corp_id: Corporation whose outgoing reputation map to query.
+    """
+    return _server_get(f"/game/reputation/{corp_id}")
+
+
+@mcp.tool
+def list_nationalizations(corp_id: str = "") -> dict:
+    """
+    Return nationalisation processes. Optionally filter by corporation.
+    Does not require Unity in Play Mode.
+
+    Args:
+        corp_id: If provided, only return processes targeting this corporation.
+    """
+    url = "/game/nationalizations"
+    if corp_id:
+        url += f"?corp_id={corp_id}"
+    return _server_get(url)
+
+
+@mcp.tool
+def corrupt_nationalization(process_id: str, corp_id: str, bribe_amount: float) -> dict:
+    """
+    Attempt to cancel a nationalisation process via bribery.
+    Deducts bribe_amount from the corporation's credits.
+    Does not require Unity in Play Mode.
+
+    Args:
+        process_id: UUID of the NationalizationProcess.
+        corp_id: Corporation paying the bribe (must be the target corp).
+        bribe_amount: Amount to spend. Must meet or exceed the computed cost.
+    """
+    return _server_post(f"/game/nationalizations/{process_id}/corrupt", {
+        "corpId": corp_id,
+        "bribeAmount": bribe_amount,
+    })
+
+
+@mcp.tool
+def get_scoreboard() -> dict:
+    """
+    Return all corporations sorted by composite score descending.
+    Score = credits + tileCount*1000 + globalReputation*100.
+    Does not require Unity in Play Mode.
+    """
+    return _server_get("/game/scoreboard")
+
+
+# ── Gameplay Events (Phase 8) ─────────────────────────────────────────────────
+
+@mcp.tool
+def list_game_events(limit: int = 20) -> dict:
+    """
+    List the most recent gameplay narrative events (latest first).
+    Events include: alien encounter, solar storm, mining discovery, economic crisis,
+    corporate sabotage, rebellion, population migration.
+    Does not require Unity in Play Mode.
+
+    Args:
+        limit: Number of events to return (1–200, default 20).
+    """
+    safe_limit = max(1, min(limit, 200))
+    return _server_get(f"/game/events?limit={safe_limit}")
+
+
+# ── Agent LLM (Phase 8.5) ─────────────────────────────────────────────────────
+
+@mcp.tool
+def get_agent_context(state_id: str) -> dict:
+    """
+    Return the full LLM context snapshot for an AI-controlled state.
+
+    Includes: state fields, current scoreboard, last 5 gameplay events,
+    bilateral reputations, and agent memory (recent decisions).
+    Useful for debugging agent behaviour or seeding manual analysis.
+    Does not require Unity in Play Mode.
+
+    Args:
+        state_id: ID of the State entity to inspect.
+    """
+    return _server_get(f"/game/agent/context/{state_id}")
+
+
+@mcp.tool
+def run_agent_for_state(state_id: str) -> dict:
+    """
+    Synchronously trigger one LLM agent decision cycle for the given state.
+
+    The agent will read its context, call the LLM, choose an action, and apply
+    it to the simulation immediately.  Returns the AgentAction that was taken.
+    Requires LLM_BASE_URL / LLM_API_KEY env vars to be set on the server.
+    Does not require Unity in Play Mode.
+
+    Args:
+        state_id: ID of the AI-controlled State to run.
+    """
+    return _server_post(f"/game/agent/run/{state_id}")
+
+
+@mcp.tool
+def get_agent_memory(state_id: str) -> dict:
+    """
+    Return the rolling agent memory (last 5 decisions + relationship notes) for a state.
+
+    Memory is in-process and resets on server restart / bootstrap_sol.
+    Does not require Unity in Play Mode.
+
+    Args:
+        state_id: ID of the State whose memory to retrieve.
+    """
+    return _server_get(f"/game/agent/memory/{state_id}")
+
+
 if __name__ == "__main__":
     if MCP_TRANSPORT == "http":
         mcp.run(transport="streamable-http", host="0.0.0.0", port=MCP_PORT)

@@ -2,10 +2,48 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import threading
 from uuid import uuid4
 
 from .logic import apply_modifier_to_cell, apply_region_progress, aggregate_tile_deltas, can_apply_action, compute_atmospheric_state, compute_body_position_at_tick, compute_equilibrium_temperature, compute_planetary_irradiance, compute_tile_irradiance, spectral_type_to_luminosity, _body_h3_resolution, generate_interior_cells, generate_spherical_tiles, GENERATION_VERSION, process_pending_actions, queue_action, summarize_region_cells, summarize_spherical_tiles, terraform_action_definitions
+from .logic.market import (
+    auto_init_tile_population,
+    compute_market_prices,
+    compute_population_demand,
+    compute_territories,
+    apply_social_mobility,
+    init_market_listings,
+    compute_global_market,
+)
+from .logic.contracts import (
+    can_propose_contract,
+    can_bid_contract,
+    can_confirm_bidder,
+    can_accept_private,
+    can_break_contract,
+    process_delivery_tick,
+    check_completion,
+    apply_completion,
+    apply_break,
+    apply_expiry,
+    check_bidding_expiry,
+)
+from .logic.events import (
+    draw_event,
+    apply_event_to_corporation,
+)
+from .logic.agent import run_agent as _run_agent_llm
+from .logic.states import (
+    compute_tolerance_score,
+    compute_nationalization_delay,
+    apply_reputation_event,
+    compute_bribe_cost,
+    can_corrupt_nationalization,
+    apply_bribe,
+    build_scoreboard_entry,
+    REPUTATION_DELTAS,
+)
 from .models import (
     AnyBodyState,
     AtmosphericComposition,
@@ -53,7 +91,25 @@ from .models import (
     BuildingData,
     BuildingType,
     BUILDING_CONFIGS,
+    LocalMarketState,
+    GlobalMarketState,
+    ResourceListing,
     ResourceType,
+    ContractData,
+    ContractStatus,
+    ContractVisibility,
+    StateType,
+    StateData,
+    ReputationEventReason,
+    ReputationEvent,
+    NationalizationProcess,
+    ScoreboardEntry,
+    EventData,
+    EventType,
+    EventEffect,
+    AgentAction,
+    AgentActionType,
+    AgentMemory,
 )
 from .persistence import CellMutation, InMemoryRepository, SavedState, StateRepository, TileMutation
 
@@ -97,6 +153,19 @@ class InMemorySimulationRuntime:
         self._tile_ownership: dict[str, dict[str, str]] = {}  # body_id -> tile_id -> corp_id
         # Building registry (Phase 7.2)
         self._buildings: dict[str, BuildingData] = {}  # building_id -> BuildingData
+        # Market registry (Phase 7.3)
+        self._markets: dict[str, LocalMarketState] = {}  # territory_id -> LocalMarketState
+        # Contract registry (Phase 7.4)
+        self._contracts: dict[str, ContractData] = {}  # contract_id -> ContractData
+        # State & Reputation registries (Phase 7.5)
+        self._states: dict[str, StateData] = {}                          # state_id -> StateData
+        self._reputations: dict[tuple[str, str], float] = {}             # (source_id, target_id) -> bilateral score
+        self._nationalizations: dict[str, NationalizationProcess] = {}   # process_id -> NationalizationProcess
+        # Gameplay event log (Phase 8)
+        self._game_events: list[EventData] = []                          # chronological event log
+        self._event_rng: random.Random = random.Random()                 # isolated RNG for event draws
+        # Agent LLM memories (Phase 8.5)
+        self._agent_memories: dict[str, AgentMemory] = {}               # state_id -> AgentMemory
         # Atmospheric event tracking (Phase 3 — SDK climate events)
         self._last_habitability_bucket: int = -1   # 0=<25% 1=<50% 2=<75% 3=100%
         self._atmosphere_formed_fired: bool = False
@@ -141,7 +210,8 @@ class InMemorySimulationRuntime:
             if existing is not None:
                 raise ValueError(f"Tile '{tile_id}' on body '{body_id}' is already claimed by '{existing}'")
             self._tile_ownership.setdefault(body_id, {})[tile_id] = corp_id
-            corp.claimedTiles.append(ClaimedTile(bodyId=body_id, tileId=tile_id))
+            new_tile = auto_init_tile_population(ClaimedTile(bodyId=body_id, tileId=tile_id))
+            corp.claimedTiles.append(new_tile)
             return corp
 
     def unclaim_tile(self, corp_id: str, body_id: str, tile_id: str) -> CorporationData:
@@ -225,6 +295,689 @@ class InMemorySimulationRuntime:
                 corp.resources[key] = corp.resources.get(key, 0.0) + delta * building.workerRatio
             building.ticksActive += 1
 
+    def _process_market_tick_locked(self) -> None:
+        """Appelé à chaque tick — met à jour les marchés locaux par territoire connexe (Phase 7.3).
+        Lock is already held.
+        """
+        active_territory_ids: set[str] = set()
+
+        for corp_id, corp in self._corporations.items():
+            claimed_tiles = list(corp.claimedTiles)
+
+            # Compute connected components for this corp's tiles
+            territories = compute_territories(corp_id, claimed_tiles)
+
+            # Compute social mobility data (tile -> avg worker ratio)
+            tile_worker_ratios: dict[str, list[float]] = {}
+            for building in self._buildings.values():
+                if building.corpId == corp_id:
+                    tile_worker_ratios.setdefault(building.tileId, []).append(building.workerRatio)
+
+            for territory_id, tile_ids in territories:
+                active_territory_ids.add(territory_id)
+                tile_id_set = set(tile_ids)
+                territory_tiles = [t for t in claimed_tiles if t.tileId in tile_id_set]
+
+                # Supply: corp's full resource stock (global) weighted by connectivity
+                connectivity = self._markets.get(territory_id, LocalMarketState()).connectivity
+                supply_global: dict[str, float] = {k: v for k, v in corp.resources.items()}
+                supply_eff: dict[str, float] = {k: v * connectivity for k, v in supply_global.items()}
+
+                # Demand from territory population
+                demand = compute_population_demand(territory_tiles)
+
+                # Get or create listings
+                prev_market = self._markets.get(territory_id)
+                listings = prev_market.listings if prev_market is not None else init_market_listings()
+
+                # Recompute prices
+                updated_listings = compute_market_prices(listings, supply_eff, demand)
+
+                # Deduct consumption from corp resources (once per corp across all territories)
+                for listing in updated_listings:
+                    key = listing.resourceType.name
+                    consumed = min(demand.get(key, 0.0), supply_global.get(key, 0.0))
+                    if consumed > 0.0:
+                        corp.resources[key] = max(0.0, corp.resources.get(key, 0.0) - consumed)
+
+                self._markets[territory_id] = LocalMarketState(
+                    territoryId=territory_id,
+                    ownerEntityId=corp_id,
+                    tileIds=tile_ids,
+                    listings=updated_listings,
+                    taxRate=prev_market.taxRate if prev_market is not None else 0.0,
+                    connectivity=connectivity,
+                    tickComputed=self._tick_count,
+                )
+
+            # Apply social mobility per tile
+            new_tiles: list[ClaimedTile] = []
+            for tile in claimed_tiles:
+                ratios = tile_worker_ratios.get(tile.tileId, [])
+                emp_ratio = sum(ratios) / len(ratios) if ratios else 0.0
+                new_tiles.append(apply_social_mobility(tile, emp_ratio))
+            corp.claimedTiles = new_tiles
+
+        # Purge territories whose tiles are no longer owned
+        for tid in [k for k in self._markets if k not in active_territory_ids]:
+            del self._markets[tid]
+
+    # ── Market public API (Phase 7.3) ──────────────────────────────────────
+
+    def get_market_states_for_entity(self, entity_id: str) -> list[LocalMarketState]:
+        with self._lock:
+            return [m for m in self._markets.values() if m.ownerEntityId == entity_id]
+
+    def get_market_state_by_tile(self, tile_id: str) -> LocalMarketState | None:
+        with self._lock:
+            return next((m for m in self._markets.values() if tile_id in m.tileIds), None)
+
+    def list_market_states(self) -> list[LocalMarketState]:
+        with self._lock:
+            return list(self._markets.values())
+
+    # ── Contract registry (Phase 7.4) ─────────────────────────────────────────
+
+    def propose_contract(
+        self,
+        proposer_id: str,
+        resource_type: str,
+        resource_amount: float,
+        reward_credits: float,
+        penalty_credits: float = 0.0,
+        duration_ticks: int = 0,
+        visibility: str = "Private",
+        target_id: str = "",
+        bidding_window_ticks: int = 5,
+        knowledge_bonus: float = 0.0,
+    ) -> ContractData:
+        with self._lock:
+            proposer = self._corporations.get(proposer_id)
+            if proposer is None:
+                raise KeyError(f"Corporation '{proposer_id}' not found")
+            if target_id and target_id not in self._corporations:
+                raise KeyError(f"Target corporation '{target_id}' not found")
+
+            vis = ContractVisibility[visibility]
+            rt  = ResourceType[resource_type]
+            ok, reason = can_propose_contract(proposer, resource_amount, reward_credits)
+            if not ok:
+                raise ValueError(reason)
+
+            contract_id = str(uuid4())
+            close_tick  = self._tick_count + bidding_window_ticks
+            expire_tick = (self._tick_count + duration_ticks) if duration_ticks > 0 else 0
+
+            contract = ContractData(
+                id=contract_id,
+                status=ContractStatus.Proposed,
+                visibility=vis,
+                proposerId=proposer_id,
+                targetId=target_id if vis == ContractVisibility.Private else "",
+                resourceType=rt,
+                resourceAmount=resource_amount,
+                rewardCredits=reward_credits,
+                penaltyCredits=penalty_credits,
+                knowledgeBonus=knowledge_bonus,
+                durationTicks=duration_ticks,
+                expiresAtTick=expire_tick,
+                biddingWindowTicks=bidding_window_ticks,
+                biddingCloseTick=close_tick,
+                tickCreated=self._tick_count,
+            )
+            self._contracts[contract_id] = contract
+            return contract
+
+    def bid_on_contract(self, contract_id: str, bidder_id: str) -> ContractData:
+        with self._lock:
+            contract = self._contracts.get(contract_id)
+            if contract is None:
+                raise KeyError(f"Contract '{contract_id}' not found")
+            bidder = self._corporations.get(bidder_id)
+            if bidder is None:
+                raise KeyError(f"Corporation '{bidder_id}' not found")
+            ok, reason = can_bid_contract(bidder, contract, self._tick_count)
+            if not ok:
+                raise ValueError(reason)
+            updated = contract.model_copy(
+                update={"candidates": contract.candidates + [bidder_id]}
+            )
+            self._contracts[contract_id] = updated
+            return updated
+
+    def confirm_bidder(
+        self, contract_id: str, proposer_id: str, bidder_id: str
+    ) -> ContractData:
+        with self._lock:
+            contract = self._contracts.get(contract_id)
+            if contract is None:
+                raise KeyError(f"Contract '{contract_id}' not found")
+            proposer = self._corporations.get(proposer_id)
+            if proposer is None:
+                raise KeyError(f"Corporation '{proposer_id}' not found")
+            ok, reason = can_confirm_bidder(proposer, contract, bidder_id)
+            if not ok:
+                raise ValueError(reason)
+            updated = contract.model_copy(update={
+                "status":     ContractStatus.Active,
+                "acceptorId": bidder_id,
+                "startTick":  self._tick_count,
+                "expiresAtTick": (
+                    self._tick_count + contract.durationTicks
+                    if contract.durationTicks > 0 else 0
+                ),
+            })
+            self._contracts[contract_id] = updated
+            return updated
+
+    def accept_contract(self, contract_id: str, acceptor_id: str) -> ContractData:
+        with self._lock:
+            contract = self._contracts.get(contract_id)
+            if contract is None:
+                raise KeyError(f"Contract '{contract_id}' not found")
+            acceptor = self._corporations.get(acceptor_id)
+            if acceptor is None:
+                raise KeyError(f"Corporation '{acceptor_id}' not found")
+            ok, reason = can_accept_private(acceptor, contract)
+            if not ok:
+                raise ValueError(reason)
+            updated = contract.model_copy(update={
+                "status":     ContractStatus.Active,
+                "acceptorId": acceptor_id,
+                "startTick":  self._tick_count,
+                "expiresAtTick": (
+                    self._tick_count + contract.durationTicks
+                    if contract.durationTicks > 0 else 0
+                ),
+            })
+            self._contracts[contract_id] = updated
+            return updated
+
+    def break_contract(self, contract_id: str, corp_id: str) -> ContractData:
+        with self._lock:
+            contract = self._contracts.get(contract_id)
+            if contract is None:
+                raise KeyError(f"Contract '{contract_id}' not found")
+            corp = self._corporations.get(corp_id)
+            if corp is None:
+                raise KeyError(f"Corporation '{corp_id}' not found")
+            ok, reason = can_break_contract(corp, contract)
+            if not ok:
+                raise ValueError(reason)
+
+            other_id  = (
+                contract.proposerId if corp_id == contract.acceptorId
+                else contract.acceptorId
+            )
+            other = self._corporations.get(other_id)
+            if other is None:
+                raise KeyError(f"Other party '{other_id}' not found")
+
+            new_contract, new_corp, new_other = apply_break(contract, corp, other)
+            self._contracts[contract_id]   = new_contract
+            self._corporations[corp_id]    = new_corp
+            self._corporations[other_id]   = new_other
+            return new_contract
+
+    def get_contract(self, contract_id: str) -> ContractData | None:
+        with self._lock:
+            return self._contracts.get(contract_id)
+
+    def list_contracts(self, corp_id: str | None = None) -> list[ContractData]:
+        with self._lock:
+            if corp_id is None:
+                return list(self._contracts.values())
+            return [
+                c for c in self._contracts.values()
+                if corp_id in (c.proposerId, c.acceptorId, c.targetId)
+                or corp_id in c.candidates
+            ]
+
+    def list_public_contracts(self) -> list[ContractData]:
+        with self._lock:
+            return [
+                c for c in self._contracts.values()
+                if c.visibility == ContractVisibility.Public
+                and c.status == ContractStatus.Proposed
+            ]
+
+    # ── Market (Phase 7.3 + 9.5) ──────────────────────────────────────────
+
+    def get_global_market(self, system_id: str = "sol") -> GlobalMarketState:
+        """Get aggregated market state for a system (Phase 9.5).
+        
+        Args:
+            system_id: System ID (defaults to "sol")
+        
+        Returns:
+            GlobalMarketState with aggregated supply/demand/price across all local markets.
+        """
+        with self._lock:
+            local_markets = list(self._markets.values())
+            data = compute_global_market(local_markets, system_id, self._tick_count)
+            return GlobalMarketState.model_validate(data)
+
+    def _process_contract_tick_locked(self) -> None:
+        """Auto-deliver resources for active contracts; handle expiry of proposed/active."""
+        for contract_id, contract in list(self._contracts.items()):
+            # 1. Expire public contracts whose bidding window has closed
+            if check_bidding_expiry(contract, self._tick_count):
+                self._contracts[contract_id] = apply_expiry(contract)
+                continue
+
+            if contract.status != ContractStatus.Active:
+                continue
+
+            acceptor = self._corporations.get(contract.acceptorId)
+            proposer = self._corporations.get(contract.proposerId)
+            if acceptor is None or proposer is None:
+                continue
+
+            # 2. Auto-deliver
+            new_contract, new_acceptor = process_delivery_tick(contract, acceptor)
+            self._corporations[contract.acceptorId] = new_acceptor
+
+            # 3. Check completion
+            if check_completion(new_contract):
+                new_contract, new_proposer, new_acceptor = apply_completion(
+                    new_contract, proposer, new_acceptor
+                )
+                self._corporations[contract.proposerId] = new_proposer
+                self._corporations[contract.acceptorId] = new_acceptor
+                self._contracts[contract_id] = new_contract
+                continue
+
+            # 4. Check fixed-duration expiry (penalty on acceptor for non-delivery)
+            if new_contract.durationTicks > 0 and new_contract.expiresAtTick > 0:
+                if self._tick_count >= new_contract.expiresAtTick:
+                    expired, new_acceptor, new_proposer = apply_break(
+                        new_contract, new_acceptor, proposer
+                    )
+                    self._corporations[contract.acceptorId] = new_acceptor
+                    self._corporations[contract.proposerId] = new_proposer
+                    self._contracts[contract_id] = expired
+                    continue
+
+            self._contracts[contract_id] = new_contract
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Phase 7.5 — States & Reputation: public API
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def create_state(
+        self,
+        name: str,
+        state_type: StateType,
+        tile_ids: list[str],
+        bureaucracy: float = 0.1,
+        corruption_rate: float = 0.1,
+        tolerance_threshold: float = 0.5,
+        is_ai_controlled: bool = False,
+    ) -> StateData:
+        """Register a new in-game State on the server."""
+        with self._lock:
+            state_id = str(uuid4())
+            state = StateData(
+                id=state_id,
+                name=name,
+                stateType=state_type,
+                tileIds=list(tile_ids),
+                bureaucracy=max(0.0, min(1.0, bureaucracy)),
+                corruptionRate=max(0.0, min(1.0, corruption_rate)),
+                toleranceThreshold=tolerance_threshold,
+                isAiControlled=is_ai_controlled,
+            )
+            self._states[state_id] = state
+            return state
+
+    def get_state(self, state_id: str) -> StateData | None:
+        with self._lock:
+            return self._states.get(state_id)
+
+    def list_states(self) -> list[StateData]:
+        with self._lock:
+            return list(self._states.values())
+
+    def get_reputation(self, source_id: str, target_id: str) -> float:
+        """Return bilateral reputation score from source_id toward target_id."""
+        with self._lock:
+            return self._reputations.get((source_id, target_id), 0.0)
+
+    def list_reputations(self, corp_id: str) -> dict[str, float]:
+        """Return a mapping of target_id → bilateral score for all scores involving corp_id."""
+        with self._lock:
+            result: dict[str, float] = {}
+            for (src, tgt), score in self._reputations.items():
+                if src == corp_id:
+                    result[tgt] = score
+            return result
+
+    def corrupt_nationalization(
+        self,
+        process_id: str,
+        corp_id: str,
+        bribe_amount: float,
+    ) -> NationalizationProcess:
+        """Attempt to cancel a nationalisation via a bribe.
+
+        Raises ValueError if the attempt is not allowed or corporation is not found.
+        Deducts the bribe from corp credits and marks the process cancelled.
+        Emits a CorruptionDetected ReputationEvent (penalty for the bribing corp).
+        """
+        with self._lock:
+            process = self._nationalizations.get(process_id)
+            if process is None:
+                raise ValueError(f"Nationalisation process '{process_id}' not found")
+            corp = self._corporations.get(corp_id)
+            if corp is None:
+                raise ValueError(f"Corporation '{corp_id}' not found")
+
+            ok, reason = can_corrupt_nationalization(corp, process, bribe_amount, self._tick_count)
+            if not ok:
+                raise ValueError(reason)
+
+            new_process, new_corp = apply_bribe(corp, process, bribe_amount)
+            self._nationalizations[process_id] = new_process
+            self._corporations[corp_id] = new_corp
+
+            # Corruption detected — reputation hit
+            event = ReputationEvent(
+                sourceId=process.stateId,
+                targetId=corp_id,
+                deltaGlobal=REPUTATION_DELTAS[ReputationEventReason.CorruptionDetected][0],
+                deltaBilateral=REPUTATION_DELTAS[ReputationEventReason.CorruptionDetected][1],
+                reason=ReputationEventReason.CorruptionDetected,
+                tick=self._tick_count,
+            )
+            self._apply_reputation_event_locked(event)
+            return new_process
+
+    def cancel_nationalization_via_contract(
+        self,
+        process_id: str,
+        contract_id: str,
+    ) -> NationalizationProcess:
+        """Cancel a nationalisation process by honouring a contract with the state.
+
+        The contract must exist, be accepted, and have the State as the proposer.
+        Raises ValueError if preconditions are not met.
+        """
+        with self._lock:
+            process = self._nationalizations.get(process_id)
+            if process is None:
+                raise ValueError(f"Nationalisation process '{process_id}' not found")
+            if process.cancelled:
+                raise ValueError("Nationalisation already cancelled")
+            contract = self._contracts.get(contract_id)
+            if contract is None:
+                raise ValueError(f"Contract '{contract_id}' not found")
+            if contract.proposerId != process.stateId:
+                raise ValueError("Contract proposer must be the State that initiated nationalisation")
+
+            new_process = process.model_copy(update={"cancelled": True})
+            self._nationalizations[process_id] = new_process
+
+            event = ReputationEvent(
+                sourceId=process.stateId,
+                targetId=process.corpId,
+                deltaGlobal=REPUTATION_DELTAS[ReputationEventReason.NationalizationCancelled][0],
+                deltaBilateral=REPUTATION_DELTAS[ReputationEventReason.NationalizationCancelled][1],
+                reason=ReputationEventReason.NationalizationCancelled,
+                tick=self._tick_count,
+            )
+            self._apply_reputation_event_locked(event)
+            return new_process
+
+    def list_nationalizations(self, corp_id: str | None = None) -> list[NationalizationProcess]:
+        """Return all nationalisation processes, optionally filtered by corp."""
+        with self._lock:
+            if corp_id:
+                return [p for p in self._nationalizations.values() if p.corpId == corp_id]
+            return list(self._nationalizations.values())
+
+    def get_scoreboard(self) -> list[ScoreboardEntry]:
+        """Return all corporations sorted by composite score descending."""
+        with self._lock:
+            entries = [build_scoreboard_entry(c) for c in self._corporations.values()]
+            entries.sort(key=lambda e: e.score, reverse=True)
+            return entries
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _apply_reputation_event_locked(self, event: ReputationEvent) -> None:
+        """Apply global and bilateral deltas. Assumes lock already held."""
+        corp = self._corporations.get(event.targetId)
+        if corp is not None:
+            self._corporations[event.targetId] = apply_reputation_event(corp, event)
+        key = (event.sourceId, event.targetId)
+        self._reputations[key] = self._reputations.get(key, 0.0) + event.deltaBilateral
+
+    def _process_reputation_tick_locked(self) -> None:
+        """Evaluate nationalisations each tick. Assumes lock already held."""
+        broken_counts: dict[str, int] = {}
+        for contract in self._contracts.values():
+            from .models import ContractStatus as _CS
+            if contract.status == _CS.Broken and contract.acceptorId:
+                broken_counts[contract.acceptorId] = broken_counts.get(contract.acceptorId, 0) + 1
+
+        for state in self._states.values():
+            for corp_id, corp in self._corporations.items():
+                # Skip corps with no tiles in this state
+                corp_tile_set = {t.tileId for t in corp.claimedTiles}
+                if not any(tid in corp_tile_set for tid in state.tileIds):
+                    continue
+
+                score = compute_tolerance_score(corp, state, broken_counts.get(corp_id, 0))
+                if score <= state.toleranceThreshold:
+                    continue
+
+                # Check if an active process already exists for this (state, corp)
+                already_active = any(
+                    p for p in self._nationalizations.values()
+                    if p.stateId == state.id and p.corpId == corp_id and not p.cancelled
+                    and self._tick_count < p.completionTick
+                )
+                if already_active:
+                    continue
+
+                # Trigger one nationalisation per tile controlled in this state
+                for tile in corp.claimedTiles:
+                    if tile.tileId not in state.tileIds:
+                        continue
+                    delay = compute_nationalization_delay(state)
+                    proc_id = str(uuid4())
+                    process = NationalizationProcess(
+                        id=proc_id,
+                        stateId=state.id,
+                        corpId=corp_id,
+                        tileId=tile.tileId,
+                        startTick=self._tick_count,
+                        completionTick=self._tick_count + delay,
+                    )
+                    self._nationalizations[proc_id] = process
+                    # Emit reputation event
+                    event = ReputationEvent(
+                        sourceId=state.id,
+                        targetId=corp_id,
+                        deltaGlobal=REPUTATION_DELTAS[ReputationEventReason.NationalizationTriggered][0],
+                        deltaBilateral=REPUTATION_DELTAS[ReputationEventReason.NationalizationTriggered][1],
+                        reason=ReputationEventReason.NationalizationTriggered,
+                        tick=self._tick_count,
+                    )
+                    self._apply_reputation_event_locked(event)
+
+        # Process completions
+        for proc_id, process in list(self._nationalizations.items()):
+            if process.cancelled or self._tick_count < process.completionTick:
+                continue
+            # Completed — remove tile from corp
+            corp = self._corporations.get(process.corpId)
+            if corp is None:
+                continue
+            remaining_tiles = [t for t in corp.claimedTiles if t.tileId != process.tileId]
+            if len(remaining_tiles) == len(corp.claimedTiles):
+                continue  # tile already gone
+            self._corporations[process.corpId] = corp.model_copy(update={"claimedTiles": remaining_tiles})
+            if process.tileId in self._tile_ownership:
+                del self._tile_ownership[process.tileId]
+            # Mark as cancelled=True to signal completion (so we don't reprocess)
+            self._nationalizations[proc_id] = process.model_copy(update={"cancelled": True})
+
+    # ── Gameplay Events (Phase 8) ─────────────────────────────────────────────
+
+    _EVENT_TICK_PROBABILITY: float = 0.05  # 5 % chance of event per tick
+
+    def _process_event_tick_locked(self) -> None:
+        """Maybe draw and record a gameplay event this tick. Assumes lock held."""
+        if self._event_rng.random() > self._EVENT_TICK_PROBABILITY:
+            return
+        # Pick one active corporation as affected entity, or leave blank
+        corp_id = ""
+        if self._corporations:
+            corp_id = self._event_rng.choice(list(self._corporations.keys()))
+        event = draw_event(self._tick_count, self._event_rng, corp_id)
+        # Apply economic effects immediately to the corporation
+        if corp_id and corp_id in self._corporations:
+            self._corporations[corp_id] = apply_event_to_corporation(
+                event, self._corporations[corp_id]
+            )
+        self._game_events.append(event)
+        # Keep at most 200 events in memory
+        if len(self._game_events) > 200:
+            self._game_events = self._game_events[-200:]
+
+    def list_game_events(self, limit: int = 20) -> list[EventData]:
+        """Return the *limit* most recent gameplay events (latest first)."""
+        with self._lock:
+            return list(reversed(self._game_events[-limit:]))
+
+    # ── Agent LLM (Phase 8.5) ─────────────────────────────────────────────────
+
+    def get_agent_memory(self, state_id: str) -> AgentMemory | None:
+        """Return the current in-memory AgentMemory for a state, or None."""
+        with self._lock:
+            return self._agent_memories.get(state_id)
+
+    def get_agent_context(self, state_id: str) -> dict | None:
+        """
+        Return a snapshot dict usable as LLM context for the given state.
+
+        Returns None if the state does not exist.
+        """
+        with self._lock:
+            state = self._states.get(state_id)
+            if state is None:
+                return None
+            scoreboard = [
+                build_scoreboard_entry(c).model_dump()
+                for c in self._corporations.values()
+            ]
+            recent_events = [
+                {"name": ev.name, "description": ev.description, "tick": ev.tick}
+                for ev in reversed(self._game_events[-5:])
+            ]
+            reputations = {
+                str(k): v
+                for k, v in self._reputations.items()
+                if state_id in k
+            }
+            memory = self._agent_memories.get(state_id)
+            return {
+                "stateId": state_id,
+                "tick": self._tick_count,
+                "state": state.model_dump(),
+                "scoreboard": scoreboard,
+                "recentEvents": recent_events,
+                "reputations": reputations,
+                "memory": memory.model_dump() if memory else None,
+            }
+
+    def run_agent_for_state(self, state_id: str) -> AgentAction:
+        """
+        Synchronously run one LLM agent cycle for the given state.
+
+        Applies the resulting action and updates agent memory.
+        Raises ValueError if the state does not exist.
+        """
+        with self._lock:
+            state = self._states.get(state_id)
+            if state is None:
+                raise ValueError(f"State {state_id!r} not found")
+            tick = self._tick_count
+            scoreboard = [
+                build_scoreboard_entry(c).model_dump()
+                for c in self._corporations.values()
+            ]
+            recent_events = [
+                {"name": ev.name, "description": ev.description, "tick": ev.tick}
+                for ev in reversed(self._game_events[-5:])
+            ]
+            reputations = {
+                str(k): v
+                for k, v in self._reputations.items()
+                if state_id in k
+            }
+            memory = self._agent_memories.get(state_id)
+
+        # LLM call happens OUTSIDE the lock to avoid blocking the tick loop
+        action = _run_agent_llm(
+            state=state,
+            tick=tick,
+            memory=memory,
+            scoreboard=scoreboard,
+            recent_events=recent_events,
+            reputations=reputations,
+        )
+
+        with self._lock:
+            self._apply_agent_action_locked(action)
+            self._update_agent_memory_locked(state_id, action, tick)
+
+        return action
+
+    def _run_agent_for_state_bg(self, state_id: str) -> None:
+        """Background thread wrapper — swallows exceptions to avoid daemon crashes."""
+        try:
+            self.run_agent_for_state(state_id)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Agent background run failed for %s: %s", state_id, exc)
+
+    def _apply_agent_action_locked(self, action: AgentAction) -> None:
+        """Dispatch an agent action. Must be called under self._lock."""
+        state = self._states.get(action.entityId)
+        if state is None:
+            return
+        if action.actionType == AgentActionType.SetTolerance:
+            new_threshold = float(action.params.get("newThreshold", state.toleranceThreshold))
+            state.toleranceThreshold = max(0.0, min(1.0, new_threshold))
+            self._states[action.entityId] = state
+        elif action.actionType == AgentActionType.TriggerNationalization:
+            # Delegate to existing nationalization logic via a synthetic call
+            target_corp_id = action.params.get("targetCorpId", "")
+            tile_id = action.params.get("tileId", "")
+            if target_corp_id and tile_id:
+                delay_ticks = compute_nationalization_delay(state)
+                proc = NationalizationProcess(
+                    id=str(uuid4()),
+                    stateId=action.entityId,
+                    corpId=target_corp_id,
+                    tileId=tile_id,
+                    startTick=self._tick_count,
+                    completionTick=self._tick_count + delay_ticks,
+                    cancelled=False,
+                )
+                self._nationalizations[proc.id] = proc
+        # ProposeContract and NoOp are deferred / no-op at MVP stage
+
+    def _update_agent_memory_locked(self, state_id: str, action: AgentAction, tick: int) -> None:
+        """Update rolling AgentMemory after an action. Must be called under self._lock."""
+        mem = self._agent_memories.get(state_id) or AgentMemory(entityId=state_id)
+        decision_summary = f"[tick {tick}] {action.actionType.name}: {json.dumps(action.params)}"
+        mem.recentDecisions = (mem.recentDecisions + [decision_summary])[-5:]
+        mem.lastTickActed = tick
+        self._agent_memories[state_id] = mem
+
     def health(self) -> dict:
         with self._lock:
             return {
@@ -306,6 +1059,13 @@ class InMemorySimulationRuntime:
             self._corporations = {}         # wipe corporation registry (Phase 7.1)
             self._tile_ownership = {}       # wipe tile ownership (Phase 7.1)
             self._buildings = {}            # wipe building registry (Phase 7.2)
+            self._markets = {}              # wipe market registry (Phase 7.3)
+            self._contracts = {}            # wipe contract registry (Phase 7.4)
+            self._states = {}               # wipe state registry (Phase 7.5)
+            self._reputations = {}          # wipe reputation table (Phase 7.5)
+            self._nationalizations = {}     # wipe nationalisation registry (Phase 7.5)
+            self._game_events = []          # wipe event log (Phase 8)
+            self._agent_memories = {}       # wipe agent memories (Phase 8.5)
 
             # ── Bootstrap Sol ───────────────────────────────────────
             earth_name = "Earth"
@@ -939,6 +1699,25 @@ class InMemorySimulationRuntime:
             )
         # Production des bâtiments (Phase 7.2)
         self._process_building_production()
+        # Marché local (Phase 7.3)
+        self._process_market_tick_locked()
+        # Contrats (Phase 7.4)
+        self._process_contract_tick_locked()
+        # États & Réputation (Phase 7.5)
+        self._process_reputation_tick_locked()
+        # Événements gameplay (Phase 8) — one event every ~20 ticks on average
+        self._process_event_tick_locked()
+        # Agent LLM (Phase 8.5) — fire every AGENT_TICK_INTERVAL ticks, non-blocking
+        agent_interval = int(__import__("os").environ.get("AGENT_TICK_INTERVAL", "10"))
+        if self._tick_count % agent_interval == 0:
+            for state in list(self._states.values()):
+                if state.isAiControlled:
+                    threading.Thread(
+                        target=self._run_agent_for_state_bg,
+                        args=(state.id,),
+                        daemon=True,
+                        name=f"agent-{state.id[:8]}",
+                    ).start()
 
         # Persist every 10 ticks to avoid per-tick overhead
         if self._tick_count % 10 == 0:

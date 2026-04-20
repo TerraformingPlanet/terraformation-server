@@ -81,6 +81,9 @@ class SimulationEventType(IntEnum):
     ThermalEquilibrium = 9      # Temperature stable ±2K over 10 ticks
     HabitabilityThreshold = 10  # habitabilityScore crosses 0.25 / 0.50 / 0.75 / 1.0
     AtmosphereFormed = 11       # atmosphericPressure > 10 kPa for the first time
+    ExpeditionLost = 12         # Phase 9.1 — expedition failed
+    ExpeditionDelayed = 13      # Phase 9.1 — expedition delayed
+    TradeRouteEstablished = 14  # Phase 9.1 — new trade route confirmed
 
 
 class SimulationVector2State(BaseModel):
@@ -267,9 +270,23 @@ class WorldState(BaseModel):
 
 # ── Corporation layer ──────────────────────────────────────────────────────────
 
+# ── Market: social classes ────────────────────────────────────────────────────
+
+class SocialClass(IntEnum):
+    Poor   = 0
+    Middle = 1
+    Rich   = 2
+
+
+class PopulationTier(BaseModel):
+    socialClass: SocialClass = SocialClass.Poor
+    count: int = 0
+
+
 class ClaimedTile(BaseModel):
     bodyId: str = ""
     tileId: str = ""
+    population: list[PopulationTier] = Field(default_factory=list)
 
 
 # ── Buildings ─────────────────────────────────────────────────────────────────
@@ -279,6 +296,9 @@ class BuildingType(IntEnum):
     Farm        = 1
     EnergyPlant = 2
     Research    = 3
+    Road        = 4
+    SeaPort     = 5
+    Spaceport   = 6
 
 
 class ResourceType(IntEnum):
@@ -287,6 +307,10 @@ class ResourceType(IntEnum):
     Energy         = 2
     ResearchPoints = 3
     Waste          = 4
+    Iron           = 5      # Phase 9.5
+    Oxygen         = 6      # Phase 9.5
+    Water          = 7      # Phase 9.5
+    Tech           = 8      # Phase 9.5
 
 
 # Production par tick pour chaque type de bâtiment (ResourceType → delta par tick)
@@ -295,6 +319,9 @@ BUILDING_CONFIGS: dict[BuildingType, dict[ResourceType, float]] = {
     BuildingType.Farm:        {ResourceType.Food: 3.0},
     BuildingType.EnergyPlant: {ResourceType.Energy: 5.0, ResourceType.Waste: 1.0},
     BuildingType.Research:    {ResourceType.Energy: -1.0, ResourceType.ResearchPoints: 1.0},
+    BuildingType.Road:        {},   # Phase 9.1 — infrastructure, no production
+    BuildingType.SeaPort:     {},   # Phase 9.1
+    BuildingType.Spaceport:   {},   # Phase 9.1
 }
 
 
@@ -317,6 +344,131 @@ class CorporationData(BaseModel):
     isAI: bool = False
     buildings: list[BuildingData] = Field(default_factory=list)
     resources: dict[str, float] = Field(default_factory=dict)
+    globalReputation: float = 0.0    # Phase 7.5 — score public visible par tous
+
+
+# ── Market layer (Phase 7.3) ──────────────────────────────────────────────────
+
+class ResourceListing(BaseModel):
+    resourceType: ResourceType = ResourceType.Food
+    price: float = 1.0
+    supply: float = 0.0
+    demand: float = 0.0
+    priceVelocity: float = 0.0                                      # Phase 9.4 — fractional price change per tick
+    priceHistory: list[float] = Field(default_factory=list)         # Phase 9.4 — last 10 prices
+
+
+class LocalMarketState(BaseModel):
+    territoryId: str = ""                                           # "{ownerEntityId}::{min_tile_id}"
+    ownerEntityId: str = ""                                         # corp_id or state_id
+    tileIds: list[str] = Field(default_factory=list)                # H3 tile IDs in this territory
+    listings: list[ResourceListing] = Field(default_factory=list)
+    taxRate: float = 0.0                                            # placeholder — État branché Phase 7.5
+    connectivity: float = 1.0                                       # [0,1] — 1.0 normal, <1 partiellement isolé
+    tickComputed: int = 0
+
+
+class GlobalMarketState(BaseModel):
+    """Phase 9.5 — Aggregated market state across all territories in a system."""
+    systemId: str = ""                                              # e.g. "sol"
+    listings: list[ResourceListing] = Field(default_factory=list)   # Aggregated across all local markets
+    tick: int = 0                                                    # tick when computed
+    marketCount: int = 0                                             # number of local markets aggregated
+
+
+# ── Contract layer (Phase 7.4) ────────────────────────────────────────────────
+
+class ContractStatus(IntEnum):
+    Proposed  = 0
+    Active    = 1
+    Completed = 2
+    Broken    = 3
+    Expired   = 4
+
+
+class ContractVisibility(IntEnum):
+    Public  = 0
+    Private = 1
+
+
+class ContractData(BaseModel):
+    id: str = ""
+    status: ContractStatus = ContractStatus.Proposed
+    visibility: ContractVisibility = ContractVisibility.Private
+    # Parties
+    proposerId: str = ""
+    targetId: str = ""          # Private: corp this was sent to
+    acceptorId: str = ""        # filled when accepted / bidder confirmed
+    candidates: list[str] = Field(default_factory=list)  # corp IDs who bid (Public)
+    # Delivery
+    resourceType: ResourceType = ResourceType.Food
+    resourceAmount: float = 0.0
+    deliveredAmount: float = 0.0
+    # Finance
+    rewardCredits: float = 0.0
+    penaltyCredits: float = 0.0
+    knowledgeBonus: float = 0.0  # ResearchPoints credited to acceptor on completion
+    # Timing
+    durationTicks: int = 0      # 0 = open-ended
+    startTick: int = 0
+    expiresAtTick: int = 0
+    # Bidding window (Public)
+    biddingWindowTicks: int = 5
+    biddingCloseTick: int = 0
+    tickCreated: int = 0
+
+
+# ── State & Reputation layer (Phase 7.5) ────────────────────────────────────
+
+class StateType(IntEnum):
+    Capitalist  = 0
+    Nationalist = 1
+
+
+class StateData(BaseModel):
+    id: str = ""
+    name: str = ""
+    stateType: StateType = StateType.Capitalist
+    tileIds: list[str] = Field(default_factory=list)
+    bureaucracy: float = 0.1       # 0..1 — délai multiplicateur sur décisions
+    corruptionRate: float = 0.1    # 0..1 — réduit le délai de nationalisation ET modifie l'efficacité de l'État
+    toleranceThreshold: float = 0.5  # seuil du score de tolérance au-delà duquel la nationalisation est déclenchée
+    isAiControlled: bool = False   # True → un agent LLM pilote cet état (Phase 8.5)
+
+class ReputationEventReason(IntEnum):
+    ContractCompleted         = 0
+    ContractBroken            = 1
+    NationalizationTriggered  = 2
+    NationalizationCancelled  = 3
+    CorruptionDetected        = 4
+
+
+class ReputationEvent(BaseModel):
+    sourceId: str = ""        # entité qui cause l'événement (corp, État)
+    targetId: str = ""        # entité dont la réputation évolue
+    deltaGlobal: float = 0.0
+    deltaBilateral: float = 0.0
+    reason: ReputationEventReason = ReputationEventReason.ContractCompleted
+    tick: int = 0
+
+
+class NationalizationProcess(BaseModel):
+    id: str = ""
+    stateId: str = ""
+    corpId: str = ""
+    tileId: str = ""
+    startTick: int = 0
+    completionTick: int = 0
+    cancelled: bool = False
+
+
+class ScoreboardEntry(BaseModel):
+    corpId: str = ""
+    corpName: str = ""
+    credits: float = 0.0
+    tileCount: int = 0
+    globalReputation: float = 0.0
+    score: float = 0.0
 
 
 class ClientSnapshot(BaseModel):
@@ -658,3 +810,117 @@ class SpaceTravel(BaseModel):
     departedAtTick: int = 0
     arrivalTick: int = 0
     status: TravelStatus = TravelStatus.InTransit
+
+
+# ── Trade routes & expeditions (Phase 9.1) ────────────────────────────────────
+
+class TradeRouteType(IntEnum):
+    Land     = 0
+    Maritime = 1
+    Orbital  = 2
+
+
+class TradeRouteActivityStatus(IntEnum):
+    Active    = 0
+    Suspended = 1
+
+
+class ExpeditionStatus(IntEnum):
+    InTransit = 0
+    Success   = 1
+    Failed    = 2
+
+
+class TradeRoute(BaseModel):
+    id: str = ""
+    routeType: TradeRouteType = TradeRouteType.Land
+    fromTileId: str = ""
+    toTileId: str = ""
+    bodyId: str = ""
+    pathTileIds: list[str] = Field(default_factory=list)
+    ownerCorpId: str = ""
+    knownByEntityIds: list[str] = Field(default_factory=list)
+    status: TradeRouteActivityStatus = TradeRouteActivityStatus.Active
+    baseEfficiency: float = 1.0
+    currentEfficiency: float = 1.0
+    portMalusFrom: float = 0.0
+    portMalusTo: float = 0.0
+    tickCreated: int = 0
+    knowledgeTransferTicks: int = 0
+
+
+class ExpeditionUnit(BaseModel):
+    id: str = ""
+    ownerCorpId: str = ""
+    fromPortTileId: str = ""
+    toPortTileId: str = ""
+    bodyId: str = ""
+    routeType: TradeRouteType = TradeRouteType.Land
+    ticksRemaining: int = 0
+    totalTicks: int = 0
+    pathTileIds: list[str] = Field(default_factory=list)
+    status: ExpeditionStatus = ExpeditionStatus.InTransit
+    isPhantom: bool = False
+
+
+# ── Gameplay Events (Phase 8) ─────────────────────────────────────────────────
+
+# ── Agent LLM (Phase 8.5) ────────────────────────────────────────────────────────
+
+class AgentActionType(IntEnum):
+    """Actions an LLM agent can dispatch for a State entity."""
+    NoOp                  = 0
+    ProposeContract       = 1
+    SetTolerance          = 2
+    TriggerNationalization = 3
+
+
+class AgentAction(BaseModel):
+    """Single decision returned by the LLM agent for an entity."""
+    entityId:   str = ""
+    actionType: AgentActionType = AgentActionType.NoOp
+    params:     dict = Field(default_factory=dict)  # action-specific payload
+    reasoning:  str = ""                           # LLM explanation (debug)
+
+
+class AgentMemory(BaseModel):
+    """Per-entity rolling memory kept in-process (not persisted in MVP)."""
+    entityId:          str = ""
+    entityType:        str = "state"                    # "state" | "corporation"
+    recentDecisions:   list[str] = Field(default_factory=list)  # max 5 — chronological
+    relationshipNotes: dict = Field(default_factory=dict)       # other_entity_id → note
+    lastTickActed:     int = 0
+
+
+# ── Gameplay Events (Phase 8) ─────────────────────────────────────────────────────
+
+class EventType(IntEnum):
+    """Narrative gameplay events — distinct from SimulationEventType (engine events)."""
+    RencontreAlienne    = 0
+    TempeteSolaire      = 1
+    DecouverteMiniere   = 2
+    CriseEconomique     = 3
+    SabotageCorpo       = 4
+    Rebellion           = 5
+    MigrationPopulation = 6
+
+
+class EventEffect(BaseModel):
+    """Quantified side-effect attached to an EventData."""
+    resourceType: str = ""          # ResourceType.name or "" when N/A
+    resourceDelta: float = 0.0      # positive = gain, negative = loss
+    creditsDelta: float = 0.0
+    reputationDelta: float = 0.0    # applied to ownerCorpId reputation
+    populationDelta: float = 0.0
+
+
+class EventData(BaseModel):
+    id: str = ""
+    eventType: EventType = EventType.RencontreAlienne
+    name: str = ""
+    description: str = ""
+    tick: int = 0
+    affectedEntityId: str = ""      # corp_id, state_id, or tile_id
+    affectedEntityType: str = ""    # "corporation" | "state" | "tile" | ""
+    effect: EventEffect = Field(default_factory=EventEffect)
+    isResolved: bool = False
