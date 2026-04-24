@@ -32,11 +32,13 @@ spec2.loader.exec_module(events_logic)
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 def test_event_type_enum():
-    """EventType has 7 members, IntEnum values 0-6."""
-    assert len(list(models.EventType)) == 7
+    """EventType has 9 members, IntEnum values 0-8."""
+    assert len(list(models.EventType)) == 9
     assert models.EventType.RencontreAlienne == 0
     assert models.EventType.MigrationPopulation == 6
-    print("✓ EventType enum OK (7 members, 0-6)")
+    assert models.EventType.DecouverteMegastructure == 7
+    assert models.EventType.EmpireGalactique == 8
+    print("✓ EventType enum OK (9 members, 0-8)")
 
 
 def test_event_effect_defaults():

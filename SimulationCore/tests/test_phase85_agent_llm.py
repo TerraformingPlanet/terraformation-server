@@ -92,14 +92,14 @@ def test_call_llm_json_returns_parseable_dict(fast_model):
 
 
 @pytest.mark.llm
-def test_call_llm_tools_returns_valid_tool_name(fast_model):
+def test_call_llm_tools_returns_valid_tool_name(deep_model):
     """call_llm_tools returns a tool name that is in the known action map."""
     state = _make_stable_state()
     messages = _minimal_messages(state)
     result = call_llm_tools(messages, AGENT_TOOLS_SCHEMA,
-                            llm_url=fast_model["base_url"],
-                            model=fast_model["model"],
-                            api_key=fast_model["api_key"])
+                            llm_url=deep_model["base_url"],
+                            model=deep_model["model"],
+                            api_key=deep_model["api_key"])
     assert "name" in result, f"Expected 'name' key in tool call result: {result}"
     assert result["name"] in _ACTION_TYPE_MAP, \
         f"Unknown tool name: {result['name']!r}. Expected one of {list(_ACTION_TYPE_MAP)}"

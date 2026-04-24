@@ -1,0 +1,29 @@
+{
+  "_comment": "Modèles exclus automatiquement des benchmarks futurs. Géré par conftest.py.",
+  "excluded": [
+    {
+      "model": "Gemma4-A4B-Think",
+      "reason": "Timeout systématique >90s sur tous les scénarios (thinking mode trop lent pour agents temps réel)",
+      "excluded_on": "2026-04-22",
+      "score": "0/9"
+    },
+    {
+      "model": "Llama-xLAM-2-8B-fc-r-Q4_K_M",
+      "reason": "Incompatible avec notre intégration llama-swap standard : tools API retourne du texte brut (KeyError: tool_calls), mode JSON retourne corps vide. Nécessite un chat template FC propriétaire non configuré.",
+      "excluded_on": "2026-04-23",
+      "score": "2/6"
+    },
+    {
+      "model": "Llama-xLAM-2-8B-fc-r-Q5_K_M",
+      "reason": "Incompatible avec notre intégration llama-swap standard : tools API retourne du texte brut (KeyError: tool_calls), mode JSON retourne corps vide. Nécessite un chat template FC propriétaire non configuré.",
+      "excluded_on": "2026-04-23",
+      "score": "2/6"
+    },
+    {
+      "model": "Llama-xLAM-2-8B-fc-r-Q8_0",
+      "reason": "Incompatible avec notre intégration llama-swap standard : tools API retourne du texte brut (KeyError: tool_calls), mode JSON retourne corps vide. Nécessite un chat template FC propriétaire non configuré.",
+      "excluded_on": "2026-04-23",
+      "score": "2/6"
+    }
+  ]
+}

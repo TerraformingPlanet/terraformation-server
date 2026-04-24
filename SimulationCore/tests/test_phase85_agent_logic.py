@@ -26,9 +26,12 @@ def _load(name: str, rel: str):
     return mod
 
 
-_models = _load("models", "models.py")
+_models    = _load("models", "models.py")
+# logic/corp_fsm.py is imported by agent.py — pre-register it to avoid
+# triggering terraformation_sim/__init__.py → generation.py → noise
+_corp_fsm  = _load("logic.corp_fsm", "logic/corp_fsm.py")
 # logic/agent.py imports from ..models — the sys.modules entry above satisfies it
-_agent  = _load("logic.agent", "logic/agent.py")
+_agent     = _load("logic.agent", "logic/agent.py")
 
 AgentAction     = _models.AgentAction
 AgentActionType = _models.AgentActionType

@@ -51,7 +51,6 @@ def test_expedition_unit_defaults():
     assert exp.ownerCorpId == "corp-a"
     assert exp.status == ExpeditionStatus.InTransit
     assert exp.isPhantom == False
-    return True
 
 
 def test_expedition_unit_roundtrip():
@@ -74,7 +73,6 @@ def test_expedition_unit_roundtrip():
     
     assert exp1 == exp2
     assert exp2.pathTileIds == ["tile-a", "tile-c", "tile-b"]
-    return True
 
 
 def test_trade_route_defaults():
@@ -90,7 +88,6 @@ def test_trade_route_defaults():
     assert route.status == TradeRouteActivityStatus.Active
     assert route.baseEfficiency == 1.0
     assert route.currentEfficiency == 1.0
-    return True
 
 
 def test_trade_route_roundtrip():
@@ -113,7 +110,6 @@ def test_trade_route_roundtrip():
     
     assert route1 == route2
     assert route2.knownByEntityIds == ["corp-a", "corp-b"]
-    return True
 
 
 def test_expedition_status_enum():
@@ -121,14 +117,12 @@ def test_expedition_status_enum():
     assert ExpeditionStatus.InTransit.value == 0
     assert ExpeditionStatus.Success.value == 1
     assert ExpeditionStatus.Failed.value == 2
-    return True
 
 
 def test_trade_route_activity_status_enum():
     """Test: TradeRouteActivityStatus enum values."""
     assert TradeRouteActivityStatus.Active.value == 0
     assert TradeRouteActivityStatus.Suspended.value == 1
-    return True
 
 
 def test_trade_route_type_enum():
@@ -136,7 +130,6 @@ def test_trade_route_type_enum():
     assert TradeRouteType.Land.value == 0
     assert TradeRouteType.Maritime.value == 1
     assert TradeRouteType.Orbital.value == 2
-    return True
 
 
 def test_expedition_orbital_phantom():
@@ -159,7 +152,6 @@ def test_expedition_orbital_phantom():
     exp2 = ExpeditionUnit.model_validate_json(json_str)
     
     assert exp2.isPhantom == True
-    return True
 
 
 # ── Main runner ────────────────────────────────────────────────────────────────
@@ -181,13 +173,9 @@ if __name__ == "__main__":
     
     for name, test_fn in tests:
         try:
-            result = test_fn()
-            if result:
-                print(f"  ✓ {name}")
-                passed += 1
-            else:
-                print(f"  ✗ {name}")
-                failed += 1
+            test_fn()
+            print(f"  ✓ {name}")
+            passed += 1
         except Exception as e:
             print(f"  ✗ {name}: {e}")
             failed += 1
