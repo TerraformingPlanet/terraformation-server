@@ -14,7 +14,7 @@ if (-not $SkipBuild) {
     Write-Host 'Rebuilding dedicated server container...'
     Push-Location $repoRoot
     try {
-        docker compose up -d --build terraformation-dedicated-server
+        docker compose up -d --build --wait terraformation-dedicated-server
     }
     finally {
         Pop-Location

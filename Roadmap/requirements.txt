@@ -1,0 +1,8 @@
+fastmcp>=2.0.0
+fastapi>=0.111.0
+uvicorn>=0.29.0
+pydantic>=2.0.0
+pytest>=8.0.0
+# SimulationCore test dependencies (needed for pytest runs in container)
+h3>=4.1
+noise>=1.2.2

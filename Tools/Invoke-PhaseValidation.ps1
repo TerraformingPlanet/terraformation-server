@@ -13,9 +13,10 @@ param(
     [string]$PythonExe = ".\.venv\Scripts\python.exe"
 )
 
-$Root       = $PSScriptRoot | Split-Path -Parent
-$TestDir    = Join-Path $Root "SimulationCore\tests"
-$ModelsPath = Join-Path $Root "SimulationCore\terraformation_sim\models.py"
+$Root            = $PSScriptRoot | Split-Path -Parent
+$TestDir         = Join-Path $Root "SimulationCore\tests"
+$ModelsPath      = Join-Path $Root "SimulationCore\terraformation_sim\models.py"
+$PersistencePath = Join-Path $Root "SimulationCore\terraformation_sim\persistence.py"
 
 $totalPass   = 0
 $totalFail   = 0
@@ -50,17 +51,20 @@ function Invoke-Python {
     [PSCustomObject]@{ ExitCode = $proc.ExitCode; Output = ($stdout + $stderr).Split("`n") }
 }
 
-# -- 1. Syntaxe models.py -------------------------------------------------------
-Write-Host "[1/3] Syntax check -- models.py" -ForegroundColor Yellow
-$r = Invoke-Python "-m", "py_compile", $ModelsPath
-if ($r.ExitCode -eq 0) {
-    Write-Host "  OK  models.py syntaxe OK" -ForegroundColor Green
-    $totalPass++
-} else {
-    Write-Host "  ERR models.py -- ERREUR SYNTAXE :" -ForegroundColor Red
-    $r.Output | Select-Object -First 5 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
-    $totalFail++
-    $failedItems += "models.py (syntax)"
+# -- 1. Syntaxe models.py + persistence.py -------------------------------------
+Write-Host "[1/3] Syntax check -- models.py + persistence.py" -ForegroundColor Yellow
+foreach ($pyFile in @($ModelsPath, $PersistencePath)) {
+    $label = Split-Path $pyFile -Leaf
+    $r = Invoke-Python "-m", "py_compile", $pyFile
+    if ($r.ExitCode -eq 0) {
+        Write-Host "  OK  $label syntaxe OK" -ForegroundColor Green
+        $totalPass++
+    } else {
+        Write-Host "  ERR $label -- ERREUR SYNTAXE :" -ForegroundColor Red
+        $r.Output | Select-Object -First 5 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+        $totalFail++
+        $failedItems += "$label (syntax)"
+    }
 }
 
 # -- 2. Tests Python ------------------------------------------------------------

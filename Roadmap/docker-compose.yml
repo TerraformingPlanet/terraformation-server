@@ -1,0 +1,33 @@
+services:
+
+  # -------------------------------------------------------------------------
+  # Roadmap Service — FastAPI + FastMCP + SQLite
+  # Port 8001  |  MCP at http://localhost:8001/mcp
+  # -------------------------------------------------------------------------
+  terraformation-roadmap:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: terraformation-roadmap
+    ports:
+      - "8001:8001"
+    environment:
+      PORT: "8001"
+      DB_PATH: /data/roadmap.db
+      WORKSPACE_PATH: /workspace
+    volumes:
+      # Persistent SQLite state
+      - roadmap_db:/data
+      # Workspace mounted read-only for pytest execution
+      - ..:/workspace:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.create_connection(('localhost', 8001), 2.0); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  roadmap_db:
+    driver: local
