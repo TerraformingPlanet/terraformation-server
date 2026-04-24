@@ -540,6 +540,7 @@ Objectif : permettre à l'agent AI de lire, diagnostiquer et valider les comport
 | Tool MCP | Endpoint Unity | Usage |
 |---|---|---|
 | `get_view_state` | `/debug/state` | état courant de la vue |
+| `navigate_view` | `/debug/navigate` | navigation vers une vue (`galaxy`, `solar_system`, `toggle_planet_subview`) |
 | `get_projection_summary` | `/debug/projection` | résumé projection planétaire |
 | `get_local_summary` | `/debug/local` | résumé région locale + hydrologie |
 | `get_console_errors` | `/debug/console` | logs Unity filtrés par sévérité |
@@ -1206,4 +1207,44 @@ Trois tools pour piloter, inspecter et déclencher l'agent LLM qui contrôle les
 - **Paramètres** : `state_id: str`  
 - **Retour** : `AgentMemory` (entityId, entityType, recentDecisions[], relationshipNotes{}, lastTickActed)
 - Retourne une mémoire vide si l'agent n'a pas encore agi.
+- Pas de Play Mode requis.
+
+---
+
+## Phase 9.2 — Routes commerciales & Expéditions
+
+**`create_trade_route`**
+- **Famille** : simulation-server
+- **Endpoint** : `POST /game/trade-routes`
+- **Paramètres** : `corp_id: str`, `body_id: str`, `from_tile_id: str`, `to_tile_id: str`, `route_type: int` (0=Land, 1=Maritime, 2=Orbital)
+- **Retour** : `TradeRoute` (id, routeType, fromTileId, toTileId, bodyId, pathTileIds, ownerCorpId, tickCreated, status, portMalusFrom, portMalusTo, currentEfficiency)
+- Valide que les deux tuiles appartiennent à la corpo. Calcule le chemin H3 via `compute_expedition_path`.
+- Pas de Play Mode requis.
+
+**`launch_expedition`**
+- **Famille** : simulation-server
+- **Endpoint** : `POST /game/expeditions`
+- **Paramètres** : `corp_id: str`, `route_id: str`, `cargo_json: str` (JSON string, ex: `'{"Food": 5.0}'`, défaut `"{}"`)
+- **Retour** : `ExpeditionUnit` (id, ownerCorpId, fromPortTileId, toPortTileId, bodyId, routeType, ticksRemaining, totalTicks, status, isPhantom, cargo)
+- Crée une expédition InTransit. À l'arrivée (tick loop), `cargo` est transféré aux stocks de la corpo owning `toPortTileId`.
+- `cargo_json` est parsé côté MCP via `json.loads()` avant envoi.
+- Pas de Play Mode requis.
+
+**`list_expeditions`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/expeditions?corp_id=`
+- **Paramètres** : `corp_id: str` (optionnel, filtre par corpo)
+- **Retour** : `{"expeditions": list[ExpeditionUnit]}`
+- Pas de Play Mode requis.
+
+---
+
+## Phase 11.5 — Biodiversité par espèce
+
+**`get_tile_ecology`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /bodies/{body_id}/tiles/{tile_id}/ecology`
+- **Paramètres** : `body_id: str`, `tile_id: str` (H3 index)
+- **Retour** : `{"species": list[SpeciesData]}` — speciesId, density, minTemp, maxTemp, minO2, maxO2, growthRate, minVegetation
+- Retourne la liste des espèces présentes sur la tuile avec leur densité de population.
 - Pas de Play Mode requis.

@@ -8,7 +8,7 @@
 |---|---|---|
 | Moteur | Unity 6 LTS (3D URP) | Stable, bien documenté, large communauté |
 | Langage | C# | Natif Unity |
-| Réseau | Mirror Networking | Open source, mature, serveur autoritaire, supporte TCP/UDP |
+| Réseau | WebSocket FastAPI natif + NativeWebSocket (Unity) | ~~Mirror Networking~~ (remplacé — [2026-04-21]) ; WebSocket plus simple, LLM/agent compatible, même bus que les endpoints REST |
 | Persistance (serveur) | PostgreSQL 16 + SQLAlchemy Core 2.x | Write-through depuis `InMemorySimulationRuntime`, restauration au démarrage |
 | Caméra | CameraController (custom) | Pan/zoom/orbit new Input System, 3 modes selon la vue active (ortho solaire, orbit planétaire, ortho local) |
 | Grille | Mesh procédural (axial coordinates) | Inspiré Catlike Coding Hex Map, un seul mesh, vertex colors, zéro gap |
@@ -187,7 +187,7 @@ Assets/
 │   ├── Projects/         # Projets longue-durée (Phase 6.9)
 │   │   └── Project.cs            # Project abstrait + 5 sous-types concrets
 │   ├── Events/           # EventManager, EventData, déclenchement
-│   ├── Networking/       # Mirror sync, ServerTickManager
+│   ├── Networking/       # SimulationWebSocketClient, auth helpers
 │   └── UI/               # CameraController, ViewManager, HUD, tooltips, popups, scoreboard
 │       ├── ViewManager.cs            # Machine d'état 3 vues, transitions
 │       ├── SolarSystemView.cs        # Rendu système solaire (sphères + LineRenderer)
@@ -214,16 +214,20 @@ Assets/
 
 ---
 
-## Architecture Réseau (Mirror)
+## Architecture Réseau (WebSocket FastAPI)
+
+> **Décision [2026-04-21]** : Mirror Networking remplacé par WebSocket FastAPI natif (`GET /game/ws/events?token=<JWT>`) + JWT maison (python-jose HS256, passlib bcrypt, table `players` PostgreSQL). Client Unity utilise NativeWebSocket (OpenUPM `com.endel.nativewebsocket`). Le tick serveur push `{"type":"tick_advanced","tick":N}` à tous les clients connectés. Firebase exclu (contrainte architecture existante).
 
 ```
 [Client A]──┐
-[Client B]──┼──► [Serveur Dédié (Mirror)] ──► [Firebase Firestore]
-[Client C]──┘         │
-                  [TickManager]
-                  [EventManager]
-                  [MarketManager]
-                  [BotCorpos IA]
+[Client B]──┼──► [FastAPI DedicatedServer :8001]
+[Client C]──┘      │   GET /game/ws/events?token=JWT  (WebSocket push)
+                   │   POST /auth/login|register      (JWT HS256)
+                   │
+              [InMemorySimulationRuntime]
+                   │   _advance_tick_locked() → ws_broadcast_callback
+                   │
+              [PostgreSQL]  (persistance tous les 10 ticks)
 ```
 
 - Les **bots IA tournent uniquement côté serveur**
@@ -617,7 +621,7 @@ Avant d'introduire les corporations, le monde local doit cesser d'être purement
 ### Networking
 | Classe | Rôle |
 |---|---|
-| `GameNetworkManager` | Hérite de Mirror `NetworkManager` |
+| `SimulationWebSocketClient` | WebSocket NativeWebSocket, reconnexion auto |
 | `ServerTickManager` | Gère le cycle de tick serveur |
 | `HexSyncObject` | NetworkBehaviour pour synchroniser un hex |
 | `CorpoSyncObject` | NetworkBehaviour pour synchroniser une corpo |
@@ -657,7 +661,7 @@ Les tiles H3 complètes **ne sont pas stockées** — elles sont recalculées de
 | Sujet | Lien |
 |---|---|
 | Grille hexagonale (référence absolue) | https://www.redblobgames.com/grids/hexagons/ |
-| Mirror Networking docs | https://mirror-networking.gitbook.io/docs/ |
+| NativeWebSocket (OpenUPM) | https://github.com/endel/NativeWebSocket |
 | Firebase Unity SDK | https://firebase.google.com/docs/unity/setup |
 | Unity ScriptableObjects | https://docs.unity3d.com/Manual/class-ScriptableObject.html |
 | YouTube Unity 2D (Code Monkey) | https://www.youtube.com/@CodeMonkeyUnity |

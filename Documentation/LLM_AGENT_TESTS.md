@@ -32,16 +32,25 @@ SimulationCore/tests/
 
 ## Variables d'environnement LLM
 
-| Variable | Valeur de prod | Valeur fast-test |
-|----------|---------------|-----------------|
-| `LLM_BASE_URL` | `https://ai.prv.jerem.ovh/openai` | idem |
-| `LLM_API_KEY` | `sk-...` (depuis OpenWebUI Settings → API Keys) | idem |
-| `LLM_MODEL` | `Qwen3.6-35B-A3B-MXFP4_MOE` | `gemma-4-E4B-it-Q5_K_M` |
-| `LLM_MODE` | `tools` | `json` (plus compatible petits modèles) |
-| `AGENT_TICK_INTERVAL` | `10` | — |
+| Variable | Valeur | Description |
+|----------|--------|-------------|
+| `LLM_BASE_URL` | `https://ai.prv.jerem.ovh/openai` | Proxy OpenWebUI — **ne pas utiliser pour les benchmarks** (timeout ~60s) |
+| `LLM_DIRECT_BASE_URL` | `http://192.168.5.213:41200/v1` | **URL directe llama-swap** — utilisée par le benchmark et le warm-up |
+| `LLM_API_KEY` | `sk-...` | Clé API (générée dans `.env`) |
+| `LLM_MODEL` | `gemma4` | Modèle par défaut (Always-On 4B) |
+| `LLM_MODEL_FAST` | `gemma4` | Always-On, latence ~5s — décisions simples |
+| `LLM_MODEL_DEEP` | `Gemma4-A4B-NoThink` | **Modèle agent (10/10 benchmark)** — nationalist_react 7.9s, MCP 1-5s |
+| `LLM_MODEL_REASON` | `qwen3.5-sonnet-30b` | **Raisonnement long** (planning, GM narratif) — 10/10, tools_call 11.1s |
+| `LLM_MODE` | `tools` | Mode appel : `tools` (function-calling) ou `json` |
+| `AGENT_TICK_INTERVAL` | `10` | Fréquence de déclenchement de l'agent (ticks) |
+| `LLM_BENCHMARK_MODELS` | `gemma4,Gemma4-A4B-NoThink,...` | Liste comma-séparée pour le benchmark multi-modèles |
 
-**Important** : `LLM_BASE_URL` ne doit **pas** se terminer par `/v1` — OpenWebUI route correctement
-avec `/openai`. Exemple : `https://ai.prv.jerem.ovh/openai` ✓
+### Pourquoi deux URLs ?
+
+llama-swap charge les modèles **[Big]** à la demande (cold-start ~90s).  
+OpenWebUI a un timeout proxy de ~60s → les appels vers les modèles Big sont coupés avant la fin du chargement.  
+**Solution** : `LLM_DIRECT_BASE_URL` bypasse OpenWebUI et appelle llama-swap directement.  
+Le benchmark et le warm-up utilisent toujours `LLM_DIRECT_BASE_URL` si défini.
 
 ---
 
@@ -82,12 +91,19 @@ docker exec -w /app/SimulationCore terraformation-dedicated-server python -m pyt
 Skipped si les env vars LLM sont absentes. Retourne `{base_url, api_key, model}`.
 
 ### `fast_model` (session-scoped)
-Surcharge `model` avec `gemma-4-E4B-it-Q5_K_M` (Always-On 4B, latence ~5s).
+Surcharge `model` avec `gemma4` (Always-On 4B, latence ~5s).
 Utiliser dans les tests LLM pour ne pas toucher le modèle de prod.
+
+### `benchmark_model` (session-scoped, parametrized)
+Une exécution par modèle listé dans `LLM_BENCHMARK_MODELS`.  
+Effectue un **warm-up** automatique avant le premier test de chaque modèle [Big] en appelant
+`LLM_DIRECT_BASE_URL` directement (bypasse OpenWebUI).  
+Les modèles listés dans `tests/benchmark_exclusions.json` sont automatiquement ignorés.
 
 ```python
 def test_mon_test_llm(fast_model, monkeypatch):
-    monkeypatch.setenv("LLM_BASE_URL", fast_model["base_url"])
+    monkeypatch.setenv("LLM_BASE_URL",        fast_model["base_url"])
+    monkeypatch.setenv("LLM_DIRECT_BASE_URL", fast_model["base_url"])  # pas de proxy pour les tests
     monkeypatch.setenv("LLM_API_KEY",  fast_model["api_key"])
     monkeypatch.setenv("LLM_MODEL",    fast_model["model"])
     monkeypatch.setenv("LLM_MODE",     "json")
@@ -221,4 +237,58 @@ def test_scenario_mocked(rt):
 | `test_phase85_agent_logic.py` | 10 | ✅ venv local |
 | `test_phase85_agent_llm.py` | 6 | ✅ Docker (10 passes en 2 min) |
 | `test_phase85_agent_scenarios.py` | 4 | ✅ Docker |
-| **Total** | **25** | **10/10 llm+scenario en Docker** |
+| `test_phase85_agent_benchmark.py` | 10 scénarios × N modèles | 🔄 benchmark multi-modèles (venv local, nécessite `LLM_DIRECT_BASE_URL`) |
+| **Total** | **25 + benchmark** | **10/10 llm+scenario en Docker** |
+
+---
+
+## Benchmark multi-modèles
+
+Compare plusieurs modèles sur 10 scénarios identiques pour choisir le meilleur `LLM_MODEL_DEEP`.
+
+```powershell
+# Lancer le benchmark (venv local, pas besoin de Docker)
+e:\terraformation\.venv\Scripts\pytest.exe `
+  e:\terraformation\SimulationCore\tests\test_phase85_agent_benchmark.py `
+  -m llm_benchmark -v --tb=short
+```
+
+**Prérequis** dans `.env` :
+```
+LLM_DIRECT_BASE_URL=http://192.168.5.213:41200/v1   # direct llama-swap, pas OpenWebUI
+LLM_BENCHMARK_MODELS=gemma4,Gemma4-A4B-NoThink,Qwen2.5-14B-Instruct-Q4_K_M,...
+```
+
+**Warm-up automatique** : avant le premier test de chaque modèle [Big], la fixture envoie
+`"Hi"` (max_tokens=5, timeout=180s) directement à llama-swap pour déclencher le chargement
+et éviter que les tests réels soient comptabilisés comme timeout cold-start.
+
+**Exclusions** : `tests/benchmark_exclusions.json` liste les modèles à ignorer
+(ex: `Gemma4-A4B-Think` — timeout systématique >90s). Mis à jour automatiquement en fin de session.
+
+**Early-abort** : si un modèle accumule ≥ 4 échecs (contenu ou latence), les tests restants
+sont automatiquement skippés via `_BenchmarkStore.ABORT_THRESHOLD`. Évite de perdre du temps
+sur un modèle incompatible.
+
+---
+
+## Résultats benchmark Run 3 (23 avril 2026)
+
+| Modèle | Score | nationalist_react | tools_call | Verdict |
+|--------|-------|------------------|------------|--------|
+| **Gemma4-A4B-NoThink** (26B) | **10/10** ✅ | 7.9s | 2.7s | **`LLM_MODEL_DEEP`** |
+| **qwen3.5-sonnet-30b** (30B) | **10/10** ✅ | 25.7s | 11.1s | **`LLM_MODEL_REASON`** |
+| Qwen3-8B-Q4_K_M (8B) | 9/10 | 120.0s ⚠️ | ❌ thinking mode | Candidat si fix /no_think |
+| qwen3.5-opus-9b (9B) | 8/10 | ❌ timeout | 12.5s | Éliminé |
+| Qwen3-14B-Q4_K_M (14B) | 7/10 | ❌ 180s timeout | ❌ | Éliminé |
+| gemma4 (4B always-on) | 9/9 ✅ | 96.0s (⚠️ GPU partagé) | skip | **`LLM_MODEL_FAST`** |
+| Llama-xLAM-2-8B-fc-r (3 quants) | 2/6 ❌ | ❌ | ❌ KeyError tool_calls | **Exclu blacklist** — template FC propriétaire incompatible |
+| Gemma4-A4B-Think | exclu ⛔ | — | — | Timeout systématique |
+
+### Fixes apportés pendant le benchmark
+
+- **`call_llm_tools` `max_tokens=300`** (`agent.py`) — évite les freezes de génération sur les 26B+
+- **`test_bench_tools_call` prompt neutre** — le system prompt JSON (`build_system_prompt`) conflicte avec `tool_choice=required` ; remplacé par un prompt minimal pour ce test
+- **`ABORT_THRESHOLD=4`** (`conftest.py`) — early-abort après 4 échecs, évite de perdre 3min sur un modèle blacklisté
+- **`temperature=0.1`** dans `tools_call` — `0.0` causait des freezes sur certains modèles
+

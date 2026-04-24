@@ -22,6 +22,7 @@ terraformation/
 ├── Mcp/                  # serveur FastMCP, Dockerfile, wrapper compose local, scripts MCP
 ├── DedicatedServer/      # host autoritaire, Dockerfile, wrapper compose local, bootstrap serveur
 ├── SimulationCore/       # coeur métier partagé hors Unity
+├── Roadmap/              # Roadmap Service — FastAPI + FastMCP + SQLite (port 8001)
 ├── Documentation/
 ├── Artifacts/
 └── Tools/                # scripts transverses temporaires ou utilitaires de migration

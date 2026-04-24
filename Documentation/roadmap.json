@@ -1,0 +1,599 @@
+{
+  "_comment": "Source de vérité machine du backlog actif + historique. Toujours synchronisé avec ROADMAP.md. Ne jamais cocher ROADMAP.md à la main — utiliser le skill roadmap-phase-complete.",
+  "version": "2.0",
+  "lastUpdated": "2026-04-22",
+  "phases": [
+    {
+      "id": "p0-early",
+      "name": "Phase 0–6.9 + Sprint 0 — Fondations, grille, génération, vues, cosmos",
+      "status": "done",
+      "completedDate": "2026-04-19",
+      "validationFilter": null,
+      "exitCriteria": "Grille H3, génération planétaire, vues globe/flat/local, système solaire complet bootstrap_sol",
+      "roadmapAnchor": null,
+      "notes": "Voir CHANGELOG.md pour le détail complet"
+    },
+    {
+      "id": "p675-bridge",
+      "name": "Phase 6.75 — Isolation bridge Unity",
+      "status": "done",
+      "completedDate": "2026-04-19",
+      "validationFilter": null,
+      "exitCriteria": "Bridge Unity isolé, pas de couplage direct SimulationCore ↔ Unity",
+      "roadmapAnchor": null,
+      "notes": "Voir CHANGELOG.md"
+    },
+    {
+      "id": "p65-hydrology",
+      "name": "Phase 6.5 + Sprints A–D — Relief, hydrologie, cohérence, AtmosphericState",
+      "status": "done",
+      "completedDate": "2026-04-19",
+      "validationFilter": null,
+      "exitCriteria": "14/14 tests qualité PASS, 5 cas Play Mode validés, AtmosphericState habitabilityScore=0.95",
+      "roadmapAnchor": null,
+      "notes": "Voir CHANGELOG.md"
+    },
+    {
+      "id": "pmcp1",
+      "name": "Sprint MCP-1 — Outils cellule et validation",
+      "status": "done",
+      "completedDate": "2026-04-19",
+      "validationFilter": null,
+      "exitCriteria": "get_cell_detail, get_hydrology_stats, run_validation exposés et validés",
+      "roadmapAnchor": null,
+      "notes": "Voir MCP_TOOLS_ARCHITECTURE.md"
+    },
+    {
+      "id": "pmcp2",
+      "name": "Sprint MCP-2 — Boucle de test automatisée",
+      "status": "done",
+      "completedDate": "2026-04-19",
+      "validationFilter": null,
+      "exitCriteria": "5/5 presets PASS, pipeline server-only complet",
+      "roadmapAnchor": null,
+      "notes": "Voir MCP_TOOLS_ARCHITECTURE.md"
+    },
+    {
+      "id": "pmcp3",
+      "name": "Sprint MCP-3 — API Gameplay (Phase 7→9)",
+      "status": "done",
+      "completedDate": "2026-04-19",
+      "validationFilter": null,
+      "exitCriteria": "get_tick_state, get_planet_overview, get_corporations_list, get_corporation_state, create_corporation exposés",
+      "roadmapAnchor": null,
+      "notes": "Voir MCP_TOOLS_ARCHITECTURE.md"
+    },
+    {
+      "id": "p71-ownership",
+      "name": "Phase 7.1 — Propriété de tuile + Ownership UI",
+      "status": "done",
+      "completedDate": "2026-04-19",
+      "validationFilter": null,
+      "exitCriteria": "Claim/Unclaim tuile, badges corpo, bordures ownership globe, GameHUD unifié",
+      "roadmapAnchor": null,
+      "notes": "Voir CHANGELOG.md"
+    },
+    {
+      "id": "p72-buildings",
+      "name": "Phase 7.2 — Bâtiments v1 (modèle entrée → sortie)",
+      "status": "done",
+      "completedDate": "2026-04-19",
+      "validationFilter": null,
+      "exitCriteria": "BuildingType, construct/demolish, tick production, HUD bâtiments + icônes Font Awesome",
+      "roadmapAnchor": null,
+      "notes": "Voir CHANGELOG.md"
+    },
+    {
+      "id": "p73-market",
+      "name": "Phase 7.3 — Marché local v1",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase73_market.py"
+      ],
+      "validationFilter": "phase73",
+      "exitCriteria": "SocialClass, offre/demande, mobilité, taxe État — 7 tests passants",
+      "roadmapAnchor": null
+    },
+    {
+      "id": "p74-contracts",
+      "name": "Phase 7.4 — Contrats v1",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase74_contracts.py"
+      ],
+      "validationFilter": "phase74",
+      "exitCriteria": "Public/Privé, enchère, pénalités, knowledgeBonus — 12 tests passants",
+      "roadmapAnchor": null
+    },
+    {
+      "id": "p75-reputation",
+      "name": "Phase 7.5 — Réputation, États, Nationalisation, Scoreboard",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase75_states.py"
+      ],
+      "validationFilter": "phase75",
+      "exitCriteria": "globalReputation, NationalizationProcess, ScoreboardEntry — 11 tests passants",
+      "roadmapAnchor": null
+    },
+    {
+      "id": "p8-events",
+      "name": "Phase 8 — Système d'Événements",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase8_events.py"
+      ],
+      "validationFilter": "phase8",
+      "exitCriteria": "9 EventType, popup Unity, /game/events — 8 tests passants",
+      "roadmapAnchor": null
+    },
+    {
+      "id": "p85-agents",
+      "name": "Phase 8.5 — Agents LLM & Game Master",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase85_agent_behavior.py",
+        "test_phase85_agent_logic.py",
+        "test_phase85_agent_models.py",
+        "test_phase85_agent_scenarios.py"
+      ],
+      "validationFilter": "phase85",
+      "exitCriteria": "AgentAction, AgentMemory, logic/agent.py, GM leviers + cooldown, endpoints agent — 16 tests passants",
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p85_agents.py"
+    },
+    {
+      "id": "p9-trade",
+      "name": "Phase 9 — Routes commerciales & Expéditions",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase9_models.py",
+        "test_phase9_runtime.py"
+      ],
+      "validationFilter": "phase9",
+      "exitCriteria": "TradeRoute, ExpeditionUnit, /travel endpoints — 12 tests passants",
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p9_trade.py"
+    },
+    {
+      "id": "p94-prices",
+      "name": "Phase 9.4 — Vélocité des prix",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase94_market.py"
+      ],
+      "validationFilter": "phase94",
+      "exitCriteria": "priceVelocity + priceHistory(10) dans ResourceListing — 4 tests passants",
+      "roadmapAnchor": null
+    },
+    {
+      "id": "p95-global",
+      "name": "Phase 9.5 — Marché global & ressources avancées",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase95_global_market.py",
+        "test_phase95_resources.py"
+      ],
+      "validationFilter": "phase95",
+      "exitCriteria": "GlobalMarketState, Iron/O2/Water/Tech, /game/global-market — 8 tests passants",
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p95_global.py"
+    },
+    {
+      "id": "p96-employment",
+      "name": "Phase 9.6 — Emploi, revenus, cargo expéditions",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase96_employment.py",
+        "test_phase96_expeditions.py",
+        "test_phase96_income.py"
+      ],
+      "validationFilter": "phase96",
+      "exitCriteria": "employmentSlots, avgIncome, cargo ExpeditionUnit — 18 tests passants",
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p96_employment.py"
+    },
+    {
+      "id": "p10-multiplayer",
+      "name": "Phase 10 — Multijoueur Réseau (JWT + WebSocket)",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase10_caravane.py"
+      ],
+      "validationFilter": "phase10",
+      "exitCriteria": "Auth JWT, WebSocket push, NativeWebSocket Unity, caravane colonisation — 3 tests passants",
+      "roadmapAnchor": null
+    },
+    {
+      "id": "p105-construction",
+      "name": "Phase 10.5 — File de construction par territoire",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase105_construction.py"
+      ],
+      "validationFilter": "phase105",
+      "exitCriteria": "TerritoryQueue, EB Fortune, constructionCapacity — 16 tests passants",
+      "roadmapAnchor": null
+    },
+    {
+      "id": "p112-corp-ai",
+      "name": "Phase 11.2 — IA Corporations FSM",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase112_corp_fsm.py"
+      ],
+      "validationFilter": "phase112",
+      "exitCriteria": "3 profils CorpProfile, 5 états FSM, décision par tick — 20 tests passants",
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p112_corp_ai.py"
+    },
+    {
+      "id": "p113-gm",
+      "name": "Phase 11.3 — Game Master narratif",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase113_gm.py"
+      ],
+      "validationFilter": "phase113",
+      "exitCriteria": "Leviers GM, cooldown, scoring par levier — 25 tests passants",
+      "roadmapAnchor": null
+    },
+    {
+      "id": "p115-ecology",
+      "name": "Phase 11.5 — Biodiversité par espèce",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase115_ecology.py"
+      ],
+      "validationFilter": "phase115",
+      "exitCriteria": "SpeciesData, logic/ecology.py, _process_ecology_tick_locked, get_tile_ecology — 18 tests passants",
+      "roadmapAnchor": null
+    },
+    {
+      "id": "p12-sprint-db",
+      "name": "Sprint DB — Persistence complète des entités gameplay",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "tests": [
+        "test_phase_sprint_db.py",
+        "test_phase12_building_level.py"
+      ],
+      "validationFilter": "sprintdb",
+      "exitCriteria": "Persistence complète + niveaux bâtiment upgrade/downgrade — 17 tests, round-trips DB",
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p12_sprint_db.py"
+    },
+    {
+      "id": "p12-polish-p1p2",
+      "name": "Phase 12 Polish P1+P2 — TopBar tick counter + EventType FR",
+      "status": "done",
+      "completedDate": "2026-04-21",
+      "validationFilter": null,
+      "exitCriteria": "Tick counter TopBar, noms EventType en français dans popup",
+      "roadmapAnchor": null,
+      "notes": "Validation visuelle Unity Play Mode"
+    },
+    {
+      "id": "p12-polish-p3",
+      "name": "Phase 12 Polish P3 — Équilibrage économique v1",
+      "status": "done",
+      "completedDate": "2026-04-22",
+      "validationFilter": null,
+      "exitCriteria": "8 constantes ajustées, 172 tests passants",
+      "roadmapAnchor": "**P3**"
+    },
+    {
+      "id": "p12-polish-p4",
+      "name": "Phase 12 Polish P4 — Tooltips flottants HUD",
+      "status": "done",
+      "completedDate": "2026-04-22",
+      "validationFilter": null,
+      "exitCriteria": "TooltipTrigger, BuildTooltipPanel, clamp écran",
+      "roadmapAnchor": "**P4**"
+    },
+    {
+      "id": "p12-polish-ux",
+      "name": "Phase 12 Polish — UI/UX complet",
+      "status": "done",
+      "completedDate": "2026-04-22",
+      "validationFilter": null,
+      "exitCriteria": "Menus de navigation, écrans de résumé de session, flow onboarding",
+      "roadmapAnchor": "UI/UX complet",
+      "notes": "Validation visuelle Unity Play Mode"
+    },
+    {
+      "id": "p12-polish-sound",
+      "name": "Phase 12 Polish — Sound design",
+      "status": "pending",
+      "completedDate": null,
+      "validationFilter": null,
+      "exitCriteria": "Ambiances, effets bâtiments, feedback UI",
+      "roadmapAnchor": "Sound design",
+      "notes": "Validation subjective en Play Mode"
+    },
+    {
+      "id": "p12-polish-perf",
+      "name": "Phase 12 Polish — Optimisation performances",
+      "status": "pending",
+      "completedDate": null,
+      "validationFilter": null,
+      "exitCriteria": "> 60 fps stable en Play Mode sur la scène principale, aucun GC alloc > 1 MB/frame",
+      "roadmapAnchor": "Optimisation performances",
+      "notes": "Validation via Profiler Unity (skill terraformation-debug)"
+    },
+    {
+      "id": "p12-polish-dist",
+      "name": "Phase 12 Polish — Distribution",
+      "status": "pending",
+      "completedDate": null,
+      "validationFilter": null,
+      "exitCriteria": "Build standalone Windows uploadé sur itch.io ou équivalent, README à jour",
+      "roadmapAnchor": "Distribution",
+      "notes": "Validation manuelle build + publication"
+    },
+    {
+      "id": "p12-hud-p0",
+      "name": "Phase 12 HUD Migration — P0 Setup UI Toolkit",
+      "status": "done",
+      "completedDate": "2026-04-22",
+      "exitCriteria": "Dossiers Assets/UI/ (Templates/ Styles/ Components/), variables.uss, base.uss, HUDTheme.tss, HUDPanelSettings (sortingOrder=100), GameHUDController.cs stub zéro erreur compile",
+      "notes": "UIDocument + GameHUDController ajoutés sur GameObject GameHUD. Coexistence uGUI + UI Toolkit active."
+    },
+    {
+      "id": "p12-hud-p1",
+      "name": "Phase 12 HUD Migration — P1 TopBar UI Toolkit",
+      "status": "done",
+      "completedDate": "2026-04-22",
+      "exitCriteria": "TopBar.uxml + TopBar.uss, BuildTopBar() dans GameHUDController, boutons Retour/Toggle/Debug liés, label tick-credits, zéro erreur compile",
+      "notes": "Fallback procédural si template UXML non assigné en Inspector."
+    },
+    {
+      "id": "p12-hud-p2",
+      "name": "Phase 12 HUD Migration — P2 LeftPanel UI Toolkit",
+      "status": "not-started",
+      "exitCriteria": "LeftPanel.uxml + LeftPanel.uss, barre de progression terraformation, stats atmosphériques, strip scoreboard — remplace BuildLeftPanel() de GameHUD.cs",
+      "notes": "Validation visuelle Unity Play Mode"
+    },
+    {
+      "id": "p12-hud-p3",
+      "name": "Phase 12 HUD Migration — P3 TileInspector UI Toolkit",
+      "status": "not-started",
+      "exitCriteria": "TileInspector.uxml, BuildingCard.uxml, ConstructionCard.uxml, sections Claim/Corp/Marché/Contrats/Nationalisation/Écologie — conforme mockup paneau1.png",
+      "notes": "Priorité mockup. Remplace BuildRightPanel() + RebuildBuildingListUI() dans GameHUD.cs. Validation visuelle Unity Play Mode."
+    },
+    {
+      "id": "p12-hud-p4",
+      "name": "Phase 12 HUD Migration — P4 EventFeed + Tooltip + Popups",
+      "status": "not-started",
+      "exitCriteria": "EventFeed.uxml flux bas-gauche, Tooltip.uxml positionné sur screenPos, EventPopup.uxml notification top-center — remplace BuildEventFeedPanel() + ShowTooltip() + BuildEventPopupPanel()",
+      "notes": "Validation visuelle Unity Play Mode"
+    },
+    {
+      "id": "p12-hud-p5",
+      "name": "Phase 12 HUD Migration — P5 DebugDrawer + cleanup final",
+      "status": "not-started",
+      "exitCriteria": "DebugDrawer migré en UXML, code BuildXxx() supprimé de GameHUD.cs, GameHUD.cs supprimé, GameHUDController seul actif, smoke test visuel Play Mode OK",
+      "notes": "Phase finale suppression uGUI. Validation visuelle Unity Play Mode."
+    },
+    {
+      "id": "p13-mirror",
+      "name": "Phase 13 — Réseau Mirror Networking",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase13_mirror.py"
+      ],
+      "validationFilter": "phase13",
+      "exitCriteria": "Lobby multijoueur Mirror, synchronisation état serveur → clients, max 4 joueurs simultanés",
+      "designRef": "Description_du_jeu.md §18",
+      "roadmapAnchor": "Phase 13",
+      "notes": "Voir ARCHITECTURE.md — Phase 10 (pas encore implémenté)"
+    },
+    {
+      "id": "p-rebellion",
+      "name": "Phase Rébellion — Perte de tuile par insatisfaction pop",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_rebellion.py"
+      ],
+      "validationFilter": "rebellion",
+      "exitCriteria": "SatisfactionScore par tuile, seuil configurable, déclenchement EventType.Rébellion, perte de contrôle corp, 6+ tests",
+      "designRef": "Description_du_jeu.md §15",
+      "roadmapAnchor": "Phase Rébellion",
+      "notes": "Implémentation après p13-mirror. §15 GDD : besoins pop non satisfaits → rébellion → perte tuile + pénalité réputation"
+    },
+    {
+      "id": "p-energy-grid",
+      "name": "Phase Réseau énergétique — Distribution énergie entre tuiles",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_energy_grid.py"
+      ],
+      "validationFilter": "energy_grid",
+      "exitCriteria": "EnergySegment modèle, distribution via segments capacité-limités, énergie sur marché local, 6+ tests",
+      "designRef": "Description_du_jeu.md §9",
+      "roadmapAnchor": "Phase Réseau énergétique",
+      "notes": "Implémentation après p-rebellion. Pré-requis : BuildingData + MarketState existants."
+    },
+    {
+      "id": "p-waste",
+      "name": "Phase Déchets — Accumulation et impact écologique",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_waste.py"
+      ],
+      "validationFilter": "waste",
+      "exitCriteria": "wasteAccumulated sur ClaimedTile, malus habitabilityScore, WasteTreatmentPlant, 6+ tests",
+      "designRef": "Description_du_jeu.md §9",
+      "roadmapAnchor": "Phase Déchets",
+      "notes": null
+    },
+    {
+      "id": "p-depletion",
+      "name": "Phase Épuisement & Reconversion — Ressource épuisée",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_depletion.py"
+      ],
+      "validationFilter": "depletion",
+      "exitCriteria": "resourceReserve par tuile, bâtiment depleted, action reconversion coût réduit, 6+ tests",
+      "designRef": "Description_du_jeu.md §9",
+      "roadmapAnchor": "Phase Épuisement & Reconversion",
+      "notes": null
+    },
+    {
+      "id": "p-corruption",
+      "name": "Phase Corruption — Stat État exploitable",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_corruption.py"
+      ],
+      "validationFilter": "corruption",
+      "exitCriteria": "corruptionLevel sur StateData, action CorruptState corpo, effets taxes/nationalisation/seuil tolérance, 6+ tests",
+      "designRef": "Description_du_jeu.md §12",
+      "roadmapAnchor": "Phase Corruption",
+      "notes": null
+    },
+    {
+      "id": "p-bureaucracy",
+      "name": "Phase Bureaucratie — Délai décisions État",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_bureaucracy.py"
+      ],
+      "validationFilter": "bureaucracy",
+      "exitCriteria": "bureaucracyLevel sur StateData, file décisions État avec ticksRemaining, interaction corruption, 6+ tests",
+      "designRef": "Description_du_jeu.md §12",
+      "roadmapAnchor": "Phase Bureaucratie",
+      "notes": "Dépend de p-corruption pour l'interaction corruption→délai"
+    },
+    {
+      "id": "p-migration",
+      "name": "Phase Migrations — Flux de population entre tuiles",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_migration.py"
+      ],
+      "validationFilter": "migration",
+      "exitCriteria": "Porosité naturelle + migration économique, attractiveness par tuile, amplification via routes, 6+ tests",
+      "designRef": "Description_du_jeu.md §13",
+      "roadmapAnchor": "Phase Migrations",
+      "notes": null
+    },
+    {
+      "id": "p-social-mobility",
+      "name": "Phase Mobilité sociale — Évolution des classes",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_social_mobility.py"
+      ],
+      "validationFilter": "social_mobility",
+      "exitCriteria": "avgIncome par classe par tuile, seuils promotion/régression, migration classes, 6+ tests",
+      "designRef": "Description_du_jeu.md §13",
+      "roadmapAnchor": "Phase Mobilité sociale",
+      "notes": "Dépend de p-migration pour la mobilité inter-tuiles des classes promues"
+    },
+    {
+      "id": "p-travel-events",
+      "name": "Phase Événements en trajet — Incidents sur ExpeditionUnit",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_travel_events.py"
+      ],
+      "validationFilter": "travel_events",
+      "exitCriteria": "~3% chance/tick piraterie/panne/découverte, stocké EventData, visible list_game_events, 6+ tests",
+      "designRef": "Description_du_jeu.md §16",
+      "roadmapAnchor": "Phase Événements en trajet",
+      "notes": null
+    },
+    {
+      "id": "p-leaderboard",
+      "name": "Phase Leaderboard — Classement corporations",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_leaderboard.py"
+      ],
+      "validationFilter": "leaderboard",
+      "exitCriteria": "score = credits + tiles×100 + rep×50, GET /game/leaderboard top 10, MCP get_scoreboard, 4+ tests",
+      "designRef": "Description_du_jeu.md §19",
+      "roadmapAnchor": "Phase Leaderboard",
+      "notes": null
+    }
+  ],
+  "testFileRegistry": {
+    "phase73": [
+      "test_phase73_market.py"
+    ],
+    "phase74": [
+      "test_phase74_contracts.py"
+    ],
+    "phase75": [
+      "test_phase75_states.py"
+    ],
+    "phase8": [
+      "test_phase8_events.py"
+    ],
+    "phase85": [
+      "test_phase85_agent_logic.py",
+      "test_phase85_agent_models.py"
+    ],
+    "phase9": [
+      "test_phase9_models.py",
+      "test_phase9_runtime.py"
+    ],
+    "phase94": [
+      "test_phase94_market.py"
+    ],
+    "phase95": [
+      "test_phase95_global_market.py",
+      "test_phase95_resources.py"
+    ],
+    "phase96": [
+      "test_phase96_employment.py",
+      "test_phase96_income.py",
+      "test_phase96_expeditions.py"
+    ],
+    "phase10": [
+      "test_phase10_caravane.py"
+    ],
+    "phase105": [
+      "test_phase105_construction.py"
+    ],
+    "phase112": [
+      "test_phase112_corp_fsm.py"
+    ],
+    "phase113": [
+      "test_phase113_gm.py"
+    ],
+    "phase115": [
+      "test_phase115_ecology.py"
+    ],
+    "sprintdb": [
+      "test_phase_sprint_db.py"
+    ]
+  }
+}

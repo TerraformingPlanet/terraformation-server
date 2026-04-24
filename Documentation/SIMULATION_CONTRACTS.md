@@ -63,9 +63,11 @@ Toute modification d'un type partagé doit être appliquée **dans les deux fich
 | `ClaimedTile` | `struct ClaimedTile` | `bodyId`, `tileId` — Phase 7.1 |
 | `CorporationData` | `struct CorporationData` | `id`, `name`, `credits`, `claimedTiles[]`, `score`, `isAI` — Phase 7.1 |
 | `SocialClass` | `enum SocialClass : int` | `Poor=0`, `Middle=1`, `Rich=2` — Phase 7.3 |
-| `PopulationTier` | `struct PopulationTier` | `socialClass`, `count` — Phase 7.3 |
+| `PopulationTier` | `struct PopulationTier` | `socialClass`, `count`, `avgIncome` — Phase 7.3 / 9.6 |
 | `ResourceListing` | `struct ResourceListing` | `resourceType`, `price`, `supply`, `demand` — Phase 7.3 |
 | `LocalMarketState` | `struct LocalMarketState` | `corpId`, `listings[]`, `taxRate`, `tickComputed` — Phase 7.3 |
+| `BuildingData` | `struct CorpBuilding` | `id`, `buildingType`, `tileId`, `bodyId`, `corpId`, `workerRatio`, `ticksActive`, `employmentSlots`, `level` — Phase 7.2 / 9.6 / 12 |
+| `ExpeditionUnit` | `struct CorpExpeditionUnit` | `id`, `ownerCorpId`, `fromPortTileId`, `toPortTileId`, `bodyId`, `routeType`, `ticksRemaining`, `totalTicks`, `status`, `isPhantom`, `cargoKeys[]`, `cargoValues[]` — Phase 9.1 / 9.6 |
 
 ---
 
@@ -94,10 +96,11 @@ Toute modification d'un type partagé doit être appliquée **dans les deux fich
 > Note : `CorpResourceType` préfixe évite collision avec `ResourceType` existant dans Unity.
 
 ### PopulationTier (BaseModel / struct)
-| Champ | Type Python | Type C# |
-|-------|-------------|---------|
-| socialClass | SocialClass | SocialClass |
-| count | int | int |
+| Champ | Type Python | Type C# | Notes |
+|-------|-------------|---------|-------|
+| socialClass | SocialClass | SocialClass | |
+| count | int | int | |
+| avgIncome | float | float | Défaut 0.0 — Phase 9.6 |
 
 ### ResourceListing (BaseModel / struct)
 | Champ | Type Python | Type C# |
@@ -183,6 +186,7 @@ Toute modification d'un type partagé doit être appliquée **dans les deux fich
 |--------|----------------------|-------|
 | Capitalist | Capitalist | 0 |
 | Nationalist | Nationalist | 1 |
+| Alien | Alien | 2 | — Phase 11.3 M2 : États IA aliens créés par le GM narratif |
 
 ### StateData (BaseModel / struct `SimStateData`)
 | Python field | C# field | Type | Notes |
@@ -247,6 +251,116 @@ Toute modification d'un type partagé doit être appliquée **dans les deux fich
 | Champ | Type Python | Type C# | Notes |
 |-------|-------------|---------|-------|
 | globalReputation | float | float | Valeur par défaut 0.0 — Phase 7.5 |
+
+---
+## Phase 9.6 — Modèles économiques avancés
+
+### CorpEmploymentSlots (struct C# uniquement)
+Struct flat utilisée pour le champ `employmentSlots` de `CorpBuilding`. Clés fixes correspondant aux noms des `SocialClass`.
+
+| Champ C# | Type C# | Valeur pour Mine | Notes |
+|----------|---------|-----------------|-------|
+| Poor | int | 50 | |
+| Middle | int | 10 | |
+| Rich | int | 0 | |
+
+> Contrainte Unity JsonUtility : `Dictionary<string,int>` non sérialisable → struct flat avec champs nommés.
+
+### BuildingData — champ ajouté (Phase 9.6)
+| Champ Python | Champ C# | Type Python | Type C# | Notes |
+|---|---|---|---|---|
+| employmentSlots | employmentSlots | `dict[str, int]` | `CorpEmploymentSlots` | Clés = noms SocialClass ("Poor"/"Middle"/"Rich"). Infra (Road, SeaPort, Spaceport) = `{}`. |
+
+**EMPLOYMENT_CONFIGS Python** :
+| BuildingType | Poor | Middle | Rich |
+|---|---|---|---|
+| Mine | 50 | 10 | 0 |
+| Farm | 30 | 5 | 0 |
+| EnergyPlant | 0 | 20 | 5 |
+| Research | 0 | 10 | 15 |
+| Road / SeaPort / Spaceport | 0 | 0 | 0 |
+
+### ExpeditionUnit — champ ajouté (Phase 9.6)
+| Champ Python | Champ C# | Type Python | Type C# | Notes |
+|---|---|---|---|---|
+| cargo | cargoKeys + cargoValues | `dict[str, float]` | `string[] + float[]` | Clés = `ResourceType.name`. Défaut `{}`. Parallel arrays — Unity JsonUtility workaround. |
+
+> Livraison : à l'arrivée (`ticksRemaining ≤ 0`, `status = Success`), `cargo` est transféré aux stocks de la corpo propriétaire de `toPortTileId`.
+
+---
+## Phase 11.5 — Biodiversité par espèce
+
+### SpeciesData — nouveau modèle
+
+| Python (`SpeciesData`) | C# (`SpeciesData`) | Type | Notes |
+|---|---|---|---|
+| `speciesId` | `speciesId` | `string` | identifiant unique |
+| `density` | `density` | `float` | [0, 1] |
+| `minTemp` | `minTemp` | `float` | °C |
+| `maxTemp` | `maxTemp` | `float` | °C |
+| `minO2` | `minO2` | `float` | fraction O₂ |
+| `maxO2` | `maxO2` | `float` | fraction O₂ |
+| `growthRate` | `growthRate` | `float` | delta densité par tick |
+| `marketOutput` | *(non mirrored v1)* | `dict[str, float]` | côté serveur uniquement |
+| `minVegetation` | `minVegetation` | `float` | couverture végétale requise (animaux) |
+
+### GoldbergTileState — champs modifiés (Phase 11.5)
+
+| Ancien champ | Nouveau champ | Notes |
+|---|---|---|
+| `vegetationDensity: float` | *supprimé* | remplacé par `species` |
+| `wildlifeDensity: float` | *supprimé* | remplacé par `species` |
+| *(nouveau)* | `species: SpeciesData[]` | populations actives sur la tuile |
+
+### SphericalBodyState — champ ajouté (Phase 11.5)
+
+| Python | C# | Type | Notes |
+|---|---|---|---|
+| `ecologyResources` | *(non mirrored v1)* | `dict[str, float]` | ressources écologiques agrégées par tick (côté serveur) |
+
+---
+## Phase 11.3 M2 — GM narratif : nouveaux types
+
+### EventType — valeurs ajoutées (Phase 11.3)
+
+> Section base définie en Phase 8 : `GameEventType` C# dans `SimulationContracts.cs`.
+
+| Python (`EventType`) | C# (`GameEventType`) | Value | Notes |
+|---|---|---|---|
+| RencontreAlienne | RencontreAlienne | 0 | Existant Phase 8 |
+| TempeteSolaire | TempeteSolaire | 1 | Existant Phase 8 |
+| DecouverteMiniere | DecouverteMiniere | 2 | Existant Phase 8 |
+| CriseEconomique | CriseEconomique | 3 | Existant Phase 8 |
+| SabotageCorpo | SabotageCorpo | 4 | Existant Phase 8 |
+| Rebellion | Rebellion | 5 | Existant Phase 8 |
+| MigrationPopulation | MigrationPopulation | 6 | Existant Phase 8 |
+| DecouverteMegastructure | DecouverteMegastructure | 7 | Phase 11.3 — levier Mégastructure/Signal GM |
+| EmpireGalactique | EmpireGalactique | 8 | Phase 11.3 — levier Empire galactique GM |
+
+---
+## Phase 11.2 M1 — FSM BotCorporation
+
+### Nouveaux enums
+
+| Python (`models.py`) | C# (`SimulationContracts.cs`) | Notes |
+|---|---|---|
+| `CorpProfile` | `enum CorpProfile : int` | `Economiste=0`, `Expansionniste=1`, `Militariste=2` |
+| `BotFSMState` | `enum BotFSMState : int` | `Idle=0`, `Expanding=1`, `Building=2`, `Trading=3`, `Raiding=4` |
+
+### CorporationData — champs ajoutés (Phase 11.2)
+| Champ Python | Champ C# | Type Python | Type C# | Notes |
+|---|---|---|---|---|
+| `profile` | `profile` | `CorpProfile` | `CorpProfile` | Défaut `Economiste` — fixe à la création |
+| `fsmState` | `fsmState` | `BotFSMState` | `BotFSMState` | Défaut `Idle` — mis à jour chaque tick par le FSM |
+| `fsmThresholds` | *(non exposé C#)* | `dict[str, float]` | — | Seuils internes, jamais désérialisés côté client |
+
+### AgentActionType — valeurs ajoutées (Phase 11.2)
+| Python | C# | Valeur | Notes |
+|---|---|---|---|
+| `ClaimTile` | `ClaimTile` | `10` | FSM Expansionniste : réclamer une tuile adjacente libre |
+| `ConstructBuilding` | `ConstructBuilding` | `11` | FSM Building : enqueue un bâtiment |
+| `UpdateFsmThresholds` | `UpdateFsmThresholds` | `12` | LLM M2 : modifier les seuils par corpo |
+| `ReorderConstructionQueue` | `ReorderConstructionQueue` | `13` | LLM M2 : réordonner la file de construction |
 
 ---
 ## Détail : `AtmosphericState`

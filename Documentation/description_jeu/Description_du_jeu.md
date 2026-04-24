@@ -26,9 +26,10 @@
 | [§13](#13-marchés) | Marchés | [marche_local.md](questions/marche_local.md) |
 | [§14](#14-contrats) | Contrats | [contrats.md](questions/contrats.md) |
 | [§15](#15-contrôle-et-perte-de-tuiles) | Contrôle et perte de tuiles | [perte_de_controle_tuile.md](questions/perte_de_controle_tuile.md) |
+| [§15.1](#151-contrôle-orbital--points-de-lagrange) | Contrôle orbital & Points de Lagrange | — |
 | [§16](#16-voyages-interplanétaires) | Voyages interplanétaires | — |
 | [§17](#17-événements) | Événements | — |
-| [§18](#18-ia--agents-llm) | IA & Agents LLM | [ia_modele_langage.md](questions/ia_modele_langage.md) |
+| [§18](#18-ia--agents-llm) | IA & Agents LLM | [ia_modele_langage.md](questions/ia_modele_langage.md) · [gameplay_llm.md](questions/gameplay_llm.md) |
 | [§19](#19-multijoueur) | Multijoueur | — |
 | [§20](#20-conditions-de-victoire) | Conditions de Victoire | — |
 | [§21](#21-questions-ouvertes--points-à-designer) | Questions ouvertes | — |
@@ -70,12 +71,79 @@ Le monde tourne **en temps réel sur un serveur dédié**, même quand les joueu
 Galaxie
  └── Systèmes stellaires
       └── Corps célestes (planètes, lunes…)
-           └── Tuiles (grille H3 — hexagones géospatiaux)
+           ├── Orbite (5 tuiles spéciales — Points de Lagrange L1-L5)
+           └── Surface (grille H3 — hexagones géospatiaux)
 ```
 
-- Chaque tuile est l'unité de base exploitable
+- Chaque tuile de surface est l'unité de base exploitable
 - Une tuile appartient à un **État**, une **corporation**, ou à personne (espace non colonisé)
 - Les planètes sont représentées avec une grille **H3** (hexagones géospatiaux hiérarchiques)
+- Chaque corps céleste a également **5 tuiles orbitales** (Points de Lagrange) contrôlables séparément
+
+### Contrôle d'un corps céleste
+
+Un corps céleste est considéré comme **contrôlé** par une entité si elle satisfait les deux conditions simultanément :
+1. **Contrôle orbital** : détenir L1 **et** L2 (= 50% du contrôle orbital, seuil minimum)
+2. **Contrôle de surface** : posséder 51% des tuiles H3 du corps
+
+Si les deux conditions sont remplies par des entités différentes → **conflit ouvert** : aucune n'obtient le bonus de contrôle.
+
+---
+
+## 3.1 Contrôle orbital — Points de Lagrange
+
+> Référence réelle : [Points de Lagrange (Wikipedia)](https://fr.wikipedia.org/wiki/Point_de_Lagrange)
+
+Chaque corps céleste en orbite autour d'un astre génère **5 points d'équilibre gravitationnel** (Points de Lagrange). Chacun est une **tuile orbitale** qu'une corpo ou un État peut chercher à contrôler en y déployant une station.
+
+Les Points de Lagrange jouent un double rôle :
+1. **Waypoints d'exploration et de voyage** — les `ExpeditionUnit` de type `Orbital` transitent par les points de Lagrange pour rejoindre un corps cible
+2. **Positions stratégiques** — les contrôler permet de taxer, bloquer ou faciliter le passage
+
+### Table de contrôle orbital
+
+| Points détenus | % contrôle orbital | Effet |
+|---|---|---|
+| L1 **ou** L2 | 50% | Seuil minimum — taxation de passage possible |
+| L1 + L2 + (L4 **ou** L5) | 75% | Blocus + bonus diplomatique complet |
+| L1 + L2 + L4 + L5 + L3 | 100% | Contrôle orbital total |
+
+> L1 et L2 encadrent directement le corps céleste (côté étoile et côté opposé). L4/L5 sont stables à 60° — points d'ancrage de longue durée. L3 est le plus difficile à tenir (côté étoile opposé).
+
+### Exploration et voyage spatial
+
+- Toute `ExpeditionUnit` de type `Orbital` part d'un **Spaceport** et transite par les points de Lagrange du corps cible
+- Si un point de Lagrange est **occupé par une station ennemie**, l'expédition peut être :
+  - **Taxée** : perd une fraction de son `cargo` (péage)
+  - **Bloquée** : retournée à l'origine si blocus actif (L1 + L2 détenus par le même ennemi)
+- Un point de Lagrange allié est un **relais** : réduit le coût d'expédition vers le corps (bonus d'efficacité)
+
+### Bâtiments orbitaux par type de point
+
+| Point | Bâtiments possibles | Rôle |
+|---|---|---|
+| **L1** | Station + Ascenseur spatial | Accès direct à la surface, transit rapide cargo↔orbite |
+| **L2** | Station + Observatoire | Blocus côté obscur, bonus exploration système |
+| **L4 / L5** | Station de relais, dépôt de ressources | Position stable, ravitaillement expéditions |
+| **L3** | Poste avancé | Surveillance, renseignement sur le système entier |
+
+> **Ascenseur spatial (L1 uniquement)** : bâtiment avancé qui élimine le coût d'expédition surface→orbite pour les routes commerciales `Orbital` contrôlées par la même entité. Réduit drastiquement le coût de colonisation du corps.
+
+### Taxation de passage
+
+Un point de Lagrange avec une **station active** peut percevoir des taxes sur les `ExpeditionUnit` qui le traversent :
+- Le propriétaire fixe un `passageTaxRate` (0% à 100%) par point
+- Les entités avec un **contrat de libre passage** ou une **alliance** sont exemptées
+- Recette versée à chaque tick en `Credits` dans les stocks de la corpo propriétaire
+- Le taux est un levier de négociation diplomatique : baisser les taxes pour attirer des partenaires, les monter pour étouffer un concurrent
+
+### Points de Lagrange comme tuiles
+
+- Chaque point L1-L5 est une tuile spéciale : `tileType = LagrangePoint`
+- Accessible uniquement via `ExpeditionUnit` de type `Orbital` (pas de caravane terrestre)
+- Ne génère pas de ressources passives (pas de terrain, pas de population)
+- Peut être prise par une expédition hostile si le propriétaire n'y maintient pas de défense
+- Une tuile Lagrange sans station = point de passage libre, non taxé
 
 ---
 
@@ -84,39 +152,50 @@ Galaxie
 - **1 tick = 1 jour** (valeur de référence, ajustable pour l'équilibrage)
 - À chaque tick : production des bâtiments, consommation des ressources, mise à jour des marchés, évolution de la population et de l'écologie
 
-### File de décisions (énergie d'action)
-- Un joueur dispose d'un quota de **décisions par jour** (ex : 10), rechargé chaque tick
-- Toutes les décisions ont le même coût — ajustable pour l'équilibrage
-- Les décisions ont un **délai d'effet variable** selon leur nature :
-  - Signer un contrat → quasi-immédiat
-  - Construire un bâtiment → délai long (déterminé par la capacité de construction de la tuile)
-  - Terraformer → très long
-
 ### File de planification (decision queue)
 
-Chaque entité active (corporation joueur, état, agent IA) dispose d'une **file ordonnée de décisions planifiées**.
+Chaque action passe par une **file persistante par territoire** — il n'y a pas de quota de décisions par jour.
 
-- La file est **réordonnée librement** par le joueur (drag & drop dans le HUD) ou par l'agent LLM lors de son cycle
-- Elle est **persistante** : elle survit à la déconnexion du joueur et aux redémarrages serveur
-- À chaque tick, les décisions dont les **conditions d'entrée sont satisfaites** (ressources disponibles, prérequis remplis) se déclenchent dans l'ordre
-- Une décision **bloquée** (ressources manquantes, prérequis non remplis) reste en tête de file sans consommer de quota — elle ne saute pas
-- Les décisions **en cours d'exécution** (ex : chantier multi-ticks) occupent un slot actif jusqu'à leur résolution
+#### File par territoire (pas globale)
+
+La file n'est **pas globale par entité** — elle est **par gouvernement/territoire**.
+
+- Un groupe de tuiles **limitrophes** appartenant à la même entité partage **une seule file** avec le **cumul de leurs `constructionCapacity`**
+- Si un territoire se fragmente (perte d'une tuile de connexion) → **deux files distinctes** avec chacune sa propre capacité
+- Incitation à l'expansion **contiguë** : un empire compact construit plus vite qu'un empire fragmenté
 
 **Structure d'une entrée de file :**
 
 | Champ | Rôle |
 |-------|------|
-| `type` | Type d'action (`build`, `sign_contract`, `terraform`, `set_tolerance`, etc.) |
+| `type` | Type d'action (`build`, `claim`, `sign_contract`, `terraform`, etc.) |
 | `targetId` | Tuile ou entité cible |
 | `params` | Paramètres spécifiques à l'action |
 | `enqueuedTick` | Tick d'ajout à la file |
 | `startTick` | Tick de début d'exécution (`null` si encore en attente) |
-| `resolvesTick` | Tick estimé de résolution (calculé au `startTick`) |
+| `resolvesTick` | Tick estimé de résolution |
 | `status` | `pending` / `in_progress` / `done` / `blocked` / `suspended` |
 
-**Intégration LLM :** l'agent LLM remplit la file lors de son cycle (toutes les N ticks ou sur événement).
-Cela lui permet de **planifier une stratégie sur plusieurs ticks** sans être interrogé à chaque tick.
-La mémoire `AgentMemory` peut stocker le plan courant pour contextualiser les décisions futures.
+La file est **persistante en PostgreSQL** — survit aux restarts serveur et aux déconnexions.
+
+#### Claim par caravane
+
+`claim` n'est pas immédiat — il nécessite l'envoi d'une **unité de colonisation** :
+- Tuile sans gouvernement (peut avoir une population existante) → colonisable
+- La caravane transporte une **population de base** et met du temps à arriver (distance + infrastructure)
+- À l'arrivée : si la tuile est libre → colonisation réussie ; si occupée → conquête requise
+- L'entrée reste `in_progress` dans la file pendant le trajet
+
+#### Délais par type d'action
+
+| Action | Délai |
+|--------|-------|
+| Signer un contrat | quasi-immédiat |
+| Construire un bâtiment | `ceil(coût / constructionCapacity)` ticks |
+| Claim (caravane) | distance / vitesse de l'unité |
+| Terraformer | très long (plusieurs ticks) |
+
+**Intégration LLM :** l'agent LLM remplit la file lors de son cycle (toutes les N ticks ou sur événement), permettant de **planifier une stratégie sur plusieurs ticks**. Pour les bots Corpo IA, la FSM gère les décisions routinières et le LLM intervient sur les décisions stratégiques (réordonner la file, déclarer la guerre, modifier les seuils).
 
 ---
 
@@ -129,10 +208,44 @@ La mémoire `AgentMemory` peut stocker le plan courant pour contextualiser les d
 
 ### 5.2 Moteur écologique (= terraformation)
 - La pollution est une **forme de terraformation négative**
-- Chaque tuile a des **indicateurs environnementaux** : O₂, CO₂, azote, température
-- Une fonction continue détermine si une espèce peut survivre ou subir des malus (pas de seuil binaire — malus croissants selon l'écart)
-- La nature évolue passivement : arbres, animaux, biodiversité dynamique
-- Exemple de chaîne : déforestation → perte d'animaux → moins de conversion CO₂→O₂ → dégradation atmosphérique
+- Chaque tuile a des **indicateurs environnementaux** : O₂, CO₂, azote, température, humidité
+- Une fonction continue détermine si une espèce peut survivre — **pas de seuil binaire** mais des malus croissants selon l'écart aux conditions optimales
+
+#### Biodiversité par espèce
+
+`vegetationDensity`, `wildlifeDensity` et `microbialDensity` sont des **collections par espèce** (pas des scalaires) :
+
+```
+vegetationDensity:  dict[str, float]  # ex: {"grass": 0.6, "forest": 0.3}
+wildlifeDensity:    dict[str, float]  # ex: {"herbivore": 0.4, "predator": 0.1}
+microbialDensity:   dict[str, float]  # ex: {"plankton": 0.5, "cyanobacteria": 0.8}
+```
+
+Chaque espèce a ses **seuils de conditions** (min/max par paramètre) et un taux de croissance logistique :
+- Conditions dans la plage optimale → croissance passive chaque tick
+- Conditions hors seuil → décroissance
+
+**Succession écologique émergente :** les cyanobactéries tolèrent peu d'O₂ → elles le produisent → les forêts deviennent possibles → les herbivores apparaissent. L'ordre de terraformation n'est pas scripté, il émerge naturellement.
+
+#### Biodiversité → marché
+
+Chaque espèce est une **structure passive de marché** : elle met des ressources sur le marché local chaque tick proportionnellement à sa densité.
+- `forest` (0.6) → X unités de `Wood` / tick sur le marché local
+- `wildlife_herbivore` (0.4) → Y unités de `Meat` / tick
+- `plankton` (0.8) → contribue à l'O₂ atmosphérique + Z unités de `Biomass`
+
+La ressource se renouvelle si la densité est maintenue. Si la demande dépasse la production → signal prix → incitation à replanter / réduire le prélèvement.
+
+#### Habitabilité
+
+`habitabilityScore` (0.0→1.0) intègre les conditions abiotiques **et** la biodiversité :
+- Planète vierge (densités = 0) → malus même si O₂/temp sont OK
+- Biodiversité diversifiée → bonus
+- < 0.3 : invivable, population refuse de migrer
+- 0.3→0.7 : viable avec malus (baisse salaires, médecine à l'importation)
+- > 0.7 : acceptable, population stable et mobile
+
+Une tuile dégradée est toujours **récupérable** par terraformation — le jeu est centré sur la réparation, pas la destruction permanente.
 
 ### 5.3 Moteur joueur
 - La corporation décide, dépense des décisions, attend les effets
@@ -236,15 +349,25 @@ Sorties (ressources produites + déchets + effets par tick)
 | Bâtiment de traitement | Neutralise les déchets accumulés |
 | **Entreprise de Bâtiment (EB)** | **Produit des points de construction par tick** |
 
+### Emploi par bâtiment
+
+Chaque bâtiment requiert un quota de population d'une **classe sociale spécifique** (`employmentSlots`) :
+- `workerRatio = min(1.0, popDisponible / quotaRequis)`
+- Si `workerRatio < 1.0` → **carence** → production réduite proportionnellement
+- Carence persistante → signal d'attractivité élevé → amplifie le flux migratoire entrant
+
+| Bâtiment | Classe requise | Quota (exemple) |
+|---|---|---|
+| Mine niv.1 | Poor | 50 |
+| Farm | Poor | 30 |
+| EnergyPlant | Poor + Middle | 20 + 5 |
+| Research | Middle + Rich | 20 + 5 |
+
 ### Construction et chantiers
-
-Inspiré de Victoria 3 : chaque tuile possède **deux files de construction indépendantes** alimentées par la même capacité de construction (`constructionCapacity`), mais avec des logiques et des acteurs différents.
-
----
 
 #### Capacité de construction (`constructionCapacity`)
 
-Produite par le bâtiment **Entreprise de Bâtiment (EB)** — fonctionne comme une mine dont l'output est de la puissance de chantier :
+Produite par le bâtiment **Entreprise de Bâtiment (EB)** :
 
 ```
 Entrées : travailleurs + outils + matières premières
@@ -254,78 +377,40 @@ Entrées : travailleurs + outils + matières premières
 Output : +N points de construction / tick  (ex : +30 pts/tick)
 ```
 
-La capacité totale de la tuile est la **somme** de toutes les EB actives. Plusieurs EB coexistent et cumulent leur output.
+La capacité totale d'un territoire = **somme des EB de toutes les tuiles contiguës** (voir §4 — file par territoire).
 
-**EB de fortune (spawn automatique à la migration) :**
-- Quand une population migre sur une tuile, elle crée spontanément une EB de fortune
-- Entrées : villageois + outils basiques (pioche, hache…) — ressources propres des habitants
-- Output : faible capacité (ex : +5 pts/tick) — représente "on se construit des abris"
-- C'est un vrai bâtiment EB avec de vraies entrées, pas un bonus magique
-- Peut être remplacée par une EB normale construite par l'entité propriétaire
+**EB de fortune :**
+- Apparaît **automatiquement** sur une tuile peuplée sans EB formelle
+- Conditions : `population > 0` ET `Wood` disponible sur le marché local ET aucune EB existante
+- Entrées : `Wood` (rondin) + outils basiques
+- Output : +5 pts/tick (vs +30 pour une EB normale)
+- Représente les abris et chantiers artisanaux de la population
+- Disparaît quand une EB normale est construite ou quand la population quitte la tuile
 
-Une tuile **sans population et sans EB** a `constructionCapacity = 0`.
+#### File de construction (file unique par territoire)
 
----
+- **Une seule file** par territoire contigu (pas de file Population séparée)
+- La population contribue via la **demande marché** (pas via une file autonome) :
+  - Population croissante → plus de demande de `Food`, `Wood`, `Energy`
+  - Signal prix → incite l'entité propriétaire à construire les bâtiments manquants
+- Réordonnable librement (joueur, drag & drop HUD, ou agent LLM)
 
-#### File 1 — File de l'État / Corporation (`stateConstructionQueue`)
+#### Mécanisme de débordement
 
-> Gérée par le **joueur ou l'agent LLM**, propriétaire de la tuile.
+À chaque tick :
+1. Les points sont consommés contre le premier chantier de la file
+2. Si terminé → `done`, le **surplus déborde sur le chantier suivant** dans le même tick
+3. Continue jusqu'à épuisement des points du tick
 
-- Contient les chantiers **décidés explicitement** par l'entité propriétaire (via la file de planification)
-- Bâtiments stratégiques : mines, centrales, laboratoires, EB améliorées, QG…
-- Seul le propriétaire de la tuile peut y ajouter des entrées
-- L'entrée passe en `in_progress` dès le premier tick de consommation de points
-- Réordonnable librement (drag & drop HUD ou agent LLM)
-
----
-
-#### File 2 — File de la Population (`popConstructionQueue`)
-
-> Gérée **autonomement** par la population locale, sans intervention du joueur.
-
-- La population analyse les **signaux du marché local** : ressource manquante, prix élevé, besoin non satisfait
-- Elle décide elle-même de construire les bâtiments dont **elle a besoin** : maisons, petits ateliers, commerces…
-- Utilise ses **propres ressources** (achetées sur le marché local ou stockées)
-- Le joueur **ne contrôle pas** cette file — il peut l'observer mais pas la modifier directement
-- La population peut construire une EB de fortune via cette file quand elle migre sur une nouvelle tuile
-
-**Interaction entre les deux files :**
-- Les deux files se **partagent** la `constructionCapacity` disponible de la tuile
-- La répartition dépend de la **politique de l'État** propriétaire de la tuile :
-
-| Orientation politique | Part État/Corp | Part Population | Effet |
-|----------------------|---------------|-----------------|-------|
-| Libérale | faible (ex : 20%) | forte (ex : 80%) | Le marché construit ce dont il a besoin, l'État dirige peu |
-| Mixte (défaut) | 50% | 50% | Équilibre planification / initiative privée |
-| Dirigiste / Nationaliste | forte (ex : 80%) | faible (ex : 20%) | L'État contrôle la construction, la population subit |
-
-- La politique est un paramètre de l'entité État, modifiable via une décision (avec délai bureaucratique)
-- Une corporation propriétaire d'une tuile sans État dessus applique une politique libérale par défaut
-
----
-
-#### Mécanisme de débordement (commun aux deux files)
-
-À chaque tick, pour chaque file :
-1. Les points alloués sont consommés contre le premier chantier de la file
-2. Si terminé (points accumulés ≥ coût) → `done`, le **surplus déborde sur le chantier suivant** dans la même tick
-3. Ce mécanisme continue jusqu'à épuisement des points alloués
-
-**Exemple (file État, EB 30 pts/tick, 60% alloués = 18 pts/tick) :**
+**Exemple (territoire, capacité = 30 pts/tick) :**
 - File : [EB normale (coût 90 pts), Mine (coût 60 pts)]
-- Tick 1→5 : EB reçoit 18 pts/tick (90 pts → terminée au tick 5)
-- Tick 5 : 0 pts résiduels → Mine commence au tick 6
-
----
+- Ticks 1→3 : EB reçoit 30 pts/tick → terminée au tick 3
+- Tick 3 : 0 pts résiduels → Mine commence au tick 4
 
 #### Chantier interrompu (changement de propriétaire)
 
-Si la tuile change de propriétaire pendant un chantier **de la file État** :
-- Le chantier passe en état **`suspended`** — progression conservée, matériaux déjà consommés perdus
-- Le nouveau propriétaire peut **reprendre** ou **abandonner** (remise à zéro)
-- La progression partielle (`partialProgress`) est visible dans l'état de la tuile
-
-Les chantiers **de la file Population** ne sont pas affectés par le changement de propriétaire — la population continue à construire pour elle-même.
+- Construction `in_progress` sur une tuile perdue → **perdue** (pas de remboursement)
+- Constructions `pending` dans la file → conservées pour le territoire résiduel
 
 ### Travailleurs
 - Population locale + salariés corpo (considérés comme habitants de la tuile)
@@ -408,12 +493,37 @@ Les ressources qui circulent sur les marchés locaux et planétaires :
 
 ### Types de Corporations
 - **Joueurs humains** — connectés de façon asynchrone
-- **Corpos IA** — contrôlées par simulation, pilotables par agent LLM
-  - Stratégie expansionniste, économiste, militariste / sabotage
+- **Corpos IA** — architecture hybride FSM + LLM (voir ci-dessous)
+  - Profils : Expansionniste, Économiste, Militariste / Saboteur
+
+### Corporations IA — Architecture FSM + LLM
+
+Les bots Corpo utilisent deux couches complémentaires :
+
+**Couche 1 — FSM déterministe (tick-by-tick)**
+Gère les décisions routinières selon des règles codées par profil :
+- Expansionniste : `si tuile adjacente libre ET credits > seuil → enqueue claim`
+- Économiste : `si prix ressource > boom → augmenter production`
+- Militariste : `si corpo ennemie adjacente ET force_ratio > 1.2 → enqueue attaque`
+
+États FSM : `Idle`, `Expanding`, `Building`, `Trading`, `Raiding`
+
+**Couche 2 — Agent LLM (décisions stratégiques)**
+Déclenché sur événements clés (pas chaque tick) :
+- Réordonner la **file de construction**
+- Déclarer la **guerre** ou signer la **paix**
+- Proposer / accepter / refuser un **contrat**
+- Modifier les **seuils de tolérance** de la FSM
+
+> Le LLM gouverne la FSM, il ne la remplace pas. La FSM exécute dans les limites fixées par le LLM.
+
+Les bots utilisent les **mêmes endpoints API** que les joueurs humains. Profil fixe à la création, seuils FSM ajustables par le LLM. La création d'une corpo IA est réservée à l'admin ou au GM (`is_ai=True`).
 
 ### Claim de territoire
-- Réclamer un hex libre en y construisant une infrastructure
-- Créer un **État vassal** à partir de tuiles entièrement contrôlées (évolue selon les mêmes règles, peut gagner en autonomie)
+- Envoyer une **caravane de colonisation** vers une tuile sans gouvernement
+- La caravane transporte une population de base — elle prend du temps à arriver
+- Tuile occupée → conquête requise
+- Créer un **État vassal** à partir de tuiles entièrement contrôlées
 
 ---
 
@@ -446,18 +556,41 @@ Tuile → Planète → Système stellaire → Marché global (inter-étatique, o
 - Propagation à chaque tick entre tuiles connectées, **atténuée par la distance**
   - Exemple : pénurie tuile A → -50% sur A, -30% sur B (1 saut), -10% sur C (2 sauts)
 
-### Population et niveaux de richesse
-- Distribuée en **catégories sociales** (pauvres → classes moyennes → riches) avec besoins différents
-- La richesse **évolue** : un ouvrier mieux payé monte de catégorie après X ticks
-- **Migrations** possibles vers des tuiles plus attractives en cas de déséquilibre
+### Population et demande marché
 
-### Ressources tradables
-- Fer, O₂, Eau, Énergie, Tech, Nourriture
+La population génère une **demande minimale** proportionnelle à sa taille et sa classe sociale :
+
+| Classe | Consomme |
+|---|---|
+| Poor | `Food` + `Energy` basique |
+| Middle | `Food` + `Energy` + `Tech` |
+| Rich | `Food` + `Energy` + `Tech` + produits de luxe |
+
+Chaque classe a un **revenu moyen** (`avgIncome`) qui varie selon l'emploi disponible sur la tuile :
+- `workerRatio` élevé → `avgIncome` monte → consommation augmente
+- 50% chômage → `avgIncome` faible → faible demande de marché
+- Corp construit une usine, emploie 500 Poor → `avgIncome` ×4 → la tuile consomme 4× plus de `Food`
+
+**Mobilité sociale** : `Poor → Middle → Rich` selon `avgIncome` sur plusieurs ticks (seuils à calibrer).
+
+### Écologie et marché
+
+Les espèces naturelles sont des **structures passives de marché** :
+- `forest` → produit `Wood` / tick sur le marché local
+- `wildlife` → produit `Meat` / tick
+- Surexploitation → signal prix → incitation à replanter (autorégulation)
+
+### Migrations
+
+Deux mécanismes distincts :
+- **Porosité naturelle** : micro-flux passif entre tuiles limitrophes à chaque tick
+- **Migration économique** : flux dirigé via routes, amplifié par l'écart d'attractivité (emploi, salaires, ressources)
 
 ### Routes commerciales
-1. Lancer une **expédition d'exploration** entre deux tuiles
-2. Chemin calculé avec modificateurs terrain (ex : montagne = +10 ticks)
-3. Construire la route physique → les tuiles se voient sur le marché
+1. Lancer une **expédition** entre deux tuiles
+2. Chemin calculé avec modificateurs terrain
+3. Route établie → `TradeRoute` persistante → tuiles connectées sur le marché
+4. Route active → génère de la demande d'ergol et de fret sur le marché
 
 ### Régulation
 - **Marché national** : régulé par l'État via taxes/quotas, influençable par corruption
@@ -509,9 +642,33 @@ Tuile → Planète → Système stellaire → Marché global (inter-étatique, o
 
 ## 16. Voyages interplanétaires
 
-- Durée calculée à l'avance (distance + technologies + modificateurs terrain)
-- Événements aléatoires possibles pendant le trajet (piraterie, panne, opportunité)
-- Vaisseau appartient à un État ou une corporation — louable via contrat
+**Scope actuel : intra-système solaire** (Terre ↔ Mars, etc.). Les voyages inter-systèmes sont Phase 12+.
+
+### Modèles existants
+- `TradeRoute` : connexion permanente entre deux spaceports (`TradeRouteType.Orbital`)
+- `ExpeditionUnit` : unité en transit avec `ticksRemaining`, `cargo`, `status`
+
+### Durée
+```
+totalTicks = ceil(distanceUA / speedFactor × techMultiplier)
+```
+Modificateurs terrain (astéroïdes, etc.) → `+X ticks` à la création.
+
+### Propriété et usage
+- Vaisseaux appartiennent à une corporation **ou** un État
+- Louables via **contrat** (ex : État fournit la route, Corp fournit le spaceport)
+- Destruction possible sur événement grave
+
+### Événements en trajet
+- Tirés aléatoirement chaque tick (~3% de probabilité)
+- Piraterie → perte partielle de cargo
+- Panne → `ticksRemaining += X`
+- Découverte → ressources bonus à l'arrivée
+
+### Routes permanentes
+- Créée après première expédition réussie entre deux spaceports
+- Suspendue si un spaceport est détruit
+- Perdue si les deux spaceports sont détruits
 
 ---
 
@@ -548,25 +705,43 @@ Des événements se déclenchent par tirage pondéré à chaque tick serveur, ou
 - **Événementielle** : historique des décisions et contrats
 - **Relationnelle** : état des relations avec les autres entités
 
-> Détail complet : `questions/ia_modele_langage.md`
+> Détail architecture : `questions/ia_modele_langage.md`  
+> Features, design & discussion : `questions/gameplay_llm.md`
 
 ---
 
 ## 19. Multijoueur
 
 - **Mode** : Asynchrone temps réel (monde persistant côté serveur)
-- **Compétition + Coopération** : même bourse et même planète partagées
 - **Monde persistant** : tourne même quand tout le monde est déconnecté
-- **Classement** : Score global = crédits + territoires + score d'influence
+- **Relations libres** : les joueurs peuvent être adversaires, partenaires ou neutres — pas de camps forcés
+
+### Colonisation
+- Une tuile sans gouvernement peut avoir une **population existante** (gens sans État)
+- Pour la revendiquer : envoyer une **caravane** (pop de base embarquée)
+- Tuiles limitrophes → micro-flux migratoire naturel dès la colonisation
+- Pour croissance rapide : établir une **route** entre la nouvelle tuile et le territoire existant → flux migratoire amplifié
+
+### Classement (leaderboard)
+```
+score = credits + (claimedTiles × 100) + (globalReputation × 50)
+```
+- Rafraîchi chaque tick, top 10 visible
+- Pas de condition de victoire — pure simulation continue
+- Les corporations peuvent aller en crédits négatifs mais restent dans la simulation
 
 ---
 
 ## 20. Conditions de Victoire
 
-- **Court terme** : Être #1 au classement
-- **Long terme** : Atteindre un score de terraformation global (planète viable) en premier
-- **Coopératif** : La planète devient habitable si toutes les corpos atteignent un seuil combiné
-- **Fin de partie potentielle** : Contrôler l'organisme inter-étatique corrompu
+**Il n'y a pas de condition de victoire — le jeu est une simulation continue sans fin.**
+
+- Pas de « game over », pas d'état final gagné/perdu
+- Les corporations peuvent aller en crédits négatifs mais restent dans la simulation
+- La compétition s'exprime via le **leaderboard** (voir §19)
+- La coopération et les alliances émergent naturellement — elles ne sont pas imposées
+
+> Les modes coopératif (terraformation globale partagée) et inter-étatique sont envisagés en Phase 12+ (polish).
 
 ---
 
@@ -577,6 +752,11 @@ Des événements se déclenchent par tirage pondéré à chaque tick serveur, ou
 | Sujet | Question | Statut |
 |---|---|---|
 | Routes spatiales | Infrastructure spatioport à préciser | ❓ Ouvert |
+| Présence alien | Types d'entités alien : pop hostile, empire galactique, mégastructure — modèle `StateData` alien ou type dédié ? | ❓ Ouvert |
+| Points de Lagrange — blocus | Qu'est-ce que le blocus bloque exactement ? Toutes les ExpeditionUnit ? Seulement les commerciales ? | ❓ Ouvert |
+| Points de Lagrange — bâtiments | Types de bâtiments orbitaux (station, ascenseur spatial, observatoire, dépôt) — détail Phase 12 | 🔄 Différé |
+| Points de Lagrange — taxation | `passageTaxRate` configurable par contrat ou forfait ? Taxation partielle du cargo ou seulement en crédits ? | ❓ Ouvert |
+| Points de Lagrange — lunes | Les lunes ont-elles leurs propres points de Lagrange ou partagent-elles ceux de leur planète parente ? | ❓ Ouvert |
 | Espionnage | Mécanisme d'accès aux informations hors portée | ❓ Ouvert |
 | Arbre de technologies | Structure, déblocage, diffusion | ❓ Ouvert |
 | Multijoueur | Nombre de joueurs, synchronisation des ticks | ❓ Ouvert |

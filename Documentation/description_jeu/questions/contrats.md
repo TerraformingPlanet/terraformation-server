@@ -63,6 +63,32 @@
 
 ---
 
-## Exemple
+## Exemples
 
-Une corporation fait de la recherche dans son bâtiment de recherche et développe une variété de blé plus productive. Elle passe un contrat avec un État pour fournir de la nourriture en échange d'argent et d'influence. L'État diffuse progressivement cette connaissance agricole à d'autres acteurs, mais la corporation garde un avantage temporaire grâce à sa maîtrise opérationnelle.
+### Exemple 1 — Contrat de connaissance agricole (Corp ↔ État)
+
+Une corporation développe une variété de blé plus productive dans son laboratoire. Elle propose un contrat **privé** à un État voisin : fourniture de nourriture en échange de crédits et d'influence. L'État accepte et commence à recevoir les livraisons. Progressivement, la connaissance agricole **irradie** vers cet État et ses voisins — mais la corporation garde un avantage temporaire grâce à sa maîtrise opérationnelle.
+
+**Ce que ça illustre :** contrat de livraison de ressources, réputation bilatérale Corp↔État, diffusion passive de connaissance.
+
+---
+
+### Exemple 2 — Route commerciale interplanétaire (État ↔ Corp)
+
+**Contexte :** La France (État, Terre) souhaite ouvrir une route commerciale entre l'Europe et MarsCity pour rapprocher leurs marchés. Elle possède une route spatiale Terre→Mars mais n'a pas de spaceport privé sur Mars.
+
+**Le contrat :** La France propose un contrat **public (enchères)** ouvert aux corporations disposant d'un spaceport sur Mars. **Space Lille** remporte l'enchère.
+
+**Termes du contrat :**
+- Space Lille : fournit l'accès à son **spaceport** sur Mars + gestion logistique des rotations
+- France : fournit la **route spatiale** Terre→Mars + les vaisseaux de transport initiaux
+- Objectif : maintenir X rotations/tick pendant N ticks
+- Récompense : crédits/tick versés à Space Lille + bonus d'influence pour la France sur MarsCity
+
+**Effets en jeu une fois la route active :**
+- Une **demande d'ergol** apparaît sur le marché local (ex : 30 unités/vaisseau/rotation)
+- Une **demande de fret** (vaisseaux de transport) est générée sur le marché interplanétaire
+- Les **prix** des ressources échangées convergent progressivement entre les deux marchés (propagation hiérarchique : Terre ← route → Mars)
+- Si Space Lille ne maintient pas les rotations → rupture de contrat → pénalité financière + malus réputation bilatérale France↔Space Lille
+
+**Ce que ça illustre :** contrat État↔Corp avec enchère publique, dépendance aux ressources infra (ergol, vaisseaux), effet marché d'une route commerciale, risque de rupture.

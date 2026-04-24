@@ -259,7 +259,7 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
 **Prérequis** : Sprint C (persistance régionale) + Sprint D (AtmosphericState) terminés. Phase 6.9 (hiérarchie Cosmos) ✅
 
-> Design de référence : [Description_du_jeu.md §11-16](description_jeu/Description_du_jeu.md) — Corporations, États, Marchés, Contrats, Contrôle de tuiles
+> Design de référence : [Description_du_jeu.md §10-15](description_jeu/Description_du_jeu.md) — Corporations, États, Marchés, Contrats, Contrôle de tuiles
 
 ### Phase 7.1 — Propriété de tuile
 
@@ -293,184 +293,342 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 - [x] **B5** — `Game/Assets/Scripts/UI/GameHUD.cs` : section Bâtiments dans RightPanel (visible si tuile claimée par la corpo locale)
 - [x] **B5.1** — `Game/Assets/Scripts/UI/GameHUDBuildingIcons.cs` + `Assets/Resources/Fonts/Font Awesome 7 Free-Solid-900.otf` : couche d'icônes UI des bâtiments avec mapping `CorpBuildingType -> icon token`, preview dans le RightPanel, rendu Font Awesome si disponible et fallback texte sinon
 
-### Phase 7.3 — Marché local v1
+### ✅ Phase 7.3 — Marché local v1 (terminé 2026-04-21)
 
-> Design de référence : [Description_du_jeu.md §13](description_jeu/Description_du_jeu.md) — Marchés | [questions/marche_local.md](description_jeu/questions/marche_local.md)
+> Design de référence : [Description_du_jeu.md §12](description_jeu/Description_du_jeu.md) — Marchés | [questions/marche_local.md](description_jeu/questions/marche_local.md)
 
-- [ ] Catégories sociales de population (pauvres → classes moyennes → riches) avec besoins différents
-- [ ] Offre/demande dynamique à chaque tick, propagation des prix atténuée par la distance
-- [ ] Mobilité sociale : richesse qui évolue selon l'emploi, migrations sur événement
-- [ ] Marché national régulé par l'État (taxes, quotas)
-- [ ] Afficher un HUD de base (solde, ressources, score) + barre atmosphérique
+- [x] `SocialClass` (Poor/Middle/Rich) + `PopulationTier` + besoins différenciés par classe (`_DEMAND_PER_PERSON`)
+- [x] `compute_market_prices()` avec offre/demande par tick, élasticité, prix min/max (`logic/market.py`)
+- [x] `apply_social_mobility()` — mobilité entre classes selon taux d'emploi
+- [x] `taxRate` propagé depuis `StateData` vers `LocalMarketState` (`_resolve_tax_rate_locked`)
+- [x] `_process_market_tick_locked()` dans `runtime.py` — mise à jour des marchés à chaque tick
+- [x] `GET /game/market` + `GET /game/market/{corp_id}` dans `server.py`
+- [x] MCP `get_market_state(corp_id)` + MCP `get_global_market()` (Phase 9.5)
+- [x] `_marketPanel` dans `GameHUD.cs` — prix + tendance + population par classe
+- [x] **7 tests** dans `test_phase73_market.py` — tous passants
 
-### Phase 7.4 — Contrats v1
+**Écart différé** : propagation hiérarchique des prix (tuile → planète → système) — Phase 9.5 global market
 
-> Design de référence : [Description_du_jeu.md §14](description_jeu/Description_du_jeu.md) — Contrats | [questions/contrats.md](description_jeu/questions/contrats.md)
+### ✅ Phase 7.4 — Contrats v1 (terminé 2026-04-21)
 
-- [ ] Contrats État ↔ Corporation et Corporation ↔ Corporation
-- [ ] Types : livraison de ressources, contrôle territorial, exploration, présence militaire
-- [ ] Diffusion publique (enchères, le proposeur choisit) et privée (direct, validation bilatérale)
-- [ ] Durée fixe et open-ended, rupture possible avec pénalités
-- [ ] Diffusion de connaissance via contrat (corpo → État, corpo → corpo)
+> Design de référence : [Description_du_jeu.md §13](description_jeu/Description_du_jeu.md) — Contrats | [questions/contrats.md](description_jeu/questions/contrats.md)
 
-### Phase 7.5 — Réputation, États et nationalisation
+- [x] `ContractData` Pydantic + C# miroir (`SimulationContracts.cs`)
+- [x] Visibilité `Public` (enchère avec fenêtre de bid) et `Private` (bilatéral direct)
+- [x] Durée fixe (`durationTicks`) et open-ended (`durationTicks=0`), rupture avec `penaltyCredits`
+- [x] `knowledgeBonus` crédité à l'accepteur à la complétion
+- [x] `_process_contract_tick_locked()` — auto-livraison, complétion, expiration, pénalités
+- [x] `GET/POST /game/contracts`, `POST /game/contracts/{id}/accept|bid|confirm|break`
+- [x] MCP `propose_contract`, `list_contracts`, `list_public_contracts`, `accept_contract`, `bid_on_contract`, `confirm_bidder`, `break_contract`
+- [x] `_contractPanel` dans `GameHUD.cs` — liste + boutons Accept/Bid/Break
+- [x] **12 tests** dans `test_phase74_contracts.py` — tous passants
 
-> Design de référence : [Description_du_jeu.md §12](description_jeu/Description_du_jeu.md) — États | [questions/perte_de_controle_tuile.md](description_jeu/questions/perte_de_controle_tuile.md) | [questions/contrats.md](description_jeu/questions/contrats.md) §Réputation
-- [ ] Réputation globale + réputation bilatérale par paire
-- [ ] Seuil de tolérance de l'État calculé selon puissance, comportement, contrats
-- [ ] Types d'État (capitaliste, nationaliste…) + taux de corruption (passif et exploitable)
-- [ ] Processus de nationalisation progressif (délai = bureaucratie + corruption)
-- [ ] Fenêtre de réaction pour la corpo (corruption, contrat spécial)
-- [ ] Afficher un scoreboard avec toutes les corpos
+**Écart différé** : types non-livraison (contrôle territorial, exploration, présence militaire) — différé Phase 8+
 
-**Cible**
-> Une corpo joueur qui claim des hexes, construit des mines, signe des contrats avec les États, accumule des crédits et monte au classement. `habitabilityScore` est le KPI environnemental commun.
+### ✅ Phase 7.5 — Réputation, États et nationalisation (terminé 2026-04-21)
 
----
+> Design de référence : [Description_du_jeu.md §11](description_jeu/Description_du_jeu.md) — États | [questions/perte_de_controle_tuile.md](description_jeu/questions/perte_de_controle_tuile.md)
 
-## Phase 8 — Système d'Événements & Agents LLM
+- [x] `globalReputation` dans `CorporationData` + `_reputations: dict[tuple, float]` bilatéral dans runtime
+- [x] `StateData` : `toleranceThreshold`, `bureaucracy`, `corruptionRate`, `taxRate`, `StateType` enum
+- [x] `NationalizationProcess` avec délai = bureaucratie + corruption
+- [x] Fenêtre de réaction : `POST /game/nationalizations/{id}/corrupt` + `POST .../cancel-contract`
+- [x] `GET /game/states`, `GET /game/reputation/{source}/{target}`, `GET /game/scoreboard`
+- [x] `ScoreboardEntry` + `GET /game/scoreboard`
+- [x] MCP `create_state`, `list_states`, `get_reputation`, `list_reputations`, `list_nationalizations`, `get_scoreboard`
+- [x] `_nationalizationPanel` + `_scoreboardPanel` dans `GameHUD.cs`
+- [x] **11 tests** dans `test_phase75_states.py` — tous passants
 
-> Design de référence : [Description_du_jeu.md §17-18](description_jeu/Description_du_jeu.md) — Événements, IA & Agents LLM | [questions/ia_modele_langage.md](description_jeu/questions/ia_modele_langage.md)
-
-#### M1 — Modèles Python (✅ terminée)
-- [x] `EventType` IntEnum (7 types) + `EventEffect` + `EventData` Pydantic dans `models.py`
-- [x] Miroir C# `GameEventType`, `GameEventEffect`, `GameEventData`, `GameEventList` dans `SimulationContracts.cs`
-- [x] 8/8 tests — `SimulationCore/tests/test_phase8_events.py`
-
-#### M2 — EventManager côté serveur (✅ terminée)
-- [x] `logic/events.py` : `GAME_EVENT_CONFIGS` (7 entrées pondérées), `draw_event()`, `apply_event_to_corporation()`
-- [x] `_game_events` registry dans `runtime.py` + wipe dans `bootstrap_sol()`
-- [x] `_process_event_tick_locked()` intégré dans `_advance_tick_locked()` (probabilité 5%/tick)
-- [x] `list_game_events(limit=20)` méthode publique thread-safe
-
-#### M3 — Endpoint & MCP (✅ terminée)
-- [x] `GET /game/events?limit=N` → `list[EventData]` dans `server.py`
-- [x] MCP tool `list_game_events(limit=20)` dans `Mcp/server.py`
-
-#### M4 — UI popup notification (✅ terminée)
-- [x] Popup HUD déclenché quand un nouvel événement arrive (poll au tick)
-  - `BuildEventToastPanel()` : panel bas-centre, fond semi-opaque, dismiss auto 6s
-  - `PollEventToastLoop()` : poll toutes les 10s, compare `_lastKnownEventId`
-  - `ShowEventToast(GameEventData)` : couleur accent par type, texte riche TMP
-  - `AutoDismissToast(float)` : coroutine dismiss
-  - `GameEventListWrapper` : désérialiseur JSON local
-
-#### Phase 8.5 — Intégration agent LLM pour les États IA (✅ terminée)
-
-- [x] **M1** — Modèles Python (`AgentActionType`, `AgentAction`, `AgentMemory`, `isAiControlled` dans `StateData`) + miroirs C# + exports `__init__` + `CreateStateRequest` + tests 5/5
-- [x] **M2** — `logic/agent.py` : `build_system_prompt`, `build_state_context`, `call_llm_json`, `call_llm_tools`, `parse_action_from_json`, `parse_action_from_tool_call`, `run_agent` + `.env.example` + docker-compose env vars LLM
-- [x] **M3** — `runtime.py` : `_agent_memories` registry, `run_agent_for_state()`, `_run_agent_for_state_bg()`, `_apply_agent_action_locked()`, `_update_agent_memory_locked()`, `get_agent_context()`, `get_agent_memory()`, hook dans `_advance_tick_locked()` tous les `AGENT_TICK_INTERVAL` ticks
-- [x] **M4** — 3 endpoints DedicatedServer : `GET /game/agent/context/{id}`, `POST /game/agent/run/{id}`, `GET /game/agent/memory/{id}`
-- [x] **M5** — 3 tools MCP : `get_agent_context`, `run_agent_for_state`, `get_agent_memory` + section Phase 8.5 dans `MCP_TOOLS_ARCHITECTURE.md`
-- [x] **M6** — Skill `.github/skills/llm-agent-entity/SKILL.md` créé
-
-**Cible atteinte** : agent LLM opérationnel par État IA — mémoire contextuelle, actions stratégiques à chaque `AGENT_TICK_INTERVAL`, endpoints REST + tools MCP exposés, skill de référence créé
+**Résultat** : une corpo joueur peut claim des hexes, construire des mines, signer des contrats avec les États, être nationalisée, monter au classement. `habitabilityScore` est le KPI environnemental commun.
 
 ---
 
-## Phase 9 — Économie avancée & Routes commerciales
+## ✅ Phase 8 — Système d'Événements (terminé 2026-04-21)
 
-> Design de référence : [Description_du_jeu.md §13](description_jeu/Description_du_jeu.md) — Marchés, Routes commerciales, Organisme inter-étatique
+> Design de référence : [Description_du_jeu.md §16](description_jeu/Description_du_jeu.md) — Événements
 
-### Phase 9.1 — Modèles Python (✅ terminée)
-- [x] `ExpeditionUnit`, `TradeRoute`, enums `TradeRouteType/Status/ExpeditionStatus` dans `models.py`
-- [x] 12/12 tests roundtrip — `SimulationCore/tests/test_phase9_models.py`
-- [x] Contrats C# miroir dans `SimulationContracts.cs` : `CorpTradeRoute`, `CorpExpeditionUnit`, enums
+- [x] `EventData` : nom, description, `EventEffect`, poids de probabilité, déclencheur tick
+- [x] `EventType` : RencontreAlienne, TempêteSolaire, DécouverteMinière, CriseÉconomique, SabotageCorpo, Rébellion, MigrationPopulation, DecouverteMegastructure, EmpireGalactique
+- [x] `_process_event_tick_locked()` — tirage pondéré à chaque tick serveur
+- [x] `_game_events: list[EventData]` en mémoire dans runtime
+- [x] **8 tests** dans `test_phase8_events.py` — tous passants
 
-### Phase 9.2 — Runtime & Server (✅ terminée)
-- [x] `SimulationRuntime` : 5 méthodes publiques + 4 processors tick (`runtime.py`)
-- [x] `expeditions.py` : fonctions pures (path, ticks, efficacité, propagation prix)
-- [x] 5 endpoints FastAPI : POST/GET `/game/expeditions`, GET/DELETE `/game/trade-routes`
-- [x] 5 outils MCP : `launch_expedition`, `list_expeditions`, `list_trade_routes`, `get_trade_routes_by_tile`, `suspend_trade_route`
-- [x] 8/8 tests runtime — `SimulationCore/tests/test_phase9_runtime.py`
-
-### Phase 9.3 — UI GameHUD (✅ terminée)
-- [x] **U1** — Panel « Routes commerciales » : listing routes par tuile (type, from→to, efficacité, statut)
-- [x] **U2** — Panel « Expéditions » visible sur tuile claimée avec port
-- [x] **U3** — Input + bouton « Lancer expédition » (désactivé si aucun port sur tuile)
-- [x] **U4** — Liste expéditions en cours (ticksRemaining/totalTicks, type, status InTransit)
-- [x] Icons Road/SeaPort/Spaceport dans `GameHUDBuildingIcons.cs`
-- [x] Dropdown construction étendu (7 types) dans `GameHUD.cs`
-
-### Phase 9.4 — Évolutions & sparkline UI (✅ terminée)
-- [x] **M1** — Fluctuation des prix (offre/demande par tick), `priceVelocity` + sparkline UI
-  - `priceVelocity: float` — fractional price change per tick (pour détection tendance)
-  - `priceHistory: list[float]` — last 10 prices (pour sparkline ASCII ▁▂▃▄▅▆▇█)
-  - Sparkline visible dans GameHUD panel Marché (ligne par ressource + vélocité colorée)
-  - 4/4 tests Python passent, validation C# 0 erreur
-- [ ] Ressources tradables : fer, O₂, eau, énergie, tech, nourriture (Phase 9.5+)
-- [ ] `MarketManager` avec order book simplifié, propagation hiérarchique (Phase 9.5+)
-- [ ] Corpos IA participantes au marché (Phase 11)
-- [ ] Organisme inter-étatique optionnel (marché global corruptible) (Phase 9.5+)
-
-**Cible** : bourse qui fluctue en temps réel, marchés connectés par routes, possibilité de marché global inter-étatique
+**Écarts fermés** :
+- [x] Popup UI de notification Unity — ✅ 2026-04-21 (`_eventPopupPanel` + `ShowEventPopup()` dans `GameHUD.cs`)
+- [x] Endpoint REST `/game/events` pour exposer le log — ✅ 2026-04-21 (`GET /game/events`, MCP `list_game_events`)
 
 ---
 
-## Phase 9.5 — Ressources tradables & MarketManager
+## ✅ Phase 8.5 — Agents LLM & Game Master (terminé 2026-04-21)
 
-> Design de référence : [Description_du_jeu.md §10](description_jeu/Description_du_jeu.md) — Ressources | [Description_du_jeu.md §13](description_jeu/Description_du_jeu.md) — Marchés, propagation hiérarchique
+> Design de référence : [Description_du_jeu.md §17](description_jeu/Description_du_jeu.md) — IA & Agents LLM | [questions/ia_modele_langage.md](description_jeu/questions/ia_modele_langage.md)
 
-### Objectifs
-- Étendre `ResourceType` avec de nouvelles ressources commercialisables (fer, O₂, eau, tech)
-- Implémenter un `MarketManager` global avec propagation hiérarchique : tuile → planète → système
-- Exposer un endpoint `GET /game/market/global` + outil MCP `get_global_market`
-- Refléter les nouveaux types dans l'UI GameHUD (onglet Marché étendu)
+- [x] `AgentAction`, `AgentMemory`, `AgentActionType` modèles Pydantic
+- [x] `AgentMemory` par entité dans runtime (`_agent_memories`)
+- [x] Logique agent pure : `logic/agent.py` (décision, scoring, priorités)
+- [x] **11 tests** dans `test_phase85_agent_logic.py` + **5 tests** `test_phase85_agent_models.py`
+- [x] Tests `agent_behavior`, `agent_scenarios`, `agent_benchmark` (marqués `scenario/llm`)
+- [x] **GM (Phase 11.3)** — `_gm_cooldown_tick` + `_gm_last_lever` ; **25 tests** dans `test_phase113_gm.py`
 
-### Tâches
-
-#### M1 — Nouveaux ResourceType (Python + C#) ✅
-- [x] Ajouter dans `models.py` : `Iron = 5`, `Oxygen = 6`, `Water = 7`, `Tech = 8`
-- [x] Miroir C# dans `SimulationContracts.cs` : `CorpResourceType`
-- [x] Mettre à jour `SIMULATION_CONTRACTS.md`
-- [x] Tests round-trip nouveaux types — `test_phase95_resources.py` (4/4 PASS)
-
-#### M2 — GlobalMarketState (Python + C#) ✅
-- [x] `GlobalMarketState(BaseModel)` : `listings: list[ResourceListing]`, `tick: int`, `systemId: str`, `marketCount: int`
-- [x] Propagation : `compute_global_market(local_markets) → GlobalMarketState` dans `logic/market.py` (weighted avg par supply)
-- [x] `get_global_market(system_id)` public method dans `runtime.py` (thread-safe)
-- [x] Miroir C# `GlobalMarketState` + `GlobalMarketStateWrapper`
-- [x] Tests propagation — `test_phase95_global_market.py` (4/4 PASS)
-
-#### M3 — Endpoint & MCP tool ✅
-- [x] `GET /game/market/global` → `GlobalMarketState` dans `server.py`
-- [x] MCP tool `get_global_market(system_id)` dans `Mcp/server.py`
-- [x] Mettre à jour `MCP_TOOLS_ARCHITECTURE.md`
-
-#### M4 — UI GameHUD ✅
-- [x] Étendre le panel Marché : afficher tous les `ResourceType` (pas seulement Food)
-- [x] Icônes ou labels courts pour Iron/O₂/Eau/Tech dans les 3 switch statements
-- [ ] Sparkline + vélocité pour les nouveaux types (optionnel, reporté Phase 10)
+**Écarts** :
+- Intégration LLM live — tests marqués `@llm`, modèles validés (gemma4 FAST + Qwen2.5-14B DEEP, 29/30 benchmark)
+- [x] Endpoints agent — ✅ 2026-04-21 (`GET /game/agent/context/{state_id}`, `POST /game/agent/run/{state_id}`, MCP `get_agent_context` + `run_agent_for_state`)
 
 ---
 
-## Phase 10 — Multijoueur Réseau
+## ✅ Phase 9 — Économie avancée & Routes commerciales (terminé 2026-04-21)
+
+> Design de référence : [Description_du_jeu.md §12](description_jeu/Description_du_jeu.md) — Marchés, Routes commerciales
+
+### Phase 9 core — Modèles & Routes
+- [x] `TradeRoute`, `TradeRouteType`, `TradeRouteActivityStatus` modèles + `_trade_routes` dans runtime
+- [x] `ExpeditionUnit`, `ExpeditionStatus` + `_expeditions` dans runtime
+- [x] `GET/POST /travel`, `POST /travel/{id}/cancel` ; MCP `initiate_travel`, `list_active_travels`, `cancel_travel`
+- [x] **12 tests** dans `test_phase9_models.py` + `test_phase9_runtime.py`
+
+### Phase 9.4 — Vélocité des prix
+- [x] `priceVelocity` + `priceHistory` (10 entrées) dans `ResourceListing`
+- [x] `compute_market_prices()` peuple velocity + history à chaque tick
+- [x] **4 tests** dans `test_phase94_market.py`
+
+---
+
+## ⏳ Phase Rébellion — Perte de tuile par insatisfaction pop (non démarré)
+
+> Design de référence : [Description_du_jeu.md §15](description_jeu/Description_du_jeu.md) — Contrôle et perte de tuiles
+
+- [ ] `satisfactionScore` (float 0–1) calculé par tuile en fin de tick (besoins pop vs ressources disponibles)
+- [ ] Seuil configurable (`rebellion_threshold`, défaut : 0.25) dans les constantes de simulation
+- [ ] Si `satisfactionScore < rebellion_threshold` pendant N ticks consécutifs → déclenche `EventType.Rébellion`
+- [ ] Perte de contrôle : tuile repasse à `controlledBy = None`, corporation perd la tuile
+- [ ] Pénalité réputation pour la corporation (−réputation dans l'État concerné)
+- [ ] **6+ tests** dans `test_phase_rebellion.py`
+
+**Assertion script** : `SimulationCore/tests/assertions/test_p_rebellion.py` (à créer lors de l'implémentation)
+
+---
+
+## ⏳ Phase Réseau énergétique — Distribution énergie entre tuiles (non démarré)
+
+> Design de référence : [Description_du_jeu.md §9](description_jeu/Description_du_jeu.md) — Bâtiments
+
+- [ ] `EnergySegment` modèle — `fromTileId`, `toTileId`, `capacityKw`, `currentLoadKw`
+- [ ] `_energy_segments` dans runtime — segments créés à la construction d'un bâtiment réseau
+- [ ] Centrale produit X énergie → distribuée aux tuiles adjacentes via segments (capacité max par segment)
+- [ ] Énergie disponible sur le marché local de chaque tuile connectée
+- [ ] Saturation segment → pénurie sur les tuiles en bout de chaîne
+- [ ] **6+ tests** dans `test_phase_energy_grid.py`
+
+---
+
+## ⏳ Phase Déchets — Accumulation et impact écologique (non démarré)
+
+> Design de référence : [Description_du_jeu.md §9](description_jeu/Description_du_jeu.md) — Bâtiments
+
+- [ ] `wasteAccumulated` (float) sur `ClaimedTile` — s'incrémente à chaque tick par les bâtiments producteurs
+- [ ] Mine, Centrale → génèrent `Waste` sur le marché local + `wasteAccumulated` sur la tuile
+- [ ] Sans bâtiment de traitement : `wasteAccumulated > seuil` → malus `habitabilityScore` + malus biodiversité
+- [ ] `WasteTreatmentPlant` — bâtiment de traitement : consomme `Waste` du marché, réduit `wasteAccumulated`
+- [ ] **6+ tests** dans `test_phase_waste.py`
+
+---
+
+## ⏳ Phase Épuisement & Reconversion — Ressource épuisée (non démarré)
+
+> Design de référence : [Description_du_jeu.md §9](description_jeu/Description_du_jeu.md) — Bâtiments
+
+- [ ] `resourceReserve` (float) par tuile pour les ressources extractibles (minerals, iron…)
+- [ ] Mine : réduit `resourceReserve` à chaque tick ; à 0 → `BuildingData.status = depleted`
+- [ ] Bâtiment `depleted` → ne produit plus, émet un `EventType` d'épuisement
+- [ ] Action de reconversion : remplacer un bâtiment déplété par un autre (coût réduit vs construction neuve)
+- [ ] **6+ tests** dans `test_phase_depletion.py`
+
+---
+
+## ⏳ Phase Corruption — Stat État exploitable (non démarré)
+
+> Design de référence : [Description_du_jeu.md §12](description_jeu/Description_du_jeu.md) — États & Gouvernements
+
+- [ ] `corruptionLevel` (float 0–1) sur `StateData`
+- [ ] Corruption passive : réduit l'efficacité des bâtiments d'État et la qualité des contrats proposés
+- [ ] Action corpo `CorruptState` : dépense crédits → augmente `corruptionLevel` de l'État cible
+- [ ] Effets : réduction taxes, délai nationalisation multiplié, avantages contrats, seuil tolérance relevé
+- [ ] **6+ tests** dans `test_phase_corruption.py`
+
+---
+
+## ⏳ Phase Bureaucratie — Délai décisions État (non démarré)
+
+> Design de référence : [Description_du_jeu.md §12](description_jeu/Description_du_jeu.md) — États & Gouvernements
+
+- [ ] `bureaucracyLevel` (float 0–1) sur `StateData`
+- [ ] Toute décision d'État (nationalisation, proposition contrat, bannissement corpo) a un délai = `base_ticks × (1 + bureaucracyLevel)`
+- [ ] File de décisions d'État `_state_decision_queue` avec `ticksRemaining` par décision
+- [ ] Corruption réductrice : `corruptionLevel` élevé → réduit le `bureaucracyLevel` effectif
+- [ ] **6+ tests** dans `test_phase_bureaucracy.py`
+
+---
+
+## ⏳ Phase Migrations — Flux de population entre tuiles (non démarré)
+
+> Design de référence : [Description_du_jeu.md §13](description_jeu/Description_du_jeu.md) — Marchés
+
+- [ ] **Porosité naturelle** : micro-flux passif entre tuiles limitrophes à chaque tick (proportion configurable)
+- [ ] **Migration économique** : flux dirigé amplifié par l'écart `attractiveness` (emploi, salaires, ressources)
+- [ ] `attractiveness` calculé par tuile en fin de tick : `workerRatio × avgIncome × habitabilityScore`
+- [ ] Routes commerciales actives → amplifient le flux migratoire entre tuiles connectées
+- [ ] **6+ tests** dans `test_phase_migration.py`
+
+---
+
+## ⏳ Phase Mobilité sociale — Évolution des classes (non démarré)
+
+> Design de référence : [Description_du_jeu.md §13](description_jeu/Description_du_jeu.md) — Marchés
+
+- [ ] `avgIncome` par `SocialClass` sur chaque tuile, mis à jour à chaque tick selon `workerRatio`
+- [ ] Seuils de promotion : `Poor → Middle` si `avgIncome > seuil_pm` pendant N ticks consécutifs ; `Middle → Rich` idem
+- [ ] Seuils de régression : `Middle → Poor` si `avgIncome < seuil_mp` pendant N ticks
+- [ ] Migration des classes : la population promue peut migrer vers des tuiles correspondant à son niveau
+- [ ] **6+ tests** dans `test_phase_social_mobility.py`
+
+---
+
+## ⏳ Phase Événements en trajet — Incidents sur ExpeditionUnit (non démarré)
+
+> Design de référence : [Description_du_jeu.md §16](description_jeu/Description_du_jeu.md) — Voyages interplanétaires
+
+- [ ] À chaque tick, chaque `ExpeditionUnit` active a ~3% de probabilité de déclencher un incident
+- [ ] Types : `Piracy` (perte partielle cargo), `Breakdown` (`ticksRemaining += X`), `Discovery` (ressources bonus à l'arrivée)
+- [ ] Incidents stockés comme `EventData` dans le log d'événements de la simulation
+- [ ] Notification MCP `list_game_events` inclut les incidents de trajet
+- [ ] **6+ tests** dans `test_phase_travel_events.py`
+
+---
+
+## ⏳ Phase Leaderboard — Classement corporations (non démarré)
 
 > Design de référence : [Description_du_jeu.md §19](description_jeu/Description_du_jeu.md) — Multijoueur
 
-- [ ] Intégrer Mirror Networking
-- [ ] Serveur dédié autoritaire (client-serveur, pas P2P)
-- [ ] Synchroniser hexes, corpos, marché entre clients
-- [ ] Authentification joueur (Unity Authentication)
-- [x] Persistance serveur — PostgreSQL + SQLAlchemy Core (write-through, ✅ Phase 2 terminée)
-- [ ] Synchronisation Firebase ou autre pour la persistance client/cloud multi-instances
-- [ ] Test avec 2 joueurs simultanés
+- [ ] `leaderboardScore` calculé à chaque tick : `credits + (claimedTiles × 100) + (globalReputation × 50)`
+- [ ] `GET /game/leaderboard` — top 10 corporations triées par score, rafraîchi chaque tick
+- [ ] MCP tool `get_scoreboard` expose le classement aux agents LLM
+- [ ] Stocké en mémoire (pas de persistance requise — calculé à la volée)
+- [ ] **4+ tests** dans `test_phase_leaderboard.py`
+
+
+### Phase 9.5 — Marché global & ressources avancées
+- [x] `ResourceType` étendu : Iron, Oxygen, Water, Tech (Phase 9.5)
+- [x] `GlobalMarketState` + `compute_global_market()` — agrégation weighted-average par système
+- [x] `GET /game/global-market` (via `get_global_market()`); MCP `get_global_market`
+- [x] **4 tests** `test_phase95_global_market.py` + **4 tests** `test_phase95_resources.py`
+
+### Phase 9.6 — Emploi, revenus, expéditions avancées
+- [x] `employmentSlots` dans `BuildingData` + `EMPLOYMENT_CONFIGS` par `SocialClass`
+- [x] `avgIncome` comme multiplicateur de demande ; `_INCOME_DEFAULTS` par classe
+- [x] Cargo sur `ExpeditionUnit` + livraison de ressources en transit
+- [x] **6 tests** `test_phase96_employment.py` + **6 tests** `test_phase96_income.py` + **6 tests** `test_phase96_expeditions.py`
+
+**Écarts différés** :
+- Routes spatiales inter-planètes liées au Spaceport (building existe, logique de voyage non branchée)
+- Organisme inter-étatique (marché global corruptible) — non implémenté
 
 ---
 
-## Phase 11 — IA Corporations
+## ✅ Phase 10.5 — File de construction par territoire (terminé 2026-04-21)
 
-- [ ] `BotCorporation` avec FSM
-- [ ] 3 profils : Expansionniste, Économiste, Militariste/Saboteur
-- [ ] Réaction aux événements et aux fluctuations de marché
+- [x] `ConstructionItem`, `ConstructionStatus`, `TerritoryQueue` modèles
+- [x] `_construction_queues: dict[str, TerritoryQueue]` dans runtime
+- [x] Accumulation de points de construction par tick (EB Fortune → `constructionCapacity`)
+- [x] `isEBDeFortune` — spawn automatique d'un EB quand territoire sans EB actif
+- [x] **16 tests** dans `test_phase105_construction.py` — tous passants
+
+---
+
+## ✅ Phase 10 — Multijoueur Réseau (terminé 2026-04-21)
+
+> Design de référence : [Description_du_jeu.md §18](description_jeu/Description_du_jeu.md) — Multijoueur
+
+> **Complété** — voir [CHANGELOG.md §Phase 10](CHANGELOG.md) pour le détail.
+
+- [x] Authentification joueur JWT (HS256, bcrypt) — `/auth/register`, `/auth/login`, `/auth/link-corp`
+- [x] Table `players` PostgreSQL + stubs InMemoryRepository
+- [x] WebSocket push FastAPI `GET /game/ws/events?token=JWT` — broadcast tick aux clients
+- [x] `PlayerSession.cs` (singleton) + `LoginPanel.cs` + `SimulationWebSocketClient.cs` (NativeWebSocket, reconnexion auto)
+- [x] `TickManager.cs` + `GameHUD.cs` — events via WS push, polling HTTP en fallback
+- [x] Colonisation caravane — `ExpeditionUnit` Land → arrivée → `ClaimedTile` créée avec pop
+- [x] 3 tests `test_phase10_caravane.py` — tous passants
+
+**Prochaine étape** : Auth Unity Authentication + PostgreSQL multi-instance (voir Phase 10 ext. backlog)
+
+---
+
+## ✅ Phase 11.2 — IA Corporations FSM (terminé 2026-04-21)
+
+> Design de référence : [Description_du_jeu.md §17](description_jeu/Description_du_jeu.md) — IA
+
+- [x] `CorpProfile` enum : Expansionniste, Économiste, Militariste
+- [x] `BotFSMState` : Idle, Expanding, Building, Trading, Defending
+- [x] `fsmState` + `fsmThresholds` dans `CorporationData`
+- [x] `_process_bot_corporations_locked()` — une décision FSM par tick par corpo IA
+- [x] `AgentActionType` : ClaimTile, ConstructBuilding, UpdateFsmThresholds, ReorderConstructionQueue
+- [x] **20 tests** dans `test_phase112_corp_fsm.py` + **20 tests** `test_phase112_llm_corp.py`
+
+---
+
+## ✅ Phase 11.3 — Game Master narratif (terminé 2026-04-21)
+
+- [x] `_gm_cooldown_tick` + `_gm_last_lever` dans runtime
+- [x] Leviers GM : ajustement prix, déclenchement événement, boost réputation, accélération nationalisation
+- [x] Cooldown configurable + logique de scoring par levier
+- [x] **25 tests** dans `test_phase113_gm.py` — tous passants
+
+---
+
+## ✅ Phase 11.5 — Biodiversité par espèce (terminé 2026-04-21)
+
+> Design de référence : [Description_du_jeu.md §Écologie](description_jeu/Description_du_jeu.md)
+
+- [x] **M1** — Modèle `SpeciesData` (Python + C# `SimulationContracts.cs`)
+- [x] **M2** — Logique pure `SimulationCore/terraformation_sim/logic/ecology.py` (4 fonctions)
+- [x] **M3** — `_process_ecology_tick_locked()` dans `runtime.py` (intégré au tick)
+- [x] **M4** — Endpoint REST `GET /bodies/{id}/tiles/{tile_id}/ecology` + MCP tool `get_tile_ecology` + section Écologie dans `GameHUD`
+- [x] **18 tests** dans `test_phase115_ecology.py` — tous passants
+
+---
+
+## Phase 11 — IA Corporations (remplacé par 11.2 + 11.3 ci-dessus)
+
+> Toutes les fonctionnalités IA Corporations sont implémentées dans les phases 11.2 et 11.3 ci-dessus.
+
+---
+
+## ✅ Sprint DB — Persistence complète des entités gameplay (2026-04-21)
+
+> Voir détail complet dans [CHANGELOG.md](CHANGELOG.md)
+
+- [x] `persistence.py` — 9 nouvelles tables + 30 méthodes ABC + implémentations `PostgresRepository`
+- [x] `runtime.py` — write-through sur toutes les mutations gameplay + flush 10-ticks corps/marchés/expéditions
+- [x] `runtime.py` / `_hydrate_from_saved()` — restauration complète des 9 collections au démarrage
+- [x] `bootstrap_sol()` — wipe DB des 9 entités
+- [x] `test_phase_sprint_db.py` — 5 tests, 41 passed, 0 failed
+- [x] `test_phase12_building_level.py` — 12 tests, `upgrade_building` / `downgrade_building`, level clamp [1–5]
+- [x] **Assertion script** : `SimulationCore/tests/assertions/test_p12_sprint_db.py`
 
 ---
 
 ## Phase 12 — Polish
 
-- [ ] UI/UX complet : HUD, menus, tooltips
+### ✅ Sprint UI (2026-04-21)
+
+- [x] **P1** — Tick counter + solde crédits dans le TopBar — `_tickCreditsLabel` TMP inséré entre `_planetLabel` et `_toggleViewBtn` ; `PollTickStatus()` coroutine (10s, `GET /tick/status`) ; `UpdateTickCreditsLabel()` affiche `Tick N` ou `Tick N | X cr` ; `RefreshCorpListForTile()` capture `credits` depuis la corpo propriétaire — ✅ 2026-04-21
+- [x] **P2** — Noms des `EventType` en français dans la popup d'événement — `LocalizeEventType(EventType t)` switch-expression 9 valeurs FR ; `PollEventFeed()` remplace `{ev0.eventType}` par `{LocalizeEventType(ev0.eventType)}` — ✅ 2026-04-21
+
+### Backlog Polish (non démarré)
+
+- [x] **P3** — Équilibrage économique v1 — 8 constantes ajustées (`credits` départ 1000→5000, `Mine` 60→50pts, `Farm` 45→40pts, `EB_FORTUNE_CAPACITY` 5→10, `_PRICE_MAX` 10→50, `BASE_NATIONALIZATION_DELAY` 10→20, `CREDIT_SCALE` 10k→50k, `BRIBE_COST_PER_TICK` 50→100) — 172 tests passants — ✅ 2026-04-22
+- [x] **P4** — Tooltips flottants HUD — `GameHUDBuildingIcons.cs` : `TooltipText` par type de bâtiment (Mine/Farm/EnergyPlant/Research) ; `GameHUD.cs` : `TooltipTrigger` nested class (`IPointerEnter/Exit/MoveHandler`), `BuildTooltipPanel()`, `ShowTooltip/HideTooltip/RepositionTooltip` avec clamp écran, `AddTooltipTrigger()` câblé sur lignes de bâtiments + boutons Rompre/Corrompre — ✅ 2026-04-22
+- [x] UI/UX complet : menus, écrans de résumé
 - [ ] Sound design
-- [ ] Équilibrage économique (playtesting)
 - [ ] Optimisation performances (profiler Unity)
 - [ ] Distribution (itch.io ou autre)
 
@@ -486,11 +644,33 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 | MCP-1, 2, 3 | Outils cellule, tests auto, API gameplay | ✅ Terminé 2026-04-19 |
 | 7.1 | Propriété de tuile + Ownership UI | ✅ Terminé 2026-04-19 |
 | 7.2 | Bâtiments v1 | ✅ Terminé 2026-04-19 |
-| 7.3 | Marché local v1 | ✅ Terminé |
-| 7.4 | Contrats v1 | ✅ Terminé |
-| 7.5 | Réputation, États, Nationalisation | ✅ Terminé |
-| 8 | Événements — M1✅ M2✅ M3✅ M4✅ | ✅ COMPLET |
-| 9 | Économie & Bourse — 9.1/9.2/9.3/9.4 ✅ | 🔄 9.5 COMPLET (M1✅ M2✅ M3✅ M4✅) |
-| 10 | Multijoueur Réseau | ⬜ À faire |
-| 11 | IA Corporations | ⬜ À faire |
-| 12 | Polish | ⬜ Continu |
+| 7.3 | Marché local v1 (social classes, offre/demande, mobilité, taxe État) | ✅ Terminé 2026-04-21 |
+| 7.4 | Contrats v1 (public/privé, enchère, pénalités, knowledgeBonus) | ✅ Terminé 2026-04-21 |
+| 7.5 | Réputation, États, Nationalisation, Scoreboard | ✅ Terminé 2026-04-21 |
+| 8 | Événements de base + popup Unity + endpoint `/game/events` | ✅ Terminé 2026-04-21 |
+| 8.5 | Agents LLM + GM narratif + endpoints agent context/run | ✅ Terminé 2026-04-21 |
+| 9 | Routes commerciales, Expéditions, Vélocité prix | ✅ Terminé 2026-04-21 |
+| 9.4 | Vélocité & historique des prix | ✅ Terminé 2026-04-21 |
+| 9.5 | Marché global + ressources avancées (Iron/O₂/Water/Tech) | ✅ Terminé 2026-04-21 |
+| 9.6 | Emploi, revenus, cargo expéditions | ✅ Terminé 2026-04-21 |
+| 10 | Multijoueur Réseau (WebSocket JWT + NativeWebSocket Unity) | ✅ Terminé 2026-04-21 |}
+| 10.5 | File de construction par territoire (EB Fortune, TerritoryQueue) | ✅ Terminé 2026-04-21 |
+| 11.2 | IA Corporations FSM (3 profils, 5 états) | ✅ Terminé 2026-04-21 |
+| 11.3 | Game Master narratif (leviers, cooldown) | ✅ Terminé 2026-04-21 |
+| 11.5 | Biodiversité par espèce | ✅ Terminé 2026-04-21 |
+| 12 Polish P1+P2 | Tick counter TopBar + EventType FR popup | ✅ Terminé 2026-04-21 |
+| 12 Polish P3+P4 | Équilibrage économique v1 (8 constantes) + Tooltips flottants HUD | ✅ Terminé 2026-04-22 |
+| Sprint DB | Persistence complète des 9 entités gameplay (PostgreSQL write-through + hydratation) | ✅ Terminé 2026-04-21 |
+| 12 Polish suite | Menus, sound, perf, distribution | ⬜ Continu |
+| Rébellion | SatisfactionScore tuile → EventType.Rébellion → perte contrôle | ⬜ Non démarré |
+| Réseau énergétique | Segments entre tuiles, capacité, marché local énergie | ⬜ Non démarré |
+| Déchets | Accumulation par tick, impact écologique, bâtiment de traitement | ⬜ Non démarré |
+| Épuisement & reconversion | Ressource épuisée → reconversion bâtiment | ⬜ Non démarré |
+| Corruption | Stat État exploitable : taxes, nationalisation, délais | ⬜ Non démarré |
+| Bureaucratie | Délai décisions État = base × (1 + %) | ⬜ Non démarré |
+| Migrations | Porosité naturelle + flux économique entre tuiles | ⬜ Non démarré |
+| Mobilité sociale | Poor → Middle → Rich selon avgIncome sur N ticks | ⬜ Non démarré |
+| Événements en trajet | Piraterie/panne/découverte ~3%/tick sur ExpeditionUnit | ⬜ Non démarré |
+| Leaderboard | score = credits + tiles×100 + rep×50, top 10 par tick | ⬜ Non démarré |
+| Fine-tuning GM narratif | LoRA sur Qwen3-8B/xLAM-2-8b — dataset ~200-500 (état_monde→message), export GGUF → llama-swap ; voir `gameplay_llm.md §Fine-tuning GM` | ⬜ Après Phase 11.3 stable |
+
