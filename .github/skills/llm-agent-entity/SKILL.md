@@ -22,6 +22,27 @@ DedicatedServer /game/agent/*  (FastAPI)
 Mcp/server.py  get_agent_context / run_agent_for_state / get_agent_memory
 ```
 
+### Couche supplémentaire — FSM BotCorporation (Phase 11.2)
+
+Les **corporations IA** utilisent une **FSM déterministe** (Couche 1) + **LLM stratégique** (Couche 2) :
+
+```
+logic/corp_fsm.py   compute_next_fsm_state / compute_fsm_actions  (pur, sans lock)
+      ↕  snapshot pattern (build sous lock, run hors lock)
+runtime.py  _process_bot_tick_locked / _run_bot_fsm_bg
+```
+
+Fichiers clés corpo IA :
+| Fichier | Rôle |
+|---------|------|
+| `logic/corp_fsm.py` | FSM pure : `CorpSimSnapshot`, `compute_next_fsm_state`, `compute_fsm_actions` |
+| `models.py` `CorpProfile` | Profil fixe à la création : `Economiste`, `Expansionniste`, `Militariste` |
+| `models.py` `BotFSMState` | État courant FSM : `Idle`, `Expanding`, `Building`, `Trading`, `Raiding` |
+| `runtime.py` `_build_corp_snapshot_locked` | Snapshot lock-free pour FSM/LLM |
+| `runtime.py` `register_corporation(profile=)` | Création corpo IA avec profil |
+
+Le LLM corpo (M2) utilisera les mêmes `AgentAction` types que les états IA + les types 10-13 (`ClaimTile`, `ConstructBuilding`, `UpdateFsmThresholds`, `ReorderConstructionQueue`).
+
 ---
 
 ## Fichiers clés
@@ -42,13 +63,18 @@ Mcp/server.py  get_agent_context / run_agent_for_state / get_agent_memory
 
 ```
 LLM_BASE_URL=https://ai.prv.jerem.ovh/openai   # pas de slash final, pas de /v1
-LLM_MODEL=Qwen3.6-35B-A3B-MXFP4_MOE
+LLM_MODEL=Qwen3.6
 LLM_API_KEY=sk-...                              # générer depuis OpenWebUI Settings → API Keys
 LLM_MODE=tools                                  # "json" | "tools"
 AGENT_TICK_INTERVAL=10                          # ticks entre chaque cycle agent
+
+# Modèles disponibles (avril 2026)
+# Qwen3.6, gemma4, gpt-oss-120b, qwen3.5-opus-9b, deepseek-coder-16b
+# bge-reranker + nomic-embed-text-v2 (embedding uniquement — ne pas utiliser pour l'agent)
+LLM_BENCHMARK_MODELS=gemma4,Qwen3.6,deepseek-coder-16b   # pour les tests benchmark
 ```
 
-Modèle de dev/test rapide (Always-On 4B) : `gemma-4-E4B-it-Q5_K_M`
+Modèle de dev/test rapide (Always-On 4B) : `gemma4`
 
 ---
 
@@ -108,15 +134,49 @@ Schema attendu en mode `json` :
 | `tests/test_phase85_agent_logic.py` | aucun | Logique pure `logic/agent.py` (parse, prompt, build_context) — 10 tests, venv local |
 | `tests/test_phase85_agent_llm.py` | `llm` | Appels LLM réels (skipés si env absent) — 6 tests |
 | `tests/test_phase85_agent_scenarios.py` | `scenario` | Scénarios runtime + LLM bout-en-bout — 4 tests (2 mocked + 2 LLM réels) |
+| `tests/test_phase85_agent_benchmark.py` | `llm_benchmark` | Benchmark multi-modèles : 5 scénarios de décision d'état + 5 sélections d'outil MCP — N modèles |
+
+### Benchmark multi-modèles (`llm_benchmark`)
+
+Permet de comparer la pertinence des modèles disponibles sur deux familles de scénarios :
+
+**Décision d'état** : le modèle reçoit un `StateData` et doit choisir la bonne `AgentAction`
+- `json_parse` — retourne du JSON valide
+- `tools_call` — choisit le bon tool d'action
+- `stable_noop` — état sain → NoOp ou SetTolerance attendu
+- `nationalist_react` — pression corpo → ne doit PAS retourner NoOp
+- `capitalist_crisis` — crise → ProposeContract ou SetTolerance
+
+**Sélection d'outil MCP** : le modèle reçoit une instruction en langage naturel et doit choisir le bon tool MCP avec les bons paramètres
+- `mcp_advance_tick` — "Advance 5 ticks" → `advance_simulation_tick(steps=5)`
+- `mcp_world_inspect` — "Show world state" → `get_world_state`
+- `mcp_irrigate_cell` — "Cell q=2 r=-1 is dry" → `queue_server_terraform_action(1, 2, -1)`
+- `mcp_open_region` — "Open lat=0.85 lon=0.32" → `open_server_region`
+- `mcp_coherence_check` — "Check cell coherence" → `run_validation`
+
+```powershell
+# Lancer le benchmark complet
+cd e:\terraformation\SimulationCore
+e:\terraformation\.venv\Scripts\pytest.exe tests/test_phase85_agent_benchmark.py -m llm_benchmark -v
+
+# MCP seulement
+e:\terraformation\.venv\Scripts\pytest.exe tests/test_phase85_agent_benchmark.py -k mcp -m llm_benchmark -v
+```
+
+Configurer les modèles dans `.env` :
+```
+LLM_BENCHMARK_MODELS=gemma4,Qwen3.6,deepseek-coder-16b
+```
 
 ### Quels tests tournent où
 
 | Environnement | Tests disponibles | Commande |
 |---------------|-------------------|---------|
-| Venv local (Windows) | `not llm and not scenario` | `python -m pytest tests/ -m "not llm and not scenario" -v` |
+| Venv local (Windows) | `not llm and not scenario` + `llm` + `llm_benchmark` | `python -m pytest tests/ -m "not scenario" -v` |
 | Conteneur Docker | **tous** (C extensions disponibles) | `docker exec -w /app/SimulationCore terraformation-dedicated-server python -m pytest tests/ -m "llm or scenario" -v` |
 
-Tests `llm` / `scenario` nécessitent `h3` + `noise` (C extensions) → **Docker obligatoire**.
+Tests `scenario` nécessitent `h3` + `noise` (C extensions) → **Docker obligatoire**.
+Tests `llm` et `llm_benchmark` tournent en venv local Windows sans problème.
 
 ### Piège : identité de classe entre modules (importlib vs import)
 

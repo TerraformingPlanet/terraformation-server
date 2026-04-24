@@ -30,6 +30,13 @@ SimulationCore/
     test_phase94_market.py               # Phase 9.4 — priceVelocity + sparkline (4 tests)
     test_phase95_global_market.py        # Phase 9.5 — GlobalMarketState + compute_global_market (4 tests)
     test_phase95_resources.py            # Phase 9.5 — ResourceType + ResourceListing (4 tests)
+    test_phase10_caravane.py             # Phase 10 — colonisation via caravane ExpeditionUnit Land (3 tests)
+    test_phase85_agent_benchmark.py      # Phase 8.5 M7 — benchmark multi-modèles @llm_benchmark (10 scénarios × N modèles)
+    test_phase11_spaceport.py            # Phase 11 — prérequis Spaceport avant initiate_travel (3 tests)
+    test_phase11_persistence.py          # Phase 11 — hydratation _region_mutations + bootstrap_sol wipe (3 tests)
+    test_phase_sprint_db.py              # Sprint DB — persistence 9 entités gameplay (5 tests, skip si noise absent)
+    test_phase12_building_level.py        # Phase 12 — upgrade_building / downgrade_building, level clamp [1–5] (12 tests)
+    test_phase85_agent_behavior.py        # Phase 8.5 — comportement agents sous pression (4 scénarios @scenario)
     # Tout nouveau test_phase*.py est auto-découvert par Invoke-PhaseValidation.ps1
 ```
 
@@ -45,6 +52,13 @@ SimulationCore/
 | `SimulationCore/tests/test_phase9_models.py` | Tests modèles Phase 9.1 |
 | `SimulationCore/tests/test_phase9_runtime.py` | Tests runtime Phase 9.2 |
 | `SimulationCore/tests/test_phase94_market.py` | Tests marché Phase 9.4 |
+| `SimulationCore/tests/test_phase10_caravane.py` | Colonisation caravane Phase 10 (3 tests, skip si noise absent) |
+| `SimulationCore/tests/test_phase11_spaceport.py` | Prérequis Spaceport `initiate_travel` (3 tests, skip si noise absent) |
+| `SimulationCore/tests/test_phase11_persistence.py` | Hydratation `_region_mutations` + `bootstrap_sol` wipe (3 tests, skip si noise absent) |
+| `SimulationCore/tests/test_phase_sprint_db.py` | Round-trips corp/contrat/state/réputation + mock bootstrap_sol clears (5 tests, skip si noise absent) |
+| `SimulationCore/tests/test_phase12_building_level.py` | Upgrade/downgrade bâtiment — level clamp [1–5], 12 tests |
+| `SimulationCore/tests/test_phase85_agent_behavior.py` | Comportement agents sous pression nationaliste/capitaliste — 4 scénarios `@scenario` |
+| `SimulationCore/tests/test_phase85_agent_benchmark.py` | Benchmark multi-modèles — 10 scénarios × N modèles, tableau récap |
 | `Tools/Invoke-PhaseValidation.ps1` | **Validation globale de fin de phase** (auto-découvre tous les tests) |
 
 ## Tests LLM — stratégie (Phase 8.5+)
@@ -55,10 +69,11 @@ SimulationCore/
 |------|------------------|-------|
 | `llm` | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` absents | Tests d'intégration LLM purs |
 | `scenario` | idem | Scénarios runtime + LLM bout-en-bout |
+| `llm_benchmark` | idem | Comparaison multi-modèles — décision d'état + sélection outil MCP |
 
 ### Fixture `fast_model`
 
-Retourne un dict `{base_url, api_key, model}` avec le modèle Always-On 4B (`gemma-4-E4B-it-Q5_K_M`) — rapide, sans toucher `LLM_MODEL` de production.
+Retourne un dict `{base_url, api_key, model}` avec le modèle Always-On 4B (`gemma4`) — rapide, sans toucher `LLM_MODEL` de production.
 
 ```python
 def test_mon_test_llm(fast_model, monkeypatch):
@@ -67,6 +82,28 @@ def test_mon_test_llm(fast_model, monkeypatch):
     monkeypatch.setenv("LLM_MODEL",    fast_model["model"])
     monkeypatch.setenv("LLM_MODE",     "json")
     ...
+```
+
+### Fixture `benchmark_model` (parametrée)
+
+Retourne un dict `{base_url, api_key, model, _name}`. Parametrée depuis `LLM_BENCHMARK_MODELS` (CSV dans `.env`). Défaut si absent : `gemma4`.
+
+```python
+@pytest.mark.llm_benchmark
+@pytest.mark.llm
+def test_mon_bench(benchmark_model, bench_recorder):
+    t0 = time.perf_counter()
+    passed = False
+    # ... appel LLM sur benchmark_model["base_url"] / ["model"] / ["api_key"] ...
+    bench_recorder("mon_scenario", passed, time.perf_counter() - t0, detail="...")
+    assert passed
+```
+
+Le hook `pytest_terminal_summary` affiche automatiquement le tableau récap ✅/❌ + latence à la fin du run.
+
+Configurer les modèles à comparer dans `.env` :
+```
+LLM_BENCHMARK_MODELS=gemma4,Qwen3.6,deepseek-coder-16b
 ```
 
 ### Commandes
@@ -81,6 +118,12 @@ e:\terraformation\.venv\Scripts\python.exe -m pytest tests/ -m llm -v
 
 # Scénarios runtime+LLM
 e:\terraformation\.venv\Scripts\python.exe -m pytest tests/ -m scenario -v
+
+# Benchmark multi-modèles (tous scénarios)
+e:\terraformation\.venv\Scripts\python.exe -m pytest tests/test_phase85_agent_benchmark.py -m llm_benchmark -v
+
+# Benchmark — scénarios MCP uniquement
+e:\terraformation\.venv\Scripts\python.exe -m pytest tests/test_phase85_agent_benchmark.py -k mcp -m llm_benchmark -v
 
 # Tout (LLM auto-skippé si env absent)
 e:\terraformation\.venv\Scripts\python.exe -m pytest tests/ -v

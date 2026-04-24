@@ -118,6 +118,38 @@ Each processor method:
 - Writes results back to registries
 - Emits a `SimulationEvent` if significant (use `SimulationEventType` enum)
 
+### Pattern lock-free (FSM / LLM corpo — Phase 11.2+)
+
+Quand un processeur doit appeler du code potentiellement lent (FSM complex, appel LLM), utiliser le pattern snapshot :
+```python
+def _process_bot_tick_locked(self) -> None:
+    """Spawn a background FSM thread per AI corporation. Lock must be held."""
+    for corp in self._corporations.values():
+        if corp.isAI:
+            threading.Thread(
+                target=self._run_bot_fsm_bg,
+                args=(corp.id,),
+                daemon=True,
+            ).start()
+
+def _run_bot_fsm_bg(self, corp_id: str) -> None:
+    with self._lock:
+        corp = self._corporations.get(corp_id)
+        snapshot = self._build_corp_snapshot_locked(corp)  # fast read-only
+    # ---- hors lock : FSM ou LLM tourne librement ----
+    new_state = compute_next_fsm_state(corp, snapshot)
+    actions   = compute_fsm_actions(corp, snapshot, new_state)
+    # ---- re-acquire lock pour écrire ----
+    with self._lock:
+        corp2 = self._corporations.get(corp_id)
+        if corp2:
+            corp2.fsmState = new_state
+            for action in actions:
+                self._apply_agent_action_locked(action)
+```
+
+> Règle : le snapshot est construit sous lock (lecture rapide), le traitement tourne hors lock, les écritures se font sous lock. Même pattern pour les appels LLM (Phase 11.2 M2).
+
 ---
 
 ## Layer 4 — `DedicatedServer/app/server.py`
