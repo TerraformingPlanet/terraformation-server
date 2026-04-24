@@ -77,6 +77,24 @@ def get_view_state() -> dict:
 
 
 @mcp.tool
+def navigate_view(target: str) -> dict:
+    """
+    Navigate to a different view in Unity.
+    Triggers a ViewManager transition and returns the new view state.
+
+    Requires Unity to be running in Play Mode (bridge on port 48621).
+    This tool can never be migrated to the simulation server.
+
+    Args:
+        target: View to navigate to. One of:
+            - "galaxy"                 — top-level galaxy map
+            - "solar_system"           — solar system orbit view
+            - "toggle_planet_subview"  — toggle Globe ↔ Flat while in Planet view (no-op otherwise)
+    """
+    return _get("/debug/navigate", target=target)
+
+
+@mcp.tool
 def get_projection_summary() -> dict:
     """
     Get the planetary projection summary.
@@ -1345,6 +1363,20 @@ def get_body_tile_neighbors(body_id: str, tile_id: str) -> dict:
 
 
 @mcp.tool
+def get_tile_ecology(body_id: str, tile_id: str) -> dict:
+    """
+    Get the list of species populations on a surface tile.
+    Returns species id, density (0-1), temperature/O2 tolerances, and growth rate.
+    Does not require Unity. Wraps GET /bodies/{body_id}/tiles/{tile_id}/ecology.
+
+    Args:
+        body_id: UUID of the spherical body.
+        tile_id: H3 cell index string.
+    """
+    return {"species": _server_get(f"/bodies/{body_id}/tiles/{tile_id}/ecology")}
+
+
+@mcp.tool
 def apply_body_tile_delta(
     body_id: str,
     tile_id: str,
@@ -1875,19 +1907,6 @@ def get_market_state(corp_id: str) -> dict:
     return _server_get(f"/game/market/{corp_id}")
 
 
-@mcp.tool
-def get_global_market(system_id: str = "sol") -> dict:
-    """
-    Get the aggregated market state for a system (Phase 9.5).
-    Aggregates supply, demand, and weighted average price per resource type across all territories.
-    Does not require Unity in Play Mode.
-
-    Args:
-        system_id: System ID to aggregate (default "sol").
-    """
-    return _server_get(f"/game/market/global/{system_id}")
-
-
 # ── Contract tools (Phase 7.4) ────────────────────────────────────────────────
 
 @mcp.tool
@@ -2136,37 +2155,44 @@ def get_scoreboard() -> dict:
     return _server_get("/game/scoreboard")
 
 
-# ── Gameplay Events (Phase 8) ─────────────────────────────────────────────────
-
 @mcp.tool
 def list_game_events(limit: int = 20) -> dict:
     """
-    List the most recent gameplay narrative events (latest first).
-    Events include: alien encounter, solar storm, mining discovery, economic crisis,
-    corporate sabotage, rebellion, population migration.
-    Does not require Unity in Play Mode.
+    Return the last simulation events (newest first, max 200).
+    Includes EventType, effects (credits/resource delta), affected corp, and tick number.
+    Does not require Unity in Play Mode. Wraps GET /game/events on the DedicatedServer.
 
     Args:
-        limit: Number of events to return (1–200, default 20).
+        limit: Number of events to return (default 20, max 200).
     """
-    safe_limit = max(1, min(limit, 200))
-    return _server_get(f"/game/events?limit={safe_limit}")
+    return _server_get("/game/events", limit=limit)
 
 
-# ── Agent LLM (Phase 8.5) ─────────────────────────────────────────────────────
+@mcp.tool
+def get_global_market(system_id: str = "sol") -> dict:
+    """
+    Return the aggregated global market state for a solar system.
+    Includes per-resource price, velocity, supply, demand, and price history.
+    Does not require Unity in Play Mode. Wraps GET /game/global-market on the DedicatedServer.
+
+    Args:
+        system_id: Solar system identifier (default "sol").
+    """
+    return _server_get("/game/global-market", system_id=system_id)
+
+
+# ── Phase 8.5 — Agent LLM context + manual trigger ───────────────────────────
+
 
 @mcp.tool
 def get_agent_context(state_id: str) -> dict:
     """
-    Return the full LLM context snapshot for an AI-controlled state.
-
-    Includes: state fields, current scoreboard, last 5 gameplay events,
-    bilateral reputations, and agent memory (recent decisions).
-    Useful for debugging agent behaviour or seeding manual analysis.
-    Does not require Unity in Play Mode.
+    Return the LLM context snapshot for a State entity (state data, scoreboard, recent events, agent memory).
+    Useful to inspect what the agent "sees" before it decides.
+    Does not require Unity in Play Mode. Wraps GET /game/agent/context/{state_id} on the DedicatedServer.
 
     Args:
-        state_id: ID of the State entity to inspect.
+        state_id: UUID of the State entity.
     """
     return _server_get(f"/game/agent/context/{state_id}")
 
@@ -2174,31 +2200,38 @@ def get_agent_context(state_id: str) -> dict:
 @mcp.tool
 def run_agent_for_state(state_id: str) -> dict:
     """
-    Synchronously trigger one LLM agent decision cycle for the given state.
-
-    The agent will read its context, call the LLM, choose an action, and apply
-    it to the simulation immediately.  Returns the AgentAction that was taken.
-    Requires LLM_BASE_URL / LLM_API_KEY env vars to be set on the server.
-    Does not require Unity in Play Mode.
+    Manually trigger one synchronous LLM agent cycle for a State entity and return the resulting AgentAction.
+    This calls the LLM — may take several seconds.
+    Does not require Unity in Play Mode. Wraps POST /game/agent/run/{state_id} on the DedicatedServer.
 
     Args:
-        state_id: ID of the AI-controlled State to run.
+        state_id: UUID of the State entity to run the agent for.
     """
     return _server_post(f"/game/agent/run/{state_id}")
 
 
-@mcp.tool
-def get_agent_memory(state_id: str) -> dict:
-    """
-    Return the rolling agent memory (last 5 decisions + relationship notes) for a state.
+# ── Phase 7.4 — MCP tools for market list and cancel nationalization ──────────
 
-    Memory is in-process and resets on server restart / bootstrap_sol.
-    Does not require Unity in Play Mode.
+
+@mcp.tool
+def list_market_states() -> dict:
+    """
+    Return all local market states for every corporation.
+    Does not require Unity in Play Mode. Wraps GET /game/market on the DedicatedServer.
+    """
+    return _server_get("/game/market")
+
+
+@mcp.tool
+def cancel_nationalization_contract(process_id: str) -> dict:
+    """
+    Cancel a nationalization process by breaking the underlying contract.
+    Does not require Unity in Play Mode. Wraps POST /game/nationalizations/{process_id}/cancel-contract on the DedicatedServer.
 
     Args:
-        state_id: ID of the State whose memory to retrieve.
+        process_id: UUID of the NationalizationProcess to cancel.
     """
-    return _server_get(f"/game/agent/memory/{state_id}")
+    return _server_post(f"/game/nationalizations/{process_id}/cancel-contract")
 
 
 if __name__ == "__main__":
