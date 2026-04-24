@@ -18,7 +18,7 @@ from ..models import (
 # ── Tunable constants ─────────────────────────────────────────────────────────
 
 # Base delay in ticks before nationalisation takes effect (before bureaucracy/corruption modifiers).
-BASE_NATIONALIZATION_DELAY: int = 10
+BASE_NATIONALIZATION_DELAY: int = 20
 
 # Minimum delay regardless of modifiers.
 MIN_NATIONALIZATION_DELAY: int = 1
@@ -30,7 +30,7 @@ TOLERANCE_WEIGHT_CREDITS:   float = 0.2   # relative wealth
 TOLERANCE_WEIGHT_BROKEN:    float = 0.3   # broken-contract penalty per contract
 
 # Credits reference scale for the credit weight term (corp.credits / CREDIT_SCALE).
-CREDIT_SCALE: float = 10_000.0
+CREDIT_SCALE: float = 50_000.0
 
 # Broken-contract penalty per broken contract in the tolerance score.
 BROKEN_CONTRACT_PENALTY: float = 0.05
@@ -45,7 +45,7 @@ REPUTATION_DELTAS: dict[ReputationEventReason, tuple[float, float]] = {
 }
 
 # Bribe cost per delay-tick remaining when corrupting a nationalisation process.
-BRIBE_COST_PER_TICK: float = 50.0
+BRIBE_COST_PER_TICK: float = 100.0
 
 # Minimum bribe amount to cancel outright.
 BRIBE_THRESHOLD: float = 200.0

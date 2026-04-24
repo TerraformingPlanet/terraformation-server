@@ -34,12 +34,20 @@ from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from .models import (
         AnyBodyState,
+        CorporationData,
+        ContractData,
+        ExpeditionUnit,
         InteriorZoneState,
+        LocalMarketState,
+        NationalizationProcess,
         PendingTerraformAction,
         SolarSystemState,
         SpaceTravel,
         SphericalBodyState,
         StellarRoute,
+        StateData,
+        TerritoryQueue,
+        TradeRoute,
         WorldState,
     )
 
@@ -84,6 +92,16 @@ class SavedState:
     systems_json: list[str] = field(default_factory=list)
     routes_json: list[str] = field(default_factory=list)
     travels_json: list[str] = field(default_factory=list)
+    # Gameplay entities (Sprint DB)
+    corporations_json: list[str] = field(default_factory=list)
+    contracts_json: list[str] = field(default_factory=list)
+    states_json: list[str] = field(default_factory=list)
+    nationalizations_json: list[str] = field(default_factory=list)
+    reputations_raw: list[tuple[str, str, float]] = field(default_factory=list)  # (source_id, target_id, score)
+    trade_routes_json: list[str] = field(default_factory=list)
+    expeditions_json: list[str] = field(default_factory=list)
+    construction_queues_json: list[str] = field(default_factory=list)
+    markets_json: list[str] = field(default_factory=list)
 
     @property
     def has_data(self) -> bool:
@@ -115,6 +133,9 @@ class StateRepository(ABC):
     def upsert_cell_mutation(self, body_id: str, mutation: CellMutation) -> None: ...
 
     @abstractmethod
+    def clear_cell_mutations(self) -> None: ...
+
+    @abstractmethod
     def save_pending_action(self, action: "PendingTerraformAction") -> None: ...
 
     @abstractmethod
@@ -142,6 +163,77 @@ class StateRepository(ABC):
     def delete_space_travel(self, travel_id: str) -> None: ...
 
     @abstractmethod
+    def create_player(self, player_id: str, username: str, password_hash: str) -> None: ...
+
+    @abstractmethod
+    def get_player_by_username(self, username: str) -> "dict | None": ...
+
+    @abstractmethod
+    def link_player_corp(self, player_id: str, corp_id: str) -> None: ...
+
+    # -- Sprint DB gameplay entities --
+    @abstractmethod
+    def save_corporation(self, corp: "CorporationData") -> None: ...
+    @abstractmethod
+    def delete_corporation(self, corp_id: str) -> None: ...
+    @abstractmethod
+    def clear_corporations(self) -> None: ...
+
+    @abstractmethod
+    def save_contract(self, contract: "ContractData") -> None: ...
+    @abstractmethod
+    def delete_contract(self, contract_id: str) -> None: ...
+    @abstractmethod
+    def clear_contracts(self) -> None: ...
+
+    @abstractmethod
+    def save_state(self, state: "StateData") -> None: ...
+    @abstractmethod
+    def delete_state(self, state_id: str) -> None: ...
+    @abstractmethod
+    def clear_states(self) -> None: ...
+
+    @abstractmethod
+    def save_nationalization(self, nat: "NationalizationProcess") -> None: ...
+    @abstractmethod
+    def delete_nationalization(self, nat_id: str) -> None: ...
+    @abstractmethod
+    def clear_nationalizations(self) -> None: ...
+
+    @abstractmethod
+    def upsert_reputation(self, source_id: str, target_id: str, score: float) -> None: ...
+    @abstractmethod
+    def clear_reputations(self) -> None: ...
+
+    @abstractmethod
+    def save_trade_route(self, route: "TradeRoute") -> None: ...
+    @abstractmethod
+    def delete_trade_route(self, route_id: str) -> None: ...
+    @abstractmethod
+    def clear_trade_routes(self) -> None: ...
+
+    @abstractmethod
+    def save_expedition(self, exp: "ExpeditionUnit") -> None: ...
+    @abstractmethod
+    def delete_expedition(self, exp_id: str) -> None: ...
+    @abstractmethod
+    def clear_expeditions(self) -> None: ...
+
+    @abstractmethod
+    def save_construction_queue(self, queue: "TerritoryQueue") -> None: ...
+    @abstractmethod
+    def delete_construction_queue(self, territory_id: str) -> None: ...
+    @abstractmethod
+    def clear_construction_queues(self) -> None: ...
+
+    @abstractmethod
+    def save_market(self, market: "LocalMarketState") -> None: ...
+    @abstractmethod
+    def delete_market(self, territory_id: str) -> None: ...
+    @abstractmethod
+    def clear_markets(self) -> None: ...
+
+    @abstractmethod
     def load(self) -> SavedState: ...
 
 
@@ -157,6 +249,7 @@ class InMemoryRepository(StateRepository):
     def delete_tile_mutations(self, body_id) -> None: pass
     def upsert_tile_mutation(self, body_id, mutation) -> None: pass
     def upsert_cell_mutation(self, body_id, mutation) -> None: pass
+    def clear_cell_mutations(self) -> None: pass
     def save_pending_action(self, action) -> None: pass
     def delete_pending_action(self, action_id) -> None: pass
     def clear_pending_actions(self) -> None: pass
@@ -166,6 +259,36 @@ class InMemoryRepository(StateRepository):
     def delete_stellar_route(self, route_id) -> None: pass
     def save_space_travel(self, travel) -> None: pass
     def delete_space_travel(self, travel_id) -> None: pass
+    def create_player(self, player_id: str, username: str, password_hash: str) -> None: pass
+    def get_player_by_username(self, username: str) -> "dict | None": return None
+    def link_player_corp(self, player_id: str, corp_id: str) -> None: pass
+    # Sprint DB gameplay entities
+    def save_corporation(self, corp) -> None: pass
+    def delete_corporation(self, corp_id) -> None: pass
+    def clear_corporations(self) -> None: pass
+    def save_contract(self, contract) -> None: pass
+    def delete_contract(self, contract_id) -> None: pass
+    def clear_contracts(self) -> None: pass
+    def save_state(self, state) -> None: pass
+    def delete_state(self, state_id) -> None: pass
+    def clear_states(self) -> None: pass
+    def save_nationalization(self, nat) -> None: pass
+    def delete_nationalization(self, nat_id) -> None: pass
+    def clear_nationalizations(self) -> None: pass
+    def upsert_reputation(self, source_id, target_id, score) -> None: pass
+    def clear_reputations(self) -> None: pass
+    def save_trade_route(self, route) -> None: pass
+    def delete_trade_route(self, route_id) -> None: pass
+    def clear_trade_routes(self) -> None: pass
+    def save_expedition(self, exp) -> None: pass
+    def delete_expedition(self, exp_id) -> None: pass
+    def clear_expeditions(self) -> None: pass
+    def save_construction_queue(self, queue) -> None: pass
+    def delete_construction_queue(self, territory_id) -> None: pass
+    def clear_construction_queues(self) -> None: pass
+    def save_market(self, market) -> None: pass
+    def delete_market(self, territory_id) -> None: pass
+    def clear_markets(self) -> None: pass
 
     def load(self) -> SavedState:
         return SavedState()
@@ -238,6 +361,70 @@ _space_travels_table = Table(
     Column("travel_json", Text, nullable=False),
 )
 
+_players_table = Table(
+    "players", _metadata,
+    Column("player_id", String(36), primary_key=True),
+    Column("username", String(64), nullable=False, unique=True),
+    Column("password_hash", Text, nullable=False),
+    Column("corp_id", String(36), nullable=True),
+)
+
+# Sprint DB — gameplay entities
+_corporations_table = Table(
+    "corporations", _metadata,
+    Column("corp_id", String(36), primary_key=True),
+    Column("corp_json", Text, nullable=False),
+)
+
+_contracts_table = Table(
+    "contracts", _metadata,
+    Column("contract_id", String(36), primary_key=True),
+    Column("contract_json", Text, nullable=False),
+)
+
+_states_table = Table(
+    "game_states", _metadata,  # 'states' conflicts with SQLAlchemy internals on some DBs
+    Column("state_id", String(36), primary_key=True),
+    Column("state_json", Text, nullable=False),
+)
+
+_nationalizations_table = Table(
+    "nationalizations", _metadata,
+    Column("nat_id", String(36), primary_key=True),
+    Column("nat_json", Text, nullable=False),
+)
+
+_reputations_table = Table(
+    "reputations", _metadata,
+    Column("source_id", String(36), nullable=False),
+    Column("target_id", String(36), nullable=False),
+    Column("score", Float, nullable=False),
+)
+
+_trade_routes_table = Table(
+    "trade_routes", _metadata,
+    Column("route_id", String(36), primary_key=True),
+    Column("route_json", Text, nullable=False),
+)
+
+_expeditions_table = Table(
+    "expeditions", _metadata,
+    Column("expedition_id", String(36), primary_key=True),
+    Column("expedition_json", Text, nullable=False),
+)
+
+_construction_queues_table = Table(
+    "construction_queues", _metadata,
+    Column("territory_id", String(128), primary_key=True),
+    Column("queue_json", Text, nullable=False),
+)
+
+_markets_table = Table(
+    "markets", _metadata,
+    Column("territory_id", String(128), primary_key=True),
+    Column("market_json", Text, nullable=False),
+)
+
 
 # ---------------------------------------------------------------------------
 # PostgreSQL implementation
@@ -276,6 +463,10 @@ class PostgresRepository(StateRepository):
             conn.execute(text("""
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_cell_mutations
                 ON cell_mutations (body_id, cell_q, cell_r)
+            """))
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_reputations
+                ON reputations (source_id, target_id)
             """))
 
     # ------------------------------------------------------------------
@@ -381,6 +572,120 @@ class PostgresRepository(StateRepository):
         with self._engine.begin() as conn:
             conn.execute(_pending_actions_table.delete())
 
+    def clear_cell_mutations(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_cell_mutations_table.delete())
+
+    # -- Sprint DB gameplay entities --
+
+    def _upsert(self, table, pk_col: str, pk_val: str, json_col: str, json_val: str) -> None:
+        """Generic upsert for single-pk JSON tables."""
+        row = {pk_col: pk_val, json_col: json_val}
+        stmt = pg_insert(table).values(row).on_conflict_do_update(
+            index_elements=[pk_col],
+            set_={json_col: json_val},
+        )
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def _delete_by_pk(self, table, pk_col: str, pk_val: str) -> None:
+        """Generic delete by primary key."""
+        with self._engine.begin() as conn:
+            conn.execute(table.delete().where(getattr(table.c, pk_col) == pk_val))
+
+    def save_corporation(self, corp: "CorporationData") -> None:
+        self._upsert(_corporations_table, "corp_id", corp.id, "corp_json", corp.model_dump_json())
+
+    def delete_corporation(self, corp_id: str) -> None:
+        self._delete_by_pk(_corporations_table, "corp_id", corp_id)
+
+    def clear_corporations(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_corporations_table.delete())
+
+    def save_contract(self, contract: "ContractData") -> None:
+        self._upsert(_contracts_table, "contract_id", contract.id, "contract_json", contract.model_dump_json())
+
+    def delete_contract(self, contract_id: str) -> None:
+        self._delete_by_pk(_contracts_table, "contract_id", contract_id)
+
+    def clear_contracts(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_contracts_table.delete())
+
+    def save_state(self, state: "StateData") -> None:
+        self._upsert(_states_table, "state_id", state.id, "state_json", state.model_dump_json())
+
+    def delete_state(self, state_id: str) -> None:
+        self._delete_by_pk(_states_table, "state_id", state_id)
+
+    def clear_states(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_states_table.delete())
+
+    def save_nationalization(self, nat: "NationalizationProcess") -> None:
+        self._upsert(_nationalizations_table, "nat_id", nat.id, "nat_json", nat.model_dump_json())
+
+    def delete_nationalization(self, nat_id: str) -> None:
+        self._delete_by_pk(_nationalizations_table, "nat_id", nat_id)
+
+    def clear_nationalizations(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_nationalizations_table.delete())
+
+    def upsert_reputation(self, source_id: str, target_id: str, score: float) -> None:
+        row = {"source_id": source_id, "target_id": target_id, "score": score}
+        stmt = pg_insert(_reputations_table).values(row).on_conflict_do_update(
+            index_elements=["source_id", "target_id"],
+            set_={"score": score},
+        )
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def clear_reputations(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_reputations_table.delete())
+
+    def save_trade_route(self, route: "TradeRoute") -> None:
+        self._upsert(_trade_routes_table, "route_id", route.id, "route_json", route.model_dump_json())
+
+    def delete_trade_route(self, route_id: str) -> None:
+        self._delete_by_pk(_trade_routes_table, "route_id", route_id)
+
+    def clear_trade_routes(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_trade_routes_table.delete())
+
+    def save_expedition(self, exp: "ExpeditionUnit") -> None:
+        self._upsert(_expeditions_table, "expedition_id", exp.id, "expedition_json", exp.model_dump_json())
+
+    def delete_expedition(self, exp_id: str) -> None:
+        self._delete_by_pk(_expeditions_table, "expedition_id", exp_id)
+
+    def clear_expeditions(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_expeditions_table.delete())
+
+    def save_construction_queue(self, queue: "TerritoryQueue") -> None:
+        self._upsert(_construction_queues_table, "territory_id", queue.territoryId, "queue_json", queue.model_dump_json())
+
+    def delete_construction_queue(self, territory_id: str) -> None:
+        self._delete_by_pk(_construction_queues_table, "territory_id", territory_id)
+
+    def clear_construction_queues(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_construction_queues_table.delete())
+
+    def save_market(self, market: "LocalMarketState") -> None:
+        self._upsert(_markets_table, "territory_id", market.territoryId, "market_json", market.model_dump_json())
+
+    def delete_market(self, territory_id: str) -> None:
+        self._delete_by_pk(_markets_table, "territory_id", territory_id)
+
+    def clear_markets(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_markets_table.delete())
+
     def save_solar_system(self, system: "SolarSystemState") -> None:
         row = {"system_id": system.systemId, "system_json": system.model_dump_json()}
         stmt = pg_insert(_solar_systems_table).values(row).on_conflict_do_update(
@@ -432,8 +737,28 @@ class PostgresRepository(StateRepository):
                 )
             )
 
-    # ------------------------------------------------------------------
-    # Read / hydration
+    def create_player(self, player_id: str, username: str, password_hash: str) -> None:
+        row = {"player_id": player_id, "username": username, "password_hash": password_hash}
+        stmt = pg_insert(_players_table).values(row).on_conflict_do_nothing()
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def get_player_by_username(self, username: str) -> "dict | None":
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                _players_table.select().where(_players_table.c.username == username)
+            ).fetchone()
+            if row is None:
+                return None
+            return {"player_id": row.player_id, "username": row.username, "password_hash": row.password_hash, "corp_id": row.corp_id}
+
+    def link_player_corp(self, player_id: str, corp_id: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                _players_table.update()
+                .where(_players_table.c.player_id == player_id)
+                .values(corp_id=corp_id)
+            )
     # ------------------------------------------------------------------
 
     def load(self) -> SavedState:
@@ -500,5 +825,33 @@ class PostgresRepository(StateRepository):
             # galaxy — space travels (only in-transit)
             travel_rows = conn.execute(_space_travels_table.select()).fetchall()
             state.travels_json = [row.travel_json for row in travel_rows]
+
+            # Sprint DB — gameplay entities
+            corp_rows = conn.execute(_corporations_table.select()).fetchall()
+            state.corporations_json = [row.corp_json for row in corp_rows]
+
+            contract_rows = conn.execute(_contracts_table.select()).fetchall()
+            state.contracts_json = [row.contract_json for row in contract_rows]
+
+            state_rows = conn.execute(_states_table.select()).fetchall()
+            state.states_json = [row.state_json for row in state_rows]
+
+            nat_rows = conn.execute(_nationalizations_table.select()).fetchall()
+            state.nationalizations_json = [row.nat_json for row in nat_rows]
+
+            rep_rows = conn.execute(_reputations_table.select()).fetchall()
+            state.reputations_raw = [(row.source_id, row.target_id, row.score) for row in rep_rows]
+
+            trade_route_rows = conn.execute(_trade_routes_table.select()).fetchall()
+            state.trade_routes_json = [row.route_json for row in trade_route_rows]
+
+            exp_rows = conn.execute(_expeditions_table.select()).fetchall()
+            state.expeditions_json = [row.expedition_json for row in exp_rows]
+
+            queue_rows = conn.execute(_construction_queues_table.select()).fetchall()
+            state.construction_queues_json = [row.queue_json for row in queue_rows]
+
+            market_rows = conn.execute(_markets_table.select()).fetchall()
+            state.markets_json = [row.market_json for row in market_rows]
 
         return state

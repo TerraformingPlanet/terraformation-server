@@ -281,6 +281,7 @@ class SocialClass(IntEnum):
 class PopulationTier(BaseModel):
     socialClass: SocialClass = SocialClass.Poor
     count: int = 0
+    avgIncome: float = 0.0  # Phase 9.6 — average income multiplier per person
 
 
 class ClaimedTile(BaseModel):
@@ -324,6 +325,17 @@ BUILDING_CONFIGS: dict[BuildingType, dict[ResourceType, float]] = {
     BuildingType.Spaceport:   {},   # Phase 9.1
 }
 
+# Workers required per social class, per building type (Phase 9.6)
+EMPLOYMENT_CONFIGS: dict[BuildingType, dict[str, int]] = {
+    BuildingType.Mine:        {"Poor": 50, "Middle": 10},
+    BuildingType.Farm:        {"Poor": 30, "Middle": 5},
+    BuildingType.EnergyPlant: {"Middle": 20, "Rich": 5},
+    BuildingType.Research:    {"Middle": 10, "Rich": 15},
+    BuildingType.Road:        {},
+    BuildingType.SeaPort:     {},
+    BuildingType.Spaceport:   {},
+}
+
 
 class BuildingData(BaseModel):
     id: str = ""
@@ -333,6 +345,73 @@ class BuildingData(BaseModel):
     corpId: str = ""
     workerRatio: float = 1.0
     ticksActive: int = 0
+    employmentSlots: dict[str, int] = Field(default_factory=dict)  # Phase 9.6 — keys = SocialClass.name
+    level: int = 1  # Phase 12 — building level [1–5]: production × level, workers required × level
+
+
+# ── Construction queue (Phase 10.5) ──────────────────────────────────────────
+
+class ConstructionStatus(IntEnum):
+    Pending    = 0  # waiting in queue
+    InProgress = 1  # currently being built (first item only)
+    Done       = 2  # completed this tick — transient, used internally
+
+
+class ConstructionItem(BaseModel):
+    id: str = ""                            # UUID
+    buildingType: BuildingType = BuildingType.Mine
+    tileId: str = ""
+    bodyId: str = ""
+    corpId: str = ""
+    status: ConstructionStatus = ConstructionStatus.Pending
+    ticksRemaining: int = 0                 # decremented each tick by constructionPts applied
+    totalCostPts: int = 0                   # total construction points needed
+    pointsAccumulated: int = 0              # accumulated so far
+
+
+class TerritoryQueue(BaseModel):
+    territoryId: str = ""                   # "{corpId}::{min_tileId}"
+    corpId: str = ""
+    bodyId: str = ""
+    tileIds: list[str] = Field(default_factory=list)    # contiguous tile IDs in territory
+    items: list[ConstructionItem] = Field(default_factory=list)
+    constructionCapacity: float = 0.0       # sum of EB production this tick
+    isEBDeFortune: bool = False             # true when capacity comes from an auto-spawned EB
+
+
+# Building cost in construction points (Phase 10.5)
+BUILDING_CONSTRUCTION_COST: dict[BuildingType, int] = {
+    BuildingType.Mine:        50,
+    BuildingType.Farm:        40,
+    BuildingType.EnergyPlant: 90,
+    BuildingType.Research:    90,
+    BuildingType.Road:        20,
+    BuildingType.SeaPort:     120,
+    BuildingType.Spaceport:   240,
+}
+
+# Construction points produced per tick by an EB (formal vs de fortune)
+EB_FORMAL_CAPACITY:   float = 30.0
+EB_FORTUNE_CAPACITY:  float = 10.0
+EB_FORTUNE_WOOD_COST: float = 2.0   # Wood units consumed per tick by EB de fortune
+
+
+# ── Bot Corporations FSM (Phase 11.2) ───────────────────────────────────────
+
+class CorpProfile(IntEnum):
+    """Fixed strategic personality assigned at corporation creation (AI only)."""
+    Economiste      = 0   # optimise production & marché
+    Expansionniste  = 1   # claim agressif de tuiles
+    Militariste     = 2   # cible les infrastructures adverses
+
+
+class BotFSMState(IntEnum):
+    """Current FSM state of an AI-controlled corporation."""
+    Idle       = 0
+    Expanding  = 1   # en train de claim des tuiles
+    Building   = 2   # construction en cours prioritaire
+    Trading    = 3   # optimisation marchés/contrats
+    Raiding    = 4   # guerre économique vs corpo cible
 
 
 class CorporationData(BaseModel):
@@ -345,6 +424,10 @@ class CorporationData(BaseModel):
     buildings: list[BuildingData] = Field(default_factory=list)
     resources: dict[str, float] = Field(default_factory=dict)
     globalReputation: float = 0.0    # Phase 7.5 — score public visible par tous
+    # Phase 11.2 — FSM bot fields (ignored for human players)
+    profile: CorpProfile = CorpProfile.Economiste
+    fsmState: BotFSMState = BotFSMState.Idle
+    fsmThresholds: dict = Field(default_factory=dict)  # overrides for CORP_FSM_DEFAULTS
 
 
 # ── Market layer (Phase 7.3) ──────────────────────────────────────────────────
@@ -423,6 +506,7 @@ class ContractData(BaseModel):
 class StateType(IntEnum):
     Capitalist  = 0
     Nationalist = 1
+    Alien       = 2
 
 
 class StateData(BaseModel):
@@ -433,6 +517,7 @@ class StateData(BaseModel):
     bureaucracy: float = 0.1       # 0..1 — délai multiplicateur sur décisions
     corruptionRate: float = 0.1    # 0..1 — réduit le délai de nationalisation ET modifie l'efficacité de l'État
     toleranceThreshold: float = 0.5  # seuil du score de tolérance au-delà duquel la nationalisation est déclenchée
+    taxRate: float = 0.15          # Phase 7.5.1 — taux de taxe propagé aux marchés locaux couverts par cet État
     isAiControlled: bool = False   # True → un agent LLM pilote cet état (Phase 8.5)
 
 class ReputationEventReason(IntEnum):
@@ -617,6 +702,23 @@ class GlobalWindPattern(BaseModel):
     windIntensity: float = 0.3      # moderate
 
 
+class SpeciesData(BaseModel):
+    """One species population on a tile.
+    density is the current population fraction [0, 1].
+    marketOutput maps resource names to per-tick output multiplied by density.
+    minVegetation is the required vegetation coverage for animal species.
+    """
+    speciesId: str = ""
+    density: float = 0.0           # current population density [0, 1]
+    minTemp: float = 0.0           # minimum viable temperature (°C)
+    maxTemp: float = 50.0          # maximum viable temperature (°C)
+    minO2: float = 0.0             # minimum viable O₂ fraction [0, 1]
+    maxO2: float = 1.0             # maximum viable O₂ fraction [0, 1]
+    growthRate: float = 0.01       # density increase per tick when conditions met
+    marketOutput: dict[str, float] = Field(default_factory=dict)  # resource → per-tick base output
+    minVegetation: float = 0.0     # required vegetation coverage (for animals)
+
+
 class GoldbergTileState(BaseModel):
     """One tile on a spherical body surface — H3 hexagonal hierarchical cell.
     tileId is the H3 cell index string (e.g. '8928308280fffff').
@@ -629,8 +731,7 @@ class GoldbergTileState(BaseModel):
     - altitude: height relative to sea level, normalised [-1, 1] (negative = submarine).
     - albedo: surface reflectivity [0=absorb all, 1=reflect all].
     - solarIrradiance: effective W/m² received at this tile (cos-latitude weighted).
-    - vegetationDensity: fraction of tile covered by vegetation [0, 1].
-    - wildlifeDensity: relative density of surface fauna [0, 1].
+    - species: list of active SpeciesData populations (replaces legacy vegetationDensity/wildlifeDensity).
     - atmosphereDeltaCo2/O2: per-tick gas delta produced/consumed by this tile's occupants;
       aggregated into SphericalBodyState.atmosphere by advance_tick().
     """
@@ -653,8 +754,7 @@ class GoldbergTileState(BaseModel):
     altitude: float = 0.0           # normalised height relative to sea level [-1, 1]
     albedo: float = 0.15            # surface albedo [0, 1]
     solarIrradiance: float = 0.0    # W/m² at tile surface
-    vegetationDensity: float = 0.0  # [0, 1]
-    wildlifeDensity: float = 0.0    # [0, 1] — species breakdown in sprint E
+    species: list[SpeciesData] = Field(default_factory=list)  # active species populations
     atmosphereDeltaCo2: float = 0.0 # CO₂ volume fraction delta per tick (from buildings/plants)
     atmosphereDeltaO2: float = 0.0  # O₂ volume fraction delta per tick
 
@@ -728,6 +828,8 @@ class SphericalBodyState(BodyBase):
     equilibriumTemperature: float = -273.15   # °C — updated by compute_equilibrium_temperature
     globalWindPattern: GlobalWindPattern = Field(default_factory=GlobalWindPattern)
     luminosityLsun: float = 0.0               # L☉ — stars only
+    # ── Ecology (Phase 11.5) ────────────────────────────────────────────────
+    ecologyResources: dict[str, float] = Field(default_factory=dict)  # aggregated species output per tick
 
     @property
     def atmosphereDensity(self) -> float:  # type: ignore[override]
@@ -861,6 +963,7 @@ class ExpeditionUnit(BaseModel):
     pathTileIds: list[str] = Field(default_factory=list)
     status: ExpeditionStatus = ExpeditionStatus.InTransit
     isPhantom: bool = False
+    cargo: dict[str, float] = Field(default_factory=dict)  # Phase 9.6 — keys = ResourceType.name
 
 
 # ── Gameplay Events (Phase 8) ─────────────────────────────────────────────────
@@ -868,11 +971,16 @@ class ExpeditionUnit(BaseModel):
 # ── Agent LLM (Phase 8.5) ────────────────────────────────────────────────────────
 
 class AgentActionType(IntEnum):
-    """Actions an LLM agent can dispatch for a State entity."""
+    """Actions an LLM/FSM agent can dispatch for a State or Corporation entity."""
     NoOp                  = 0
     ProposeContract       = 1
     SetTolerance          = 2
     TriggerNationalization = 3
+    # Phase 11.2 — Corporation FSM actions
+    ClaimTile             = 10
+    ConstructBuilding     = 11
+    UpdateFsmThresholds   = 12
+    ReorderConstructionQueue = 13
 
 
 class AgentAction(BaseModel):
@@ -896,13 +1004,15 @@ class AgentMemory(BaseModel):
 
 class EventType(IntEnum):
     """Narrative gameplay events — distinct from SimulationEventType (engine events)."""
-    RencontreAlienne    = 0
-    TempeteSolaire      = 1
-    DecouverteMiniere   = 2
-    CriseEconomique     = 3
-    SabotageCorpo       = 4
-    Rebellion           = 5
-    MigrationPopulation = 6
+    RencontreAlienne        = 0
+    TempeteSolaire          = 1
+    DecouverteMiniere       = 2
+    CriseEconomique         = 3
+    SabotageCorpo           = 4
+    Rebellion               = 5
+    MigrationPopulation     = 6
+    DecouverteMegastructure = 7
+    EmpireGalactique        = 8
 
 
 class EventEffect(BaseModel):

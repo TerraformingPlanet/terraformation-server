@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 import threading
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from .logic.corp_fsm import CorpSimSnapshot
 
 from .logic import apply_modifier_to_cell, apply_region_progress, aggregate_tile_deltas, can_apply_action, compute_atmospheric_state, compute_body_position_at_tick, compute_equilibrium_temperature, compute_planetary_irradiance, compute_tile_irradiance, spectral_type_to_luminosity, _body_h3_resolution, generate_interior_cells, generate_spherical_tiles, GENERATION_VERSION, process_pending_actions, queue_action, summarize_region_cells, summarize_spherical_tiles, terraform_action_definitions
 from .logic.market import (
@@ -91,6 +97,7 @@ from .models import (
     BuildingData,
     BuildingType,
     BUILDING_CONFIGS,
+    EMPLOYMENT_CONFIGS,
     LocalMarketState,
     GlobalMarketState,
     ResourceListing,
@@ -110,12 +117,39 @@ from .models import (
     AgentAction,
     AgentActionType,
     AgentMemory,
+    CorpProfile,
+    TradeRoute,
+    TradeRouteType,
+    TradeRouteActivityStatus,
+    ExpeditionUnit,
+    ExpeditionStatus,
+    ConstructionItem,
+    ConstructionStatus,
+    TerritoryQueue,
+    BUILDING_CONSTRUCTION_COST,
+    EB_FORMAL_CAPACITY,
+    EB_FORTUNE_CAPACITY,
+    EB_FORTUNE_WOOD_COST,
+)
+from .logic.expeditions import (
+    compute_expedition_path,
+    compute_expedition_total_ticks,
+    compute_route_efficiency,
+    propagate_prices,
 )
 from .persistence import CellMutation, InMemoryRepository, SavedState, StateRepository, TileMutation
 
 
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
+
+
+# Attenuation factor per route type (mirrors _EXPEDITION_CONFIG in logic/expeditions.py)
+_EXPEDITION_CONFIG_ATTENUATION: dict[str, float] = {
+    "Land":     0.7,
+    "Maritime": 0.8,
+    "Orbital":  0.9,
+}
 
 
 class InMemorySimulationRuntime:
@@ -164,8 +198,20 @@ class InMemorySimulationRuntime:
         # Gameplay event log (Phase 8)
         self._game_events: list[EventData] = []                          # chronological event log
         self._event_rng: random.Random = random.Random()                 # isolated RNG for event draws
-        # Agent LLM memories (Phase 8.5)
+        # Agent LLM memories (Phase 8.5) — keyed by entity_id (state or corp)
         self._agent_memories: dict[str, AgentMemory] = {}               # state_id -> AgentMemory
+        # GM Narrative state (Phase 11.3)
+        self._gm_cooldown_tick: int = 0                                  # tick when cooldown expires
+        self._gm_last_lever: str = ""                                    # last lever applied by GM
+        # Trade Routes & Expedition registry (Phase 9.2)
+        self._trade_routes: dict[str, TradeRoute] = {}                  # route_id -> TradeRoute
+        self._expeditions: dict[str, ExpeditionUnit] = {}               # expedition_id -> ExpeditionUnit
+        self._expedition_rng: random.Random = random.Random()           # isolated RNG for fail/delay rolls
+        # Construction queue registry (Phase 10.5)
+        self._construction_queues: dict[str, TerritoryQueue] = {}       # territory_id -> TerritoryQueue
+        # WebSocket broadcast callback (Phase 10) — set by server.py after startup
+        # Signature: Callable[[dict], None] — called from the tick thread (sync wrapper)
+        self._ws_broadcast_callback: "Callable[[dict], None] | None" = None
         # Atmospheric event tracking (Phase 3 — SDK climate events)
         self._last_habitability_bucket: int = -1   # 0=<25% 1=<50% 2=<75% 3=100%
         self._atmosphere_formed_fired: bool = False
@@ -186,11 +232,23 @@ class InMemorySimulationRuntime:
 
     # ── Corporation registry (Phase 7.1) ──────────────────────────────────
 
-    def register_corporation(self, name: str, is_ai: bool = False) -> CorporationData:
+    def register_corporation(
+        self,
+        name: str,
+        is_ai: bool = False,
+        profile: CorpProfile | None = None,
+    ) -> CorporationData:
         with self._lock:
             corp_id = str(uuid4())
-            corp = CorporationData(id=corp_id, name=name, credits=1000.0, isAI=is_ai)
+            corp = CorporationData(
+                id=corp_id,
+                name=name,
+                credits=5000.0,
+                isAI=is_ai,
+                profile=profile if profile is not None else CorpProfile.Economiste,
+            )
             self._corporations[corp_id] = corp
+            self._repo.save_corporation(corp)
             return corp
 
     def list_corporations(self) -> list[CorporationData]:
@@ -212,6 +270,7 @@ class InMemorySimulationRuntime:
             self._tile_ownership.setdefault(body_id, {})[tile_id] = corp_id
             new_tile = auto_init_tile_population(ClaimedTile(bodyId=body_id, tileId=tile_id))
             corp.claimedTiles.append(new_tile)
+            self._repo.save_corporation(corp)
             return corp
 
     def unclaim_tile(self, corp_id: str, body_id: str, tile_id: str) -> CorporationData:
@@ -225,11 +284,17 @@ class InMemorySimulationRuntime:
             self._tile_ownership[body_id].pop(tile_id, None)
             corp.claimedTiles = [ct for ct in corp.claimedTiles
                                   if not (ct.bodyId == body_id and ct.tileId == tile_id)]
+            self._repo.save_corporation(corp)
             return corp
 
     # ── Building registry (Phase 7.2) ──────────────────────────────────────────
 
-    def construct_building(self, corp_id: str, body_id: str, tile_id: str, building_type: BuildingType) -> BuildingData:
+    def construct_building(self, corp_id: str, body_id: str, tile_id: str, building_type: BuildingType) -> ConstructionItem:
+        """Enqueue a building for multi-tick construction (Phase 10.5).
+
+        Returns the ConstructionItem that was added to the territory queue.
+        Raises ValueError if the building already exists or is already queued.
+        """
         with self._lock:
             corp = self._corporations.get(corp_id)
             if corp is None:
@@ -237,23 +302,190 @@ class InMemorySimulationRuntime:
             owner = self._tile_ownership.get(body_id, {}).get(tile_id)
             if owner != corp_id:
                 raise ValueError(f"Tile '{tile_id}' on body '{body_id}' is not claimed by '{corp_id}'")
-            # 1 bâtiment par type par tuile
+            # 1 bâtiment par type par tuile (live + queued)
             for b in self._buildings.values():
                 if b.corpId == corp_id and b.bodyId == body_id and b.tileId == tile_id and b.buildingType == building_type:
                     raise ValueError(f"A {building_type.name} already exists on tile '{tile_id}'")
-            building_id = str(uuid4())
-            building = BuildingData(
-                id=building_id,
-                buildingType=building_type,
-                tileId=tile_id,
-                bodyId=body_id,
-                corpId=corp_id,
-            )
-            self._buildings[building_id] = building
-            corp.buildings.append(building)
-            return building
+            for q in self._construction_queues.values():
+                if q.corpId == corp_id and q.bodyId == body_id:
+                    for item in q.items:
+                        if item.tileId == tile_id and item.buildingType == building_type:
+                            raise ValueError(f"A {building_type.name} is already queued for tile '{tile_id}'")
+            return self._enqueue_construction_locked(corp_id, body_id, tile_id, building_type)
 
-    def demolish_building(self, corp_id: str, building_id: str) -> None:
+    def _enqueue_construction_locked(
+        self,
+        corp_id: str,
+        body_id: str,
+        tile_id: str,
+        building_type: BuildingType,
+    ) -> ConstructionItem:
+        """Add item to the territory queue. Lock must be held by caller."""
+        territory_id = self._get_or_create_territory_queue_locked(corp_id, body_id, tile_id)
+        queue = self._construction_queues[territory_id]
+        cost_pts = BUILDING_CONSTRUCTION_COST.get(building_type, 60)
+        item = ConstructionItem(
+            id=str(uuid4()),
+            buildingType=building_type,
+            tileId=tile_id,
+            bodyId=body_id,
+            corpId=corp_id,
+            status=ConstructionStatus.InProgress if not queue.items else ConstructionStatus.Pending,
+            ticksRemaining=cost_pts,
+            totalCostPts=cost_pts,
+            pointsAccumulated=0,
+        )
+        queue.items.append(item)
+        return item
+
+    def _get_or_create_territory_queue_locked(self, corp_id: str, body_id: str, tile_id: str) -> str:
+        """Return territory_id, creating a TerritoryQueue if needed. Lock must be held."""
+        # Find existing queue that contains this tile
+        for tid, q in self._construction_queues.items():
+            if q.corpId == corp_id and q.bodyId == body_id and tile_id in q.tileIds:
+                return tid
+        # Create new single-tile territory (MVP: each tile is its own territory)
+        territory_id = f"{corp_id}::{body_id}::{tile_id}"
+        corp = self._corporations.get(corp_id)
+        # Compute initial capacity — sum of EB buildings on that tile
+        capacity = self._compute_territory_capacity_locked(corp_id, body_id, [tile_id])
+        queue = TerritoryQueue(
+            territoryId=territory_id,
+            corpId=corp_id,
+            bodyId=body_id,
+            tileIds=[tile_id],
+            constructionCapacity=capacity,
+        )
+        self._construction_queues[territory_id] = queue
+        return territory_id
+
+    def _compute_territory_capacity_locked(
+        self, corp_id: str, body_id: str, tile_ids: list[str]
+    ) -> float:
+        """Sum EB production capacity across all tiles in the territory. Lock must be held."""
+        # Count formal EB buildings on these tiles
+        tile_set = set(tile_ids)
+        eb_count = sum(
+            1 for b in self._buildings.values()
+            if b.corpId == corp_id and b.bodyId == body_id
+            and b.tileId in tile_set
+            # EnergyPlant is the "Entreprise de Bâtiment" proxy in current BuildingType enum
+            # Phase 10.5: dedicated EB type not yet in enum — treat EnergyPlant as EB placeholder
+        )
+        return float(eb_count) * EB_FORMAL_CAPACITY if eb_count > 0 else 0.0
+
+    def _process_construction_tick_locked(self) -> None:
+        """Advance all construction queues by one tick. Lock must be held (called from tick loop).
+
+        Algorithm:
+        1. Refresh territory capacity (EB count may have changed).
+        2. For each territory that has items: drain capacity through queue items with overflow.
+        3. Completed items → spawn BuildingData immediately.
+        4. EB de fortune: if capacity == 0 and tile has pop > 0 and Wood > 0 → grant EB_FORTUNE_CAPACITY.
+        """
+        for territory_id, queue in list(self._construction_queues.items()):
+            if not queue.items:
+                continue
+            corp_id = queue.corpId
+            body_id = queue.bodyId
+
+            # Refresh capacity
+            capacity = self._compute_territory_capacity_locked(corp_id, body_id, queue.tileIds)
+            queue.constructionCapacity = capacity
+            queue.isEBDeFortune = False
+
+            # EB de fortune: fallback when no formal EB
+            if capacity == 0:
+                capacity = self._check_eb_de_fortune_locked(corp_id, body_id, queue.tileIds)
+                if capacity > 0:
+                    queue.constructionCapacity = capacity
+                    queue.isEBDeFortune = True
+
+            if capacity <= 0:
+                continue
+
+            # Drain capacity through queue items (overflow mechanism)
+            remaining_pts = capacity
+            while remaining_pts > 0 and queue.items:
+                item = queue.items[0]
+                item.status = ConstructionStatus.InProgress
+                pts_to_apply = min(remaining_pts, item.ticksRemaining)
+                item.pointsAccumulated += pts_to_apply
+                item.ticksRemaining -= pts_to_apply
+                remaining_pts -= pts_to_apply
+
+                if item.ticksRemaining <= 0:
+                    # Construction complete — spawn the building
+                    item.status = ConstructionStatus.Done
+                    queue.items.pop(0)
+                    self._complete_construction_locked(item)
+                else:
+                    break  # item still in progress, pts exhausted
+
+    def _check_eb_de_fortune_locked(
+        self, corp_id: str, body_id: str, tile_ids: list[str]
+    ) -> float:
+        """Return EB de fortune capacity if conditions are met. Lock must be held."""
+        corp = self._corporations.get(corp_id)
+        if corp is None:
+            return 0.0
+        # Check Wood in corp stocks
+        if corp.resources.get("Wood", 0.0) < EB_FORTUNE_WOOD_COST:
+            return 0.0
+        # Check at least one tile in territory has population
+        for tile_id in tile_ids:
+            market = self._find_market_for_tile_locked(body_id, tile_id)
+            if market:
+                total_pop = sum(
+                    p.count for p in (t for m in [market] for t in m.listings if False)  # placeholder
+                )
+        # Simplified: check corp population directly via claimed tiles
+        for tile in corp.claimedTiles:
+            if tile.tileId in tile_ids:
+                pop = sum(tier.count for tier in tile.population)
+                if pop > 0:
+                    # Consume Wood
+                    corp.resources["Wood"] = corp.resources.get("Wood", 0.0) - EB_FORTUNE_WOOD_COST
+                    return EB_FORTUNE_CAPACITY
+        return 0.0
+
+    def _find_market_for_tile_locked(self, body_id: str, tile_id: str) -> LocalMarketState | None:
+        """Find the local market that contains this tile. Lock must be held."""
+        for market in self._markets.values():
+            if tile_id in market.tileIds:
+                return market
+        return None
+
+    def _complete_construction_locked(self, item: ConstructionItem) -> None:
+        """Instantiate a BuildingData from a completed ConstructionItem. Lock must be held."""
+        building_id = str(uuid4())
+        building = BuildingData(
+            id=building_id,
+            buildingType=item.buildingType,
+            tileId=item.tileId,
+            bodyId=item.bodyId,
+            corpId=item.corpId,
+            employmentSlots=dict(EMPLOYMENT_CONFIGS.get(item.buildingType, {})),
+        )
+        self._buildings[building_id] = building
+        corp = self._corporations.get(item.corpId)
+        if corp:
+            corp.buildings.append(building)
+            self._repo.save_corporation(corp)
+
+    def cancel_construction_item(self, corp_id: str, item_id: str) -> None:
+        """Remove a pending/in-progress construction item from its queue (Phase 10.5)."""
+        with self._lock:
+            for queue in self._construction_queues.values():
+                if queue.corpId != corp_id:
+                    continue
+                for i, item in enumerate(queue.items):
+                    if item.id == item_id:
+                        queue.items.pop(i)
+                        return
+            raise KeyError(f"ConstructionItem '{item_id}' not found for corp '{corp_id}'")
+
+
         with self._lock:
             building = self._buildings.get(building_id)
             if building is None:
@@ -283,16 +515,63 @@ class InMemorySimulationRuntime:
             building.workerRatio = max(0.0, min(1.0, worker_ratio))
             return building
 
+    def upgrade_building(self, corp_id: str, building_id: str) -> BuildingData:
+        """Increment building level by 1 (max 5). Phase 12."""
+        with self._lock:
+            building = self._buildings.get(building_id)
+            if building is None:
+                raise KeyError(f"Building '{building_id}' not found")
+            if building.corpId != corp_id:
+                raise ValueError(f"Building '{building_id}' does not belong to '{corp_id}'")
+            if building.level >= 5:
+                raise ValueError(f"Building '{building_id}' is already at max level (5)")
+            building.level += 1
+            return building
+
+    def downgrade_building(self, corp_id: str, building_id: str) -> BuildingData:
+        """Decrement building level by 1 (min 1). Phase 12."""
+        with self._lock:
+            building = self._buildings.get(building_id)
+            if building is None:
+                raise KeyError(f"Building '{building_id}' not found")
+            if building.corpId != corp_id:
+                raise ValueError(f"Building '{building_id}' does not belong to '{corp_id}'")
+            if building.level <= 1:
+                raise ValueError(f"Building '{building_id}' is already at min level (1)")
+            building.level -= 1
+            return building
+
     def _process_building_production(self) -> None:
-        """Appelé à chaque tick — crédite les ressources de chaque corpo selon ses bâtiments actifs."""
+        """Appelé à chaque tick — crédite les ressources de chaque corpo selon ses bâtiments actifs.
+
+        If a building has employmentSlots set, workerRatio is auto-calculated from tile population.
+        Otherwise the manually-set workerRatio is used as-is (Phase 7.2 behaviour preserved).
+        Building level (Phase 12): total worker slots and output both scale linearly by level.
+        """
         for building in self._buildings.values():
             corp = self._corporations.get(building.corpId)
             if corp is None:
                 continue
+            level = building.level  # Phase 12 — linear multiplier
+            # Phase 9.6 — auto-calculate workerRatio from tile population when slots defined
+            if building.employmentSlots:
+                tile = next(
+                    (t for t in corp.claimedTiles if t.tileId == building.tileId), None
+                )
+                tier_counts: dict[str, int] = {}
+                if tile is not None:
+                    for pop_tier in tile.population:
+                        tier_counts[pop_tier.socialClass.name] = tier_counts.get(pop_tier.socialClass.name, 0) + pop_tier.count
+                total_slots = sum(building.employmentSlots.values()) * level  # Phase 12 — scale slots by level
+                workers_present = sum(
+                    min(tier_counts.get(sc_name, 0), slots * level)
+                    for sc_name, slots in building.employmentSlots.items()
+                )
+                building.workerRatio = workers_present / total_slots if total_slots > 0 else 0.0
             config = BUILDING_CONFIGS.get(building.buildingType, {})
             for resource_type, delta in config.items():
                 key = resource_type.name
-                corp.resources[key] = corp.resources.get(key, 0.0) + delta * building.workerRatio
+                corp.resources[key] = corp.resources.get(key, 0.0) + delta * building.workerRatio * level  # Phase 12 — scale output by level
             building.ticksActive += 1
 
     def _process_market_tick_locked(self) -> None:
@@ -345,7 +624,7 @@ class InMemorySimulationRuntime:
                     ownerEntityId=corp_id,
                     tileIds=tile_ids,
                     listings=updated_listings,
-                    taxRate=prev_market.taxRate if prev_market is not None else 0.0,
+                    taxRate=self._resolve_tax_rate_locked(set(tile_ids)),
                     connectivity=connectivity,
                     tickComputed=self._tick_count,
                 )
@@ -361,6 +640,17 @@ class InMemorySimulationRuntime:
         # Purge territories whose tiles are no longer owned
         for tid in [k for k in self._markets if k not in active_territory_ids]:
             del self._markets[tid]
+
+    def _resolve_tax_rate_locked(self, tile_id_set: set[str]) -> float:
+        """Return the taxRate of the first State that overlaps this territory.
+
+        Falls back to 0.0 if no State covers any of the territory's tiles.
+        Lock must already be held.
+        """
+        for state in self._states.values():
+            if any(tid in tile_id_set for tid in state.tileIds):
+                return state.taxRate
+        return 0.0
 
     # ── Market public API (Phase 7.3) ──────────────────────────────────────
 
@@ -426,6 +716,7 @@ class InMemorySimulationRuntime:
                 tickCreated=self._tick_count,
             )
             self._contracts[contract_id] = contract
+            self._repo.save_contract(contract)
             return contract
 
     def bid_on_contract(self, contract_id: str, bidder_id: str) -> ContractData:
@@ -443,6 +734,7 @@ class InMemorySimulationRuntime:
                 update={"candidates": contract.candidates + [bidder_id]}
             )
             self._contracts[contract_id] = updated
+            self._repo.save_contract(updated)
             return updated
 
     def confirm_bidder(
@@ -468,6 +760,7 @@ class InMemorySimulationRuntime:
                 ),
             })
             self._contracts[contract_id] = updated
+            self._repo.save_contract(updated)
             return updated
 
     def accept_contract(self, contract_id: str, acceptor_id: str) -> ContractData:
@@ -491,6 +784,7 @@ class InMemorySimulationRuntime:
                 ),
             })
             self._contracts[contract_id] = updated
+            self._repo.save_contract(updated)
             return updated
 
     def break_contract(self, contract_id: str, corp_id: str) -> ContractData:
@@ -517,6 +811,9 @@ class InMemorySimulationRuntime:
             self._contracts[contract_id]   = new_contract
             self._corporations[corp_id]    = new_corp
             self._corporations[other_id]   = new_other
+            self._repo.save_contract(new_contract)
+            self._repo.save_corporation(new_corp)
+            self._repo.save_corporation(new_other)
             return new_contract
 
     def get_contract(self, contract_id: str) -> ContractData | None:
@@ -628,6 +925,7 @@ class InMemorySimulationRuntime:
                 isAiControlled=is_ai_controlled,
             )
             self._states[state_id] = state
+            self._repo.save_state(state)
             return state
 
     def get_state(self, state_id: str) -> StateData | None:
@@ -679,6 +977,8 @@ class InMemorySimulationRuntime:
             new_process, new_corp = apply_bribe(corp, process, bribe_amount)
             self._nationalizations[process_id] = new_process
             self._corporations[corp_id] = new_corp
+            self._repo.save_nationalization(new_process)
+            self._repo.save_corporation(new_corp)
 
             # Corruption detected — reputation hit
             event = ReputationEvent(
@@ -716,6 +1016,7 @@ class InMemorySimulationRuntime:
 
             new_process = process.model_copy(update={"cancelled": True})
             self._nationalizations[process_id] = new_process
+            self._repo.save_nationalization(new_process)
 
             event = ReputationEvent(
                 sourceId=process.stateId,
@@ -751,6 +1052,7 @@ class InMemorySimulationRuntime:
             self._corporations[event.targetId] = apply_reputation_event(corp, event)
         key = (event.sourceId, event.targetId)
         self._reputations[key] = self._reputations.get(key, 0.0) + event.deltaBilateral
+        self._repo.upsert_reputation(event.sourceId, event.targetId, self._reputations[key])
 
     def _process_reputation_tick_locked(self) -> None:
         """Evaluate nationalisations each tick. Assumes lock already held."""
@@ -795,6 +1097,7 @@ class InMemorySimulationRuntime:
                         completionTick=self._tick_count + delay,
                     )
                     self._nationalizations[proc_id] = process
+                    self._repo.save_nationalization(process)
                     # Emit reputation event
                     event = ReputationEvent(
                         sourceId=state.id,
@@ -821,7 +1124,10 @@ class InMemorySimulationRuntime:
             if process.tileId in self._tile_ownership:
                 del self._tile_ownership[process.tileId]
             # Mark as cancelled=True to signal completion (so we don't reprocess)
-            self._nationalizations[proc_id] = process.model_copy(update={"cancelled": True})
+            completed = process.model_copy(update={"cancelled": True})
+            self._nationalizations[proc_id] = completed
+            self._repo.save_nationalization(completed)
+            self._repo.save_corporation(self._corporations[process.corpId])
 
     # ── Gameplay Events (Phase 8) ─────────────────────────────────────────────
 
@@ -845,6 +1151,22 @@ class InMemorySimulationRuntime:
         # Keep at most 200 events in memory
         if len(self._game_events) > 200:
             self._game_events = self._game_events[-200:]
+
+    def _process_ecology_tick_locked(self) -> None:
+        """Advance species populations on all colonized spherical bodies. Assumes lock held."""
+        from terraformation_sim.logic.ecology import compute_tile_ecology, aggregate_ecology_output
+        from terraformation_sim.models import SphericalBodyState
+        for body_id, body in self._bodies.items():
+            if not isinstance(body, SphericalBodyState) or not body.tiles:
+                continue
+            o2_ratio = body.atmosphere.fraction_of("O2")
+            updated_tiles = []
+            for tile in body.tiles:
+                new_species = compute_tile_ecology(tile, o2_ratio)
+                updated_tiles.append(tile.model_copy(update={"species": new_species}))
+            body.tiles = updated_tiles
+            body.ecologyResources = aggregate_ecology_output(updated_tiles)
+            self._bodies[body_id] = body
 
     def list_game_events(self, limit: int = 20) -> list[EventData]:
         """Return the *limit* most recent gameplay events (latest first)."""
@@ -943,8 +1265,590 @@ class InMemorySimulationRuntime:
             import logging
             logging.getLogger(__name__).warning("Agent background run failed for %s: %s", state_id, exc)
 
+    def get_corp_agent_context(self, corp_id: str) -> dict | None:
+        """
+        Return a snapshot dict usable as LLM context for the given corporation.
+
+        Returns None if the corporation does not exist.
+        """
+        with self._lock:
+            corp = self._corporations.get(corp_id)
+            if corp is None:
+                return None
+            snapshot = self._build_corp_snapshot_locked(corp)
+            scoreboard = [
+                build_scoreboard_entry(c).model_dump()
+                for c in self._corporations.values()
+            ]
+            recent_events = [
+                {"name": ev.name, "description": ev.description, "tick": ev.tick}
+                for ev in reversed(self._game_events[-5:])
+            ]
+            memory = self._agent_memories.get(corp_id)
+            return {
+                "corpId": corp_id,
+                "tick": self._tick_count,
+                "corp": corp.model_dump(),
+                "environment": {
+                    "freeTilesAdjacent": len(snapshot.free_tile_ids_adj),
+                    "resourceStocks": snapshot.resource_stocks,
+                    "marketPrices": snapshot.market_prices,
+                    "rivals": [
+                        {"corpId": cid, "adjTiles": cnt}
+                        for cid, cnt in snapshot.rival_tile_counts.items()
+                    ],
+                    "productionBottleneck": snapshot.production_bottleneck,
+                    "hasActiveConstruction": snapshot.has_active_construction,
+                },
+                "scoreboard": scoreboard,
+                "recentEvents": recent_events,
+                "memory": memory.model_dump() if memory else None,
+            }
+
+    def run_agent_for_corp(self, corp_id: str) -> AgentAction:
+        """
+        Synchronously run one LLM agent cycle for an AI corporation.
+
+        Snapshot is built under lock (fast read), LLM runs outside lock,
+        then the resulting action is applied under lock — same pattern as
+        run_agent_for_state.
+        Raises ValueError if the corporation does not exist.
+        """
+        from terraformation_sim.logic.agent import run_corp_agent
+
+        with self._lock:
+            corp = self._corporations.get(corp_id)
+            if corp is None:
+                raise ValueError(f"Corporation {corp_id!r} not found")
+            snapshot = self._build_corp_snapshot_locked(corp)
+            tick = self._tick_count
+            scoreboard = [
+                build_scoreboard_entry(c).model_dump()
+                for c in self._corporations.values()
+            ]
+            recent_events = [
+                {"name": ev.name, "description": ev.description, "tick": ev.tick}
+                for ev in reversed(self._game_events[-5:])
+            ]
+            memory = self._agent_memories.get(corp_id)
+
+        # LLM call happens OUTSIDE the lock to avoid blocking the tick loop
+        action = run_corp_agent(
+            corp=corp,
+            tick=tick,
+            snapshot=snapshot,
+            memory=memory,
+            scoreboard=scoreboard,
+            recent_events=recent_events,
+        )
+
+        with self._lock:
+            self._apply_agent_action_locked(action)
+            self._update_agent_memory_locked(corp_id, action, tick)
+
+        return action
+
+    def _run_corp_agent_bg(self, corp_id: str) -> None:
+        """Background thread wrapper for corpo LLM — swallows exceptions."""
+        try:
+            self.run_agent_for_corp(corp_id)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Corp agent background run failed for %s: %s", corp_id, exc
+            )
+
+
+    def _build_corp_snapshot_locked(self, corp: CorporationData) -> CorpSimSnapshot:
+        """Build a read-only world view for one AI corporation.
+        Must be called with self._lock held. Fast: only dict lookups.
+        """
+        from terraformation_sim.logic.corp_fsm import CorpSimSnapshot
+
+        # Adjacent free tiles: neighbors of all claimed tiles not already owned
+        free_adj: list[str] = []
+        rival_tile_counts: dict[str, int] = {}
+        try:
+            import h3 as _h3
+            all_claimed_tiles = set()
+            for body_ownership in self._tile_ownership.values():
+                all_claimed_tiles.update(body_ownership.keys())
+
+            for claimed in corp.claimedTiles:
+                try:
+                    for neighbor in _h3.grid_disk(claimed.tileId, 1):
+                        if neighbor == claimed.tileId:
+                            continue
+                        # Find if owned
+                        owner_id = self._tile_ownership.get(claimed.bodyId, {}).get(neighbor)
+                        if owner_id is None:
+                            if neighbor not in free_adj:
+                                free_adj.append(neighbor)
+                        elif owner_id != corp.id:
+                            rival_tile_counts[owner_id] = rival_tile_counts.get(owner_id, 0) + 1
+                except Exception:
+                    pass
+        except ImportError:
+            pass
+
+        # Market prices from first available market for this corp
+        market_prices: dict[str, float] = {}
+        for mkt in self._markets.values():
+            if mkt.ownerEntityId == corp.id:
+                for listing in mkt.listings:
+                    market_prices[listing.resourceType.name] = listing.price
+                break
+
+        # Production bottleneck: any building workerRatio < 0.5
+        prod_bottleneck = any(
+            b.workerRatio < 0.5
+            for b in self._buildings.values()
+            if b.corpId == corp.id
+        )
+
+        # Active construction queue
+        has_construction = any(
+            bool(q.items)
+            for q in self._construction_queues.values()
+            if q.corpId == corp.id
+        )
+
+        return CorpSimSnapshot(
+            corp_id=corp.id,
+            current_tick=self._tick_count,
+            free_tile_ids_adj=free_adj,
+            credits=corp.credits,
+            resource_stocks=dict(corp.resources),
+            market_prices=market_prices,
+            rival_corp_ids=list(rival_tile_counts.keys()),
+            rival_tile_counts=rival_tile_counts,
+            production_bottleneck=prod_bottleneck,
+            has_active_construction=has_construction,
+        )
+
+    def _run_bot_fsm_bg(self, corp_id: str) -> None:
+        """Background thread: build snapshot, run FSM (always), then optionally LLM.
+        Swallows exceptions to avoid daemon crashes.
+        """
+        try:
+            from terraformation_sim.logic.corp_fsm import (
+                compute_fsm_actions,
+                compute_next_fsm_state,
+            )
+            with self._lock:
+                corp = self._corporations.get(corp_id)
+                if corp is None or not corp.isAI:
+                    return
+                snapshot = self._build_corp_snapshot_locked(corp)
+                current_tick = self._tick_count
+
+            # ←—— hors lock : FSM tourne librement sans bloquer le tick ——→
+            new_state = compute_next_fsm_state(corp, snapshot)
+            actions = compute_fsm_actions(corp, snapshot, new_state)
+
+            with self._lock:
+                corp2 = self._corporations.get(corp_id)
+                if corp2 is None:
+                    return
+                corp2.fsmState = new_state
+                self._corporations[corp_id] = corp2
+                for action in actions:
+                    self._apply_agent_action_locked(action)
+
+            # ── Phase 11.2 M2 — LLM strategic override ───────────────────
+            corp_agent_interval = int(
+                os.environ.get("CORP_AGENT_TICK_INTERVAL", "50")
+            )
+            if corp_agent_interval > 0 and current_tick % corp_agent_interval == 0:
+                threading.Thread(
+                    target=self._run_corp_agent_bg,
+                    args=(corp_id,),
+                    daemon=True,
+                    name=f"corp-llm-{corp_id[:8]}",
+                ).start()
+
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Bot FSM run failed for corp %s: %s", corp_id, exc
+            )
+
+    def _process_bot_tick_locked(self) -> None:
+        """Spawn a background FSM thread for each AI corporation.
+        Lock must be held (called from _advance_tick_locked).
+        """
+        for corp in self._corporations.values():
+            if corp.isAI:
+                threading.Thread(
+                    target=self._run_bot_fsm_bg,
+                    args=(corp.id,),
+                    daemon=True,
+                    name=f"bot-fsm-{corp.id[:8]}",
+                ).start()
+
+    # ── Phase 11.1 — Agent Monde centralisé ──────────────────────────────────
+
+    def run_world_agent_cycle(self, reason: str = "periodic") -> list[str]:
+        """
+        Iterate over all AI-controlled States and Corporations and fire their agent.
+
+        Each entity agent runs in a separate daemon thread (non-blocking).
+        Returns the list of entity IDs whose agents were triggered.
+        """
+        with self._lock:
+            ai_state_ids = [
+                s.id for s in self._states.values()
+                if s.isAiControlled and s.stateType != StateType.Alien
+            ]
+            ai_corp_ids  = [c.id for c in self._corporations.values() if c.isAI]
+
+        triggered: list[str] = []
+
+        for state_id in ai_state_ids:
+            threading.Thread(
+                target=self._run_agent_for_state_bg,
+                args=(state_id,),
+                daemon=True,
+                name=f"agent-state-{state_id[:8]}",
+            ).start()
+            triggered.append(state_id)
+
+        # Phase 11.2 — FSM bots run in background threads
+        for corp_id in ai_corp_ids:
+            threading.Thread(
+                target=self._run_bot_fsm_bg,
+                args=(corp_id,),
+                daemon=True,
+                name=f"bot-fsm-{corp_id[:8]}",
+            ).start()
+            triggered.append(corp_id)
+
+        # Phase 11.3 M1 — GM balance check (runs synchronously, fast)
+        self.run_gm_narrative_check()
+
+        return triggered
+
+    # ── Phase 11.3 M2+M3 — GM lever helpers ─────────────────────────────────
+
+    def _build_gm_context_locked(self) -> dict:
+        """
+        Build an enriched context dict for GM lever selection.
+
+        Caller MUST hold self._lock.
+        Returns a dict with keys: imbalanceRatio, mostColonizedBodyId,
+        candidateTileIds, allTileIds, allCorpIds, topCorpId, tick.
+        """
+        from .logic.gm import compute_leaderboard_imbalance
+
+        scoreboard = [build_scoreboard_entry(c) for c in self._corporations.values()]
+        imbalance_ratio = compute_leaderboard_imbalance(scoreboard)
+
+        # Per-body owned-tile sets (via _tile_ownership)
+        owned_per_body: dict[str, set[str]] = {}
+        for body_id, tile_map in self._tile_ownership.items():
+            owned_per_body.setdefault(body_id, set()).update(tile_map.keys())
+
+        # Body with the most claimed tiles = most colonized
+        most_colonized_body_id = ""
+        max_owned = 0
+        for body_id, owned_set in owned_per_body.items():
+            if len(owned_set) > max_owned:
+                max_owned = len(owned_set)
+                most_colonized_body_id = body_id
+
+        # Free tiles on that body (candidate landing zones)
+        candidate_tile_ids: list[str] = []
+        if most_colonized_body_id and most_colonized_body_id in self._bodies:
+            body = self._bodies[most_colonized_body_id]
+            owned_on_body = owned_per_body.get(most_colonized_body_id, set())
+            candidate_tile_ids = [
+                t.tileId for t in body.tiles if t.tileId not in owned_on_body
+            ]
+
+        # All tile IDs across every body (for empire_galactique)
+        all_tile_ids: list[str] = [
+            t.tileId
+            for body in self._bodies.values()
+            for t in body.tiles
+        ]
+
+        top_corp_id = ""
+        if scoreboard:
+            top_entry = max(scoreboard, key=lambda e: e.score)
+            top_corp_id = top_entry.corpId
+
+        return {
+            "imbalanceRatio": imbalance_ratio,
+            "mostColonizedBodyId": most_colonized_body_id,
+            "candidateTileIds": candidate_tile_ids,
+            "allTileIds": all_tile_ids,
+            "allCorpIds": list(self._corporations.keys()),
+            "topCorpId": top_corp_id,
+            "tick": self._tick_count,
+        }
+
+    def _inject_event_locked(self, event: EventData) -> None:
+        """Append *event* to _game_events and trim to 200. Caller must hold the lock."""
+        self._game_events.append(event)
+        if len(self._game_events) > 200:
+            self._game_events = self._game_events[-200:]
+
+    def execute_gm_lever(self, lever_name: str, context: dict) -> None:
+        """
+        Dispatch and execute a GM narrative lever.
+
+        Safe to call without holding the lock — internal helpers manage
+        locking appropriately.
+
+        Supported levers:
+            "alien_pop"        — spawn a small alien State + RencontreAlienne event
+            "megastructure"    — inject a DecouverteMegastructure event
+            "empire_galactique"— spawn a large alien State + EmpireGalactique event per corp
+        """
+        from .logic.gm import (
+            build_alien_pop_plan,
+            build_megastructure_plan,
+            build_empire_galactique_plan,
+        )
+
+        tick = context.get("tick", 0)
+
+        if lever_name == "alien_pop":
+            candidate_tile_ids = context.get("candidateTileIds", [])
+            tile_ids = build_alien_pop_plan(tick, candidate_tile_ids, n=6)
+            state = self.create_state(
+                name=f"Pop Alien {tick}",
+                state_type=StateType.Alien,
+                tile_ids=tile_ids,
+                bureaucracy=0.05,
+                corruption_rate=0.0,
+                tolerance_threshold=0.0,
+                is_ai_controlled=True,
+            )
+            event = EventData(
+                id=str(uuid4()),
+                eventType=EventType.RencontreAlienne,
+                name="Première Rencontre Aliène",
+                description=(
+                    f"Une population alien inconnue a été détectée au tique {tick}."
+                ),
+                tick=tick,
+                affectedEntityId=state.id,
+                affectedEntityType="state",
+                effect=EventEffect(),
+                isResolved=False,
+            )
+            with self._lock:
+                self._inject_event_locked(event)
+
+        elif lever_name == "megastructure":
+            event_name, description = build_megastructure_plan(tick)
+            candidate_tile_ids = context.get("candidateTileIds", [])
+            affected_tile = candidate_tile_ids[0] if candidate_tile_ids else ""
+            event = EventData(
+                id=str(uuid4()),
+                eventType=EventType.DecouverteMegastructure,
+                name=event_name,
+                description=description,
+                tick=tick,
+                affectedEntityId=affected_tile,
+                affectedEntityType="tile",
+                effect=EventEffect(),
+                isResolved=False,
+            )
+            with self._lock:
+                self._inject_event_locked(event)
+
+        elif lever_name == "empire_galactique":
+            all_tile_ids = context.get("allTileIds", [])
+            tile_ids = build_empire_galactique_plan(tick, all_tile_ids, n=15)
+            state = self.create_state(
+                name=f"Empire Galactique {tick}",
+                state_type=StateType.Alien,
+                tile_ids=tile_ids,
+                bureaucracy=0.02,
+                corruption_rate=0.0,
+                tolerance_threshold=0.0,
+                is_ai_controlled=True,
+            )
+            all_corp_ids = context.get("allCorpIds", [])
+            with self._lock:
+                for corp_id in all_corp_ids:
+                    event = EventData(
+                        id=str(uuid4()),
+                        eventType=EventType.EmpireGalactique,
+                        name="Ultimatum de l'Empire Galactique",
+                        description=(
+                            f"L'Empire Galactique exige votre soumission au tique {tick}."
+                        ),
+                        tick=tick,
+                        affectedEntityId=corp_id,
+                        affectedEntityType="corporation",
+                        effect=EventEffect(),
+                        isResolved=False,
+                    )
+                    self._inject_event_locked(event)
+
+    def run_gm_narrative_check(self) -> str | None:
+        """
+        Phase 11.3 — Detect leaderboard imbalance, select and execute a GM lever.
+
+        Runs synchronously (pure detection + plan-builders, no LLM call).
+        Returns the lever name selected, or None when cooldown is active or
+        no imbalance is detected.
+
+        Cooldown duration is read from GM_COOLDOWN_TICKS env var (default 20).
+        Imbalance threshold from GM_IMBALANCE_THRESHOLD (default 2.5).
+        """
+        from .logic.gm import pick_gm_lever
+
+        with self._lock:
+            current_tick = self._tick_count
+            cooldown_tick = self._gm_cooldown_tick
+            last_lever = self._gm_last_lever
+            context = self._build_gm_context_locked()
+
+        if current_tick < cooldown_tick:
+            return None
+
+        cooldown_duration = int(os.environ.get("GM_COOLDOWN_TICKS", "20"))
+        threshold = float(os.environ.get("GM_IMBALANCE_THRESHOLD", "2.5"))
+
+        if context["imbalanceRatio"] < threshold:
+            return None
+
+        lever = pick_gm_lever(last_lever, context)
+
+        with self._lock:
+            self._gm_cooldown_tick = current_tick + cooldown_duration
+            self._gm_last_lever = lever
+
+        import logging
+        logging.getLogger(__name__).info(
+            "GM narrative check: lever=%r at tick=%d", lever, current_tick
+        )
+
+        if lever != "none":
+            self.execute_gm_lever(lever, context)
+
+        return lever
+
+
+
+    def trigger_agent_for_entity(self, entity_id: str, reason: str = "") -> None:
+        """
+        Trigger an AI agent cycle for a single entity (State or Corporation).
+
+        Runs in a background daemon thread so the caller is not blocked.
+        Raises KeyError if no AI entity with that ID exists.
+        """
+        with self._lock:
+            state = self._states.get(entity_id)
+            corp  = self._corporations.get(entity_id)
+            is_ai_state = state is not None and state.isAiControlled
+            is_ai_corp  = corp  is not None and getattr(corp, "isAI", False)
+
+        if is_ai_state:
+            threading.Thread(
+                target=self._run_agent_for_state_bg,
+                args=(entity_id,),
+                daemon=True,
+                name=f"agent-trigger-{entity_id[:8]}",
+            ).start()
+        elif is_ai_corp:
+            threading.Thread(
+                target=self._run_bot_fsm_bg,
+                args=(entity_id,),
+                daemon=True,
+                name=f"bot-trigger-{entity_id[:8]}",
+            ).start()
+        else:
+            raise KeyError(f"Entity {entity_id!r} not found or not AI-controlled")
+
+    def _get_ai_state_ids_near_tile_locked(self, body_id: str, tile_id: str) -> list[str]:
+        """
+        Return AI-controlled state IDs whose territory includes H3 neighbors of tile_id.
+        Used to trigger agents when a player claims a nearby tile.
+        Must be called under self._lock.
+        """
+        try:
+            import h3 as _h3
+            neighbors = set(_h3.grid_disk(tile_id, 1))
+        except Exception:
+            return []
+
+        result: list[str] = []
+        for state in self._states.values():
+            if state.isAiControlled and neighbors.intersection(state.tileIds):
+                result.append(state.id)
+        return result
+
     def _apply_agent_action_locked(self, action: AgentAction) -> None:
-        """Dispatch an agent action. Must be called under self._lock."""
+        """Dispatch an agent action (State or Corporation). Must be called under self._lock."""
+        from terraformation_sim.models import AgentActionType as _AAT
+
+        # —— Corporation FSM actions (Phase 11.2) ——
+        if action.actionType == _AAT.ClaimTile:
+            corp = self._corporations.get(action.entityId)
+            if corp is None:
+                return
+            tile_id = action.params.get("tile_id", "")
+            # Find which body has that tile as a neighbor (use first claimed tile's body)
+            body_id = corp.claimedTiles[0].bodyId if corp.claimedTiles else ""
+            if tile_id and body_id:
+                try:
+                    existing = self._tile_ownership.get(body_id, {}).get(tile_id)
+                    if existing is None:
+                        self._tile_ownership.setdefault(body_id, {})[tile_id] = corp.id
+                        from terraformation_sim.models import ClaimedTile
+                        from terraformation_sim.logic.states import auto_init_tile_population
+                        new_tile = auto_init_tile_population(
+                            ClaimedTile(bodyId=body_id, tileId=tile_id)
+                        )
+                        corp.claimedTiles.append(new_tile)
+                        self._corporations[corp.id] = corp
+                except Exception:
+                    pass
+            return
+
+        if action.actionType == _AAT.ConstructBuilding:
+            corp = self._corporations.get(action.entityId)
+            if corp is None:
+                return
+            tile_id  = action.params.get("tile_id", "")
+            btype_nm = action.params.get("building_type", "")
+            body_id  = corp.claimedTiles[0].bodyId if corp.claimedTiles else ""
+            if tile_id and btype_nm and body_id:
+                try:
+                    bt = BuildingType[btype_nm]
+                    self._enqueue_construction_locked(corp.id, body_id, tile_id, bt)
+                except Exception:
+                    pass
+            return
+
+        if action.actionType == _AAT.UpdateFsmThresholds:
+            corp = self._corporations.get(action.entityId)
+            if corp is not None:
+                corp.fsmThresholds.update(action.params)
+                self._corporations[corp.id] = corp
+            return
+
+        if action.actionType == _AAT.ReorderConstructionQueue:
+            # params: {"territory_id": str, "new_order": list[str]} (item IDs)
+            territory_id = action.params.get("territory_id", "")
+            new_order: list[str] = action.params.get("new_order", [])
+            queue = self._construction_queues.get(territory_id)
+            if queue and new_order:
+                id_to_item = {item.id: item for item in queue.items}
+                reordered = [id_to_item[iid] for iid in new_order if iid in id_to_item]
+                # Append any items not mentioned in new_order at the end
+                mentioned = set(new_order)
+                reordered += [item for item in queue.items if item.id not in mentioned]
+                queue.items = reordered
+                self._construction_queues[territory_id] = queue
+            return
+
+        # —— State agent actions (Phase 8.5) ——
         state = self._states.get(action.entityId)
         if state is None:
             return
@@ -978,6 +1882,224 @@ class InMemorySimulationRuntime:
         mem.lastTickActed = tick
         self._agent_memories[state_id] = mem
 
+    # ── Trade Routes (Phase 9.2) ──────────────────────────────────────────────
+
+    def create_trade_route(
+        self,
+        corp_id: str,
+        body_id: str,
+        from_tile_id: str,
+        to_tile_id: str,
+        route_type: int = 0,
+    ) -> TradeRoute:
+        with self._lock:
+            corp = self._corporations.get(corp_id)
+            if corp is None:
+                raise KeyError(f"Corporation '{corp_id}' not found")
+            owned = self._tile_ownership.get(body_id, {})
+            if owned.get(from_tile_id) != corp_id:
+                raise ValueError(f"Tile '{from_tile_id}' is not claimed by '{corp_id}'")
+            if owned.get(to_tile_id) != corp_id:
+                raise ValueError(f"Tile '{to_tile_id}' is not claimed by '{corp_id}'")
+            rt = TradeRouteType(route_type)
+            path = compute_expedition_path(from_tile_id, to_tile_id, rt)
+            route = TradeRoute(
+                id=str(uuid4()),
+                routeType=rt,
+                fromTileId=from_tile_id,
+                toTileId=to_tile_id,
+                bodyId=body_id,
+                pathTileIds=path,
+                ownerCorpId=corp_id,
+                tickCreated=self._tick_count,
+            )
+            self._trade_routes[route.id] = route
+            self._repo.save_trade_route(route)
+            return route
+
+    def list_trade_routes(self, corp_id: str = "") -> list[TradeRoute]:
+        with self._lock:
+            routes = list(self._trade_routes.values())
+            if corp_id:
+                routes = [r for r in routes if r.ownerCorpId == corp_id]
+            return routes
+
+    def get_trade_route(self, route_id: str) -> TradeRoute | None:
+        with self._lock:
+            return self._trade_routes.get(route_id)
+
+    def suspend_trade_route(self, route_id: str) -> TradeRoute:
+        with self._lock:
+            route = self._trade_routes.get(route_id)
+            if route is None:
+                raise KeyError(f"Trade route '{route_id}' not found")
+            self._trade_routes[route_id] = route.model_copy(
+                update={"status": TradeRouteActivityStatus.Suspended}
+            )
+            self._repo.save_trade_route(self._trade_routes[route_id])
+            return self._trade_routes[route_id]
+
+    def resume_trade_route(self, route_id: str) -> TradeRoute:
+        with self._lock:
+            route = self._trade_routes.get(route_id)
+            if route is None:
+                raise KeyError(f"Trade route '{route_id}' not found")
+            self._trade_routes[route_id] = route.model_copy(
+                update={"status": TradeRouteActivityStatus.Active}
+            )
+            self._repo.save_trade_route(self._trade_routes[route_id])
+            return self._trade_routes[route_id]
+
+    def delete_trade_route(self, route_id: str) -> None:
+        with self._lock:
+            if route_id not in self._trade_routes:
+                raise KeyError(f"Trade route '{route_id}' not found")
+            del self._trade_routes[route_id]
+            self._repo.delete_trade_route(route_id)
+
+    # ── Expeditions (Phase 9.2) ────────────────────────────────────────────────
+
+    def launch_expedition(
+        self,
+        corp_id: str,
+        route_id: str,
+        cargo: dict[str, float] | None = None,
+    ) -> ExpeditionUnit:
+        with self._lock:
+            corp = self._corporations.get(corp_id)
+            if corp is None:
+                raise KeyError(f"Corporation '{corp_id}' not found")
+            route = self._trade_routes.get(route_id)
+            if route is None:
+                raise KeyError(f"Trade route '{route_id}' not found")
+            if route.ownerCorpId != corp_id:
+                raise ValueError(f"Route '{route_id}' does not belong to '{corp_id}'")
+            path = compute_expedition_path(route.fromTileId, route.toTileId, route.routeType)
+            total_ticks = compute_expedition_total_ticks(path, route.routeType)
+            expedition = ExpeditionUnit(
+                id=str(uuid4()),
+                ownerCorpId=corp_id,
+                fromPortTileId=route.fromTileId,
+                toPortTileId=route.toTileId,
+                bodyId=route.bodyId,
+                routeType=route.routeType,
+                ticksRemaining=total_ticks,
+                totalTicks=total_ticks,
+                pathTileIds=path,
+                cargo=cargo or {},
+            )
+            self._expeditions[expedition.id] = expedition
+            self._repo.save_expedition(expedition)
+            return expedition
+
+    def list_construction_items(self, corp_id: str = "") -> list[ConstructionItem]:
+        """Return all non-done ConstructionItems, optionally filtered to one corporation."""
+        with self._lock:
+            items: list[ConstructionItem] = []
+            for q in self._construction_queues.values():
+                if corp_id and q.corpId != corp_id:
+                    continue
+                for item in q.items:
+                    if item.status != ConstructionStatus.Done:
+                        items.append(item)
+            return items
+
+    def list_expeditions(self, corp_id: str = "") -> list[ExpeditionUnit]:
+        with self._lock:
+            exps = list(self._expeditions.values())
+            if corp_id:
+                exps = [e for e in exps if e.ownerCorpId == corp_id]
+            return exps
+
+    def get_expedition(self, expedition_id: str) -> ExpeditionUnit | None:
+        with self._lock:
+            return self._expeditions.get(expedition_id)
+
+    def _process_expedition_tick_locked(self) -> None:
+        """Tick all active expeditions and update route efficiencies. Lock must be held."""
+        _FAIL_PROB  = 0.02
+        _DELAY_PROB = 0.05
+        _DELAY_TICKS = 2
+
+        for exp_id, expedition in list(self._expeditions.items()):
+            if expedition.status != ExpeditionStatus.InTransit:
+                continue
+            # Roll for failure
+            if self._expedition_rng.random() < _FAIL_PROB:
+                self._expeditions[exp_id] = expedition.model_copy(
+                    update={"status": ExpeditionStatus.Failed}
+                )
+                continue
+            # Roll for delay
+            if self._expedition_rng.random() < _DELAY_PROB:
+                expedition = expedition.model_copy(
+                    update={"ticksRemaining": expedition.ticksRemaining + _DELAY_TICKS}
+                )
+                self._expeditions[exp_id] = expedition
+            # Advance
+            remaining = expedition.ticksRemaining - 1
+            if remaining <= 0:
+                # Deliver cargo to corp owning the destination tile
+                dest_corp_id = ""
+                for body_ownership in self._tile_ownership.values():
+                    if expedition.toPortTileId in body_ownership:
+                        dest_corp_id = body_ownership[expedition.toPortTileId]
+                        break
+                if dest_corp_id and dest_corp_id in self._corporations:
+                    dest_corp = self._corporations[dest_corp_id]
+                    for resource_key, amount in expedition.cargo.items():
+                        dest_corp.resources[resource_key] = (
+                            dest_corp.resources.get(resource_key, 0.0) + amount
+                        )
+
+                # Caravane colonisation (Phase 10 — M5): Land expedition arriving on
+                # an unclaimed tile claims it for the owning corporation.
+                if (expedition.routeType == TradeRouteType.Land
+                        and expedition.ownerCorpId
+                        and expedition.bodyId
+                        and expedition.toPortTileId):
+                    body_ownership = self._tile_ownership.setdefault(expedition.bodyId, {})
+                    if expedition.toPortTileId not in body_ownership:
+                        body_ownership[expedition.toPortTileId] = expedition.ownerCorpId
+                        owner_corp = self._corporations.get(expedition.ownerCorpId)
+                        if owner_corp is not None:
+                            new_tile = auto_init_tile_population(
+                                ClaimedTile(bodyId=expedition.bodyId, tileId=expedition.toPortTileId)
+                            )
+                            owner_corp.claimedTiles.append(new_tile)
+
+                self._expeditions[exp_id] = expedition.model_copy(
+                    update={"ticksRemaining": 0, "status": ExpeditionStatus.Success}
+                )
+            else:
+                self._expeditions[exp_id] = expedition.model_copy(
+                    update={"ticksRemaining": remaining}
+                )
+
+        # Update route efficiencies and propagate prices
+        all_buildings = list(self._buildings.values())
+        for route_id, route in list(self._trade_routes.items()):
+            if route.status != TradeRouteActivityStatus.Active:
+                continue
+            malus_from, malus_to, efficiency = compute_route_efficiency(route, all_buildings)
+            self._trade_routes[route_id] = route.model_copy(update={
+                "portMalusFrom":    malus_from,
+                "portMalusTo":      malus_to,
+                "currentEfficiency": efficiency,
+            })
+            # Propagate prices between connected markets
+            market_from = next(
+                (m for m in self._markets.values() if route.fromTileId in m.tileIds), None
+            )
+            market_to = next(
+                (m for m in self._markets.values() if route.toTileId in m.tileIds), None
+            )
+            if market_from is not None and market_to is not None:
+                attenuation = _EXPEDITION_CONFIG_ATTENUATION.get(route.routeType.name, 0.7) * efficiency
+                updated_from, updated_to = propagate_prices(market_from, market_to, attenuation)
+                self._markets[market_from.territoryId] = updated_from
+                self._markets[market_to.territoryId] = updated_to
+
     def health(self) -> dict:
         with self._lock:
             return {
@@ -989,6 +2111,11 @@ class InMemorySimulationRuntime:
                 "hasProjection": self._world_state.hasProjection,
                 "hasRegion": self._world_state.hasRegion,
             }
+
+    def set_ws_broadcast_callback(self, callback: "Callable[[dict], None]") -> None:
+        """Register a sync callable called every tick with the broadcast payload (Phase 10)."""
+        with self._lock:
+            self._ws_broadcast_callback = callback
 
     def bootstrap_demo(self,
                        planet_name: str = "Astra-Prime",
@@ -1056,16 +2183,29 @@ class InMemorySimulationRuntime:
             self._stellar_routes = {}
             self._space_travels = {}
             self._region_mutations = {}  # wipe persisted region deltas (Sprint C)
+            self._repo.clear_cell_mutations()
             self._corporations = {}         # wipe corporation registry (Phase 7.1)
+            self._repo.clear_corporations()
             self._tile_ownership = {}       # wipe tile ownership (Phase 7.1)
             self._buildings = {}            # wipe building registry (Phase 7.2)
             self._markets = {}              # wipe market registry (Phase 7.3)
+            self._repo.clear_markets()
             self._contracts = {}            # wipe contract registry (Phase 7.4)
+            self._repo.clear_contracts()
             self._states = {}               # wipe state registry (Phase 7.5)
+            self._repo.clear_states()
             self._reputations = {}          # wipe reputation table (Phase 7.5)
+            self._repo.clear_reputations()
             self._nationalizations = {}     # wipe nationalisation registry (Phase 7.5)
+            self._repo.clear_nationalizations()
             self._game_events = []          # wipe event log (Phase 8)
             self._agent_memories = {}       # wipe agent memories (Phase 8.5)
+            self._construction_queues = {}  # wipe construction queues (Phase 10.5)
+            self._repo.clear_construction_queues()
+            self._repo.clear_trade_routes()
+            self._repo.clear_expeditions()
+            self._gm_cooldown_tick = 0      # reset GM cooldown (Phase 11.3)
+            self._gm_last_lever = ""        # reset GM lever (Phase 11.3)
 
             # ── Bootstrap Sol ───────────────────────────────────────
             earth_name = "Earth"
@@ -1373,6 +2513,93 @@ class InMemorySimulationRuntime:
             except Exception:
                 pass
 
+        # Restore region mutations from cell_mutations (Phase 2 DB persistence)
+        for region_key, cell_list in saved.cell_mutations.items():
+            for m in cell_list:
+                try:
+                    data = json.loads(m.cell_json)
+                    k = (m.cell_q, m.cell_r)
+                    self._region_mutations.setdefault(region_key, {})[k] = (
+                        float(data.get("wd", 0.0)),
+                        float(data.get("td", 0.0)),
+                    )
+                except Exception:
+                    pass
+
+        # Sprint DB — gameplay entities
+        from .models import (
+            CorporationData as _CorpData,
+            ContractData as _ContractData,
+            StateData as _StateData,
+            NationalizationProcess as _NatProcess,
+            TradeRoute as _TradeRoute,
+            ExpeditionUnit as _ExpeditionUnit,
+            TerritoryQueue as _TerritoryQueue,
+            LocalMarketState as _LocalMarketState,
+        )
+        for corp_json in saved.corporations_json:
+            try:
+                corp = _CorpData.model_validate_json(corp_json)
+                self._corporations[corp.id] = corp
+                for tile in corp.claimedTiles:
+                    self._tile_ownership.setdefault(tile.bodyId, {})[tile.tileId] = corp.id
+                for b in corp.buildings:
+                    self._buildings[b.id] = b
+            except Exception:
+                pass
+
+        for contract_json in saved.contracts_json:
+            try:
+                contract = _ContractData.model_validate_json(contract_json)
+                self._contracts[contract.id] = contract
+            except Exception:
+                pass
+
+        for state_json in saved.states_json:
+            try:
+                state = _StateData.model_validate_json(state_json)
+                self._states[state.id] = state
+            except Exception:
+                pass
+
+        for nat_json in saved.nationalizations_json:
+            try:
+                nat = _NatProcess.model_validate_json(nat_json)
+                self._nationalizations[nat.id] = nat
+            except Exception:
+                pass
+
+        for source_id, target_id, score in saved.reputations_raw:
+            self._reputations[(source_id, target_id)] = score
+
+        for route_json in saved.trade_routes_json:
+            try:
+                route = _TradeRoute.model_validate_json(route_json)
+                self._trade_routes[route.id] = route
+            except Exception:
+                pass
+
+        for exp_json in saved.expeditions_json:
+            try:
+                exp = _ExpeditionUnit.model_validate_json(exp_json)
+                self._expeditions[exp.id] = exp
+            except Exception:
+                pass
+
+        for queue_json in saved.construction_queues_json:
+            try:
+                queue = _TerritoryQueue.model_validate_json(queue_json)
+                self._construction_queues[queue.territoryId] = queue
+            except Exception:
+                pass
+
+        for market_json in saved.markets_json:
+            try:
+                market = _LocalMarketState.model_validate_json(market_json)
+                self._markets[market.territoryId] = market
+            except Exception:
+                pass
+
         # If no galaxy data yet (first run with new tables), seed the bootstrap systems
         if not self._solar_systems:
             self._bootstrap_galaxy_locked()
@@ -1559,8 +2786,12 @@ class InMemorySimulationRuntime:
                 region_key = f"{self._world_state.region.coordinates.latitude:.3f},{self._world_state.region.coordinates.longitude:.3f}"
                 k = (target.q, target.r)
                 existing_w, existing_t = self._region_mutations.get(region_key, {}).get(k, (0.0, 0.0))
-                self._region_mutations.setdefault(region_key, {})[k] = (
-                    existing_w + water_delta, existing_t + temperature_delta
+                new_w = existing_w + water_delta
+                new_t = existing_t + temperature_delta
+                self._region_mutations.setdefault(region_key, {})[k] = (new_w, new_t)
+                self._repo.upsert_cell_mutation(
+                    region_key,
+                    CellMutation(cell_q=target.q, cell_r=target.r, cell_json=json.dumps({"wd": new_w, "td": new_t})),
                 )
             self._last_event = SimulationEvent(
                 eventId=str(uuid4()),
@@ -1699,35 +2930,61 @@ class InMemorySimulationRuntime:
             )
         # Production des bâtiments (Phase 7.2)
         self._process_building_production()
+        # File de construction multi-tick (Phase 10.5)
+        self._process_construction_tick_locked()
         # Marché local (Phase 7.3)
         self._process_market_tick_locked()
+        # Expéditions & routes commerciales (Phase 9.2)
+        self._process_expedition_tick_locked()
         # Contrats (Phase 7.4)
         self._process_contract_tick_locked()
         # États & Réputation (Phase 7.5)
         self._process_reputation_tick_locked()
         # Événements gameplay (Phase 8) — one event every ~20 ticks on average
         self._process_event_tick_locked()
-        # Agent LLM (Phase 8.5) — fire every AGENT_TICK_INTERVAL ticks, non-blocking
-        agent_interval = int(__import__("os").environ.get("AGENT_TICK_INTERVAL", "10"))
+        # Écologie par espèce (Phase 11.5) — advance species populations
+        self._process_ecology_tick_locked()
+        # Bot FSM (Phase 11.2) — spawn background FSM thread for each AI corpo
+        self._process_bot_tick_locked()
+        # Agent Monde (Phase 11.1) — fire every WORLD_AGENT_TICK_INTERVAL ticks, non-blocking
+        import os as _os
+        agent_interval = int(_os.environ.get("WORLD_AGENT_TICK_INTERVAL",
+                                             _os.environ.get("AGENT_TICK_INTERVAL", "10")))
         if self._tick_count % agent_interval == 0:
-            for state in list(self._states.values()):
-                if state.isAiControlled:
-                    threading.Thread(
-                        target=self._run_agent_for_state_bg,
-                        args=(state.id,),
-                        daemon=True,
-                        name=f"agent-{state.id[:8]}",
-                    ).start()
+            threading.Thread(
+                target=self.run_world_agent_cycle,
+                args=("periodic",),
+                daemon=True,
+                name="world-agent-cycle",
+            ).start()
 
         # Persist every 10 ticks to avoid per-tick overhead
         if self._tick_count % 10 == 0:
             self._repo.save_world_state(self._world_state, self._tick_interval_seconds)
+            # Flush corps and markets (credit/resource values fluctuate each tick)
+            for corp in self._corporations.values():
+                self._repo.save_corporation(corp)
+            for market in self._markets.values():
+                self._repo.save_market(market)
+            # Flush construction queues (progress changes each tick)
+            for queue in self._construction_queues.values():
+                self._repo.save_construction_queue(queue)
+            # Flush in-transit expeditions (ticksRemaining changes)
+            for exp in self._expeditions.values():
+                self._repo.save_expedition(exp)
 
         # Check space travel arrivals
         for travel in list(self._space_travels.values()):
             if travel.status == TravelStatus.InTransit and self._tick_count >= travel.arrivalTick:
                 travel.status = TravelStatus.Arrived
                 self._repo.save_space_travel(travel)
+
+        # Broadcast tick to WebSocket clients (Phase 10)
+        if self._ws_broadcast_callback is not None:
+            try:
+                self._ws_broadcast_callback({"type": "tick_advanced", "tick": self._tick_count})
+            except Exception:
+                pass
 
     def _check_climate_events(self, region: "RegionState") -> "SimulationEvent | None":
         """Emit climate threshold events (Phase 3 — ported from SDK ClimateEvents)."""
@@ -1997,7 +3254,6 @@ class InMemorySimulationRuntime:
                 )
             else:
                 # Generic atmosphere proportional to Earth baseline
-                from .models import AtmosphericGas
                 atmosphere = AtmosphericComposition(
                     totalPressureKpa=atmosphere_density * 101.3,
                     gases=[
@@ -2132,6 +3388,26 @@ class InMemorySimulationRuntime:
                 raise KeyError(f"Tile {tile_id} not found on body {body_id}")
             neighbor_ids = set(tile.neighborIds)
             return [t.model_copy(deep=True) for t in body.tiles if t.tileId in neighbor_ids]
+
+    def get_tile_ecology(self, body_id: str, tile_id: str) -> list:
+        """Return the species list (list[SpeciesData]) for a given tile."""
+        with self._lock:
+            body = self._bodies.get(body_id)
+            if body is None:
+                raise KeyError(f"Body not found: {body_id}")
+            if not isinstance(body, SphericalBodyState):
+                raise TypeError(f"Body {body_id} is not a spherical body")
+            if not body.tiles:
+                tiles = generate_spherical_tiles(
+                    body.h3Resolution, body.projectionOverride, body.waterLevel, body.seed,
+                    atmosphere_density=body.atmosphereDensity,
+                )
+                body.summary = summarize_spherical_tiles(tiles)
+                body.tiles = tiles
+            tile = next((t for t in body.tiles if t.tileId == tile_id), None)
+            if tile is None:
+                raise KeyError(f"Tile {tile_id} not found on body {body_id}")
+            return list(tile.species)
 
     def get_body_tile_at(self, body_id: str, lat: float, lon: float):
         """Return the tile whose H3 cell contains the given lat/lon coordinates."""
@@ -2677,6 +3953,17 @@ class InMemorySimulationRuntime:
             pair = {route.fromSystemId, route.toSystemId}
             if from_system_id not in pair or to_system_id not in pair:
                 raise ValueError("Route does not connect the requested systems")
+            # Faction must have a Spaceport in the source system (if a faction is given)
+            if faction_id:
+                source_system = self._solar_systems.get(from_system_id)
+                source_body_ids: set[str] = set(source_system.bodyIds) if source_system else set()
+                corp = self._corporations.get(faction_id)
+                has_spaceport = corp is not None and any(
+                    b.buildingType == BuildingType.Spaceport and b.bodyId in source_body_ids
+                    for b in (corp.buildings or [])
+                )
+                if not has_spaceport:
+                    raise ValueError("A Spaceport is required in the source system")
             ticks_needed = max(1, round(route.distanceLy * TICKS_PER_LIGHT_YEAR * route.travelTimeModifier))
             travel = SpaceTravel(
                 travelId=str(uuid4()),

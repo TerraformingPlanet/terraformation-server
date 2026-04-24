@@ -54,7 +54,7 @@ _DEMAND_PER_PERSON: dict[SocialClass, dict[ResourceType, float]] = {
 }
 
 _PRICE_MIN = 0.1
-_PRICE_MAX = 10.0
+_PRICE_MAX = 50.0
 _PRICE_ELASTICITY = 0.2   # exponent on supply/demand ratio
 
 # Mobility rates per tick
@@ -62,6 +62,19 @@ _POOR_TO_MIDDLE_RATE   = 0.01   # per employed worker
 _MIDDLE_TO_POOR_RATE   = 0.01   # per unemployed worker
 _MIDDLE_TO_RICH_RATE   = 0.005  # only when employment >= threshold
 _RICH_EMPLOYMENT_THRESHOLD = 0.8
+
+# Income defaults and clamp ranges per social class (Phase 9.6)
+_INCOME_DEFAULTS: dict[SocialClass, float] = {
+    SocialClass.Poor:   1.0,
+    SocialClass.Middle: 4.0,
+    SocialClass.Rich:   15.0,
+}
+_INCOME_CLAMP: dict[SocialClass, tuple[float, float]] = {
+    SocialClass.Poor:   (0.5,  2.0),
+    SocialClass.Middle: (2.0,  8.0),
+    SocialClass.Rich:   (8.0, 30.0),
+}
+_INCOME_NUDGE_RATE = 0.001  # fractional nudge per tick based on employment
 
 
 # ── Public functions ──────────────────────────────────────────────────────────
@@ -117,22 +130,24 @@ def auto_init_tile_population(tile: ClaimedTile) -> ClaimedTile:
     """
     if tile.population:
         return tile
-    seeded = [PopulationTier(socialClass=SocialClass.Poor, count=10)]
+    seeded = [PopulationTier(socialClass=SocialClass.Poor, count=10, avgIncome=_INCOME_DEFAULTS[SocialClass.Poor])]
     return tile.model_copy(update={"population": seeded})
 
 
 def compute_population_demand(tiles: list[ClaimedTile]) -> dict[str, float]:
     """Aggregate demand across all claimed tiles, summed across social classes.
 
+    Uses avgIncome as a demand multiplier per person (Phase 9.6).
     Returns a dict keyed by ResourceType.name (e.g. "Food", "Energy").
     """
     demand: dict[str, float] = {}
     for tile in tiles:
         for tier in tile.population:
             per_person = _DEMAND_PER_PERSON.get(tier.socialClass, {})
+            income_mult = tier.avgIncome if tier.avgIncome > 0.0 else 1.0
             for resource_type, rate in per_person.items():
                 key = resource_type.name
-                demand[key] = demand.get(key, 0.0) + rate * tier.count
+                demand[key] = demand.get(key, 0.0) + rate * tier.count * income_mult
     return demand
 
 
@@ -175,6 +190,7 @@ def apply_social_mobility(tile: ClaimedTile, employment_ratio: float) -> Claimed
     - Poor → Middle: rate * employment_ratio (workers getting richer)
     - Middle → Poor: rate * (1 - employment_ratio) (workers sliding back)
     - Middle → Rich: only when employment_ratio >= threshold
+    - avgIncome is nudged each tick by employment (Phase 9.6)
 
     Returns a new ClaimedTile with updated population.
     """
@@ -183,8 +199,11 @@ def apply_social_mobility(tile: ClaimedTile, employment_ratio: float) -> Claimed
         SocialClass.Middle: 0,
         SocialClass.Rich:   0,
     }
+    incomes: dict[SocialClass, float] = dict(_INCOME_DEFAULTS)
     for tier in tile.population:
         tiers[tier.socialClass] = tiers.get(tier.socialClass, 0) + tier.count
+        if tier.count > 0 and tier.avgIncome > 0.0:
+            incomes[tier.socialClass] = tier.avgIncome
 
     poor   = tiers[SocialClass.Poor]
     middle = tiers[SocialClass.Middle]
@@ -206,10 +225,16 @@ def apply_social_mobility(tile: ClaimedTile, employment_ratio: float) -> Claimed
         middle -= enrich
         rich   += enrich
 
+    # Nudge avgIncome by employment ratio (Phase 9.6)
+    for sc in (SocialClass.Poor, SocialClass.Middle, SocialClass.Rich):
+        incomes[sc] *= (1.0 + _INCOME_NUDGE_RATE * (employment_ratio - 0.5))
+        lo, hi = _INCOME_CLAMP[sc]
+        incomes[sc] = max(lo, min(hi, incomes[sc]))
+
     new_population = [
-        PopulationTier(socialClass=SocialClass.Poor,   count=max(0, poor)),
-        PopulationTier(socialClass=SocialClass.Middle, count=max(0, middle)),
-        PopulationTier(socialClass=SocialClass.Rich,   count=max(0, rich)),
+        PopulationTier(socialClass=SocialClass.Poor,   count=max(0, poor),   avgIncome=incomes[SocialClass.Poor]),
+        PopulationTier(socialClass=SocialClass.Middle, count=max(0, middle), avgIncome=incomes[SocialClass.Middle]),
+        PopulationTier(socialClass=SocialClass.Rich,   count=max(0, rich),   avgIncome=incomes[SocialClass.Rich]),
     ]
     return tile.model_copy(update={"population": new_population})
 

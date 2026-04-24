@@ -5,6 +5,7 @@ import h3 as _h3
 from noise import snoise3 as _snoise3
 
 from .stellar import compute_tile_albedo, compute_tile_irradiance
+from .ecology import seed_species_for_tile
 from ..models import (
     DebugCoherenceOverride,
     GoldbergTileState,
@@ -513,13 +514,12 @@ def generate_spherical_tiles(
         )
         habitable = is_tile_habitable(t_type, temperature, water_ratio)
 
-        # Physical fields: altitude, albedo, irradiance, life
+        # Physical fields: altitude, albedo, irradiance
         raw_height = cell_heights[cell]
         altitude = (raw_height - sea_level) / max(abs(raw_height - sea_level) + 1e-6, 0.3)
         altitude = max(-1.0, min(1.0, altitude))
         albedo = compute_tile_albedo(t_type, w_class)
         irradiance = compute_tile_irradiance(lat, planet_irradiance_wm2)
-        veg_density = 1.0 if t_type == TerrainType.Vegetation else 0.0
 
         neighbors = sorted(set(_h3.grid_disk(cell, 1)) - {cell})
         boundary = [[lat_v, lng_v] for lat_v, lng_v in _h3.cell_to_boundary(cell)]
@@ -542,7 +542,7 @@ def generate_spherical_tiles(
             altitude=altitude,
             albedo=albedo,
             solarIrradiance=irradiance,
-            vegetationDensity=veg_density,
+            species=seed_species_for_tile(t_type, w_class),
         ))
 
     _apply_spherical_hydrology(tiles, cell_heights, sea_level)
