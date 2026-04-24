@@ -83,6 +83,35 @@ If patching a file that another system may have modified (e.g., generated script
 - Call `Unity_GetSha(Uri=...)` before applying edits
 - Pass the returned SHA as `precondition_sha256` to `Unity_ManageScript` or `Unity_ApplyTextEdits`
 
+## Known Limitations — Unity_ManageGameObject
+
+### component_properties : types primitifs uniquement
+
+`Unity_ManageGameObject` avec `action=modify` et `component_properties` fonctionne **uniquement pour les types primitifs** (string, bool, int, float).
+
+**Ne fonctionne PAS** pour assigner des références composant (`TMP_InputField`, `Button`, `TextMeshProUGUI`, etc.) à un SerializeField.
+
+Le message d'erreur est **trompeur** : `"Property 'X' not found. Did you mean: X?"` — le champ existe bien mais le type n'est pas supporté.
+
+**Workaround** : écrire un `Editor` script `[MenuItem]` ou un `[ExecuteInEditMode]` MonoBehaviour qui câble les références en code, puis l'exécuter via `Unity_ManageMenuItem` ou `Unity_RunCommand`.
+
+Exemple :
+```csharp
+// Assets/Editor/WireLoginPanel.cs
+[MenuItem("Terraformation/Wire LoginPanel")]
+static void WireLoginPanel() {
+    var panel = GameObject.Find("LoginPanel").GetComponent<LoginPanel>();
+    panel.usernameField = GameObject.Find("UsernameInput").GetComponent<TMP_InputField>();
+    // ...
+    UnityEditor.EditorUtility.SetDirty(panel);
+    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(panel.gameObject.scene);
+}
+```
+
+### instanceIDs stale après redémarrage
+
+Les `instanceID` renvoyés par MCP **deviennent invalides après un redémarrage Unity**. Toujours utiliser le **nom string** (`parent="Canvas"`) plutôt que l'ID numérique dans les appels inter-sessions.
+
 ## Terraformation Project Conventions
 
 Scripts live in `Game/Assets/Scripts/`. Key folders:
