@@ -1,7 +1,11 @@
 import os
+import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel as _BaseModel
+from jose import jwt as _jwt
+import bcrypt as _bcrypt_lib
 
 from terraformation_sim import (
     ClaimedTile,
@@ -9,7 +13,6 @@ from terraformation_sim import (
     BuildingData,
     BuildingType,
     LocalMarketState,
-    GlobalMarketState,
     ContractData,
     AnyBodyState,
     AtmosphericComposition,
@@ -43,10 +46,38 @@ from terraformation_sim import (
     NationalizationProcess,
     ScoreboardEntry,
     EventData,
-    EventType,
+    GlobalMarketState,
     AgentAction,
-    AgentMemory,
+    SpeciesData,
+    ConstructionItem,
 )
+
+
+# ── JWT constants ───────────────────────────────────────────────────────────
+_JWT_SECRET    = os.environ.get("JWT_SECRET", "terraformation-dev-secret")
+_JWT_ALGORITHM = "HS256"
+_JWT_EXPIRE_DAYS = 7
+
+
+def _make_token(player_id: str, username: str) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(days=_JWT_EXPIRE_DAYS)
+    return _jwt.encode(
+        {"sub": player_id, "username": username, "exp": exp},
+        _JWT_SECRET,
+        algorithm=_JWT_ALGORITHM,
+    )
+
+
+# ── Auth Pydantic models ─────────────────────────────────────────────────────
+class _AuthRequest(_BaseModel):
+    username: str
+    password: str
+
+
+class _AuthResponse(_BaseModel):
+    token: str
+    player_id: str
+    username: str
 
 
 app = FastAPI(title="terraformation-dedicated-server", version="0.2.0")
@@ -64,6 +95,41 @@ runtime = InMemorySimulationRuntime(
     auto_resume=os.environ.get("SERVER_AUTO_RESUME", "0") == "1",
     repository=_repository,
 )
+
+
+# ── Auth endpoints ──────────────────────────────────────────────────────────
+
+@app.post("/auth/register", response_model=_AuthResponse, status_code=201)
+def auth_register(body: _AuthRequest) -> _AuthResponse:
+    """Register a new player account. Returns a JWT token."""
+    username = body.username.strip()
+    password = body.password
+    if not username or not password:
+        raise HTTPException(status_code=422, detail="username and password are required")
+    if _repository.get_player_by_username(username) is not None:
+        raise HTTPException(status_code=409, detail=f"Username '{username}' is already taken")
+    player_id    = str(uuid.uuid4())
+    password_hash = _bcrypt_lib.hashpw(password.encode("utf-8"), _bcrypt_lib.gensalt()).decode("utf-8")
+    _repository.create_player(player_id=player_id, username=username, password_hash=password_hash)
+    return _AuthResponse(
+        token=_make_token(player_id, username),
+        player_id=player_id,
+        username=username,
+    )
+
+
+@app.post("/auth/login", response_model=_AuthResponse)
+def auth_login(body: _AuthRequest) -> _AuthResponse:
+    """Authenticate an existing player. Returns a JWT token."""
+    username = body.username.strip()
+    player = _repository.get_player_by_username(username)
+    if player is None or not _bcrypt_lib.checkpw(body.password.encode("utf-8"), player["password_hash"].encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    return _AuthResponse(
+        token=_make_token(player["player_id"], player["username"]),
+        player_id=player["player_id"],
+        username=player["username"],
+    )
 
 
 @app.get("/health")
@@ -239,6 +305,17 @@ def get_body_tile_neighbors(body_id: str, tile_id: str) -> list[GoldbergTileStat
     """Return the neighboring tiles (up to 6) of an H3 tile."""
     try:
         return runtime.get_body_tile_neighbors(body_id, tile_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except TypeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/bodies/{body_id}/tiles/{tile_id}/ecology", response_model=list[SpeciesData])
+def get_tile_ecology(body_id: str, tile_id: str) -> list[SpeciesData]:
+    """Return the species population list for a surface tile (Phase 11.5)."""
+    try:
+        return runtime.get_tile_ecology(body_id, tile_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except TypeError as exc:
@@ -805,10 +882,11 @@ def unclaim_hex(corp_id: str, body_id: str, tile_id: str) -> CorporationData:
 
 # ── Game layer — Buildings (Phase 7.2) ────────────────────────────────────────
 
-@app.post("/game/corporations/{corp_id}/buildings", response_model=BuildingData, status_code=201)
-def construct_building(corp_id: str, body_id: str, tile_id: str, building_type: int) -> BuildingData:
-    """Construct a building on a tile claimed by the corporation.
-    Returns 404 if corp not found, 409 if tile not claimed or building type already present.
+@app.post("/game/corporations/{corp_id}/buildings", response_model=ConstructionItem, status_code=201)
+def construct_building(corp_id: str, body_id: str, tile_id: str, building_type: int) -> ConstructionItem:
+    """Enqueue a building for multi-tick construction (Phase 10.5).
+    Returns the ConstructionItem added to the territory queue.
+    Returns 404 if corp not found, 409 if tile not claimed or building already queued.
     """
     try:
         return runtime.construct_building(corp_id, body_id, tile_id, BuildingType(building_type))
@@ -816,6 +894,12 @@ def construct_building(corp_id: str, body_id: str, tile_id: str, building_type: 
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.get("/game/corporations/{corp_id}/construction-queue", response_model=list[ConstructionItem])
+def list_construction_queue(corp_id: str) -> list[ConstructionItem]:
+    """List all pending/in-progress construction items for a corporation."""
+    return runtime.list_construction_items(corp_id)
 
 
 @app.get("/game/corporations/{corp_id}/buildings", response_model=list[BuildingData])
@@ -846,18 +930,34 @@ def set_worker_ratio(corp_id: str, building_id: str, worker_ratio: float) -> Bui
         raise HTTPException(status_code=409, detail=str(exc))
 
 
+@app.post("/game/corporations/{corp_id}/buildings/{building_id}/upgrade", response_model=BuildingData)
+def upgrade_building(corp_id: str, building_id: str) -> BuildingData:
+    """Upgrade a building by one level (max 5). Phase 12."""
+    try:
+        return runtime.upgrade_building(corp_id, building_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.post("/game/corporations/{corp_id}/buildings/{building_id}/downgrade", response_model=BuildingData)
+def downgrade_building(corp_id: str, building_id: str) -> BuildingData:
+    """Downgrade a building by one level (min 1). Phase 12."""
+    try:
+        return runtime.downgrade_building(corp_id, building_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 # ── Game layer — Local Market (Phase 7.3) ─────────────────────────────────────
 
 @app.get("/game/market", response_model=list[LocalMarketState])
 def list_market_states() -> list[LocalMarketState]:
     """List all corporation market states."""
     return runtime.list_market_states()
-
-
-@app.get("/game/market/global/{system_id}", response_model=GlobalMarketState)
-def get_global_market(system_id: str) -> GlobalMarketState:
-    """Get aggregated market state for a system (Phase 9.5)."""
-    return runtime.get_global_market(system_id)
 
 
 @app.get("/game/market/{corp_id}", response_model=LocalMarketState)
@@ -997,7 +1097,6 @@ class CreateStateRequest(_BaseModel):
     bureaucracy: float = 0.1
     corruptionRate: float = 0.1
     toleranceThreshold: float = 0.5
-    isAiControlled: bool = False
 
 
 class CorruptNationalizationRequest(_BaseModel):
@@ -1019,7 +1118,6 @@ def create_state(body: CreateStateRequest) -> StateData:
         bureaucracy=body.bureaucracy,
         corruption_rate=body.corruptionRate,
         tolerance_threshold=body.toleranceThreshold,
-        is_ai_controlled=body.isAiControlled,
     )
 
 
@@ -1084,40 +1182,31 @@ def get_scoreboard() -> list[ScoreboardEntry]:
     return runtime.get_scoreboard()
 
 
-# ── Gameplay Events (Phase 8) ─────────────────────────────────────────────────
-
 @app.get("/game/events", response_model=list[EventData])
 def list_game_events(limit: int = 20) -> list[EventData]:
-    """List the most recent gameplay events (latest first, max 200)."""
-    safe_limit = max(1, min(limit, 200))
-    return runtime.list_game_events(safe_limit)
+    """Return the last *limit* simulation events (newest first, max 200)."""
+    return runtime.list_game_events(limit=limit)
 
 
-# ── Agent LLM (Phase 8.5) ───────────────────────────────────────────────
+@app.get("/game/global-market", response_model=GlobalMarketState)
+def get_global_market(system_id: str = "sol") -> GlobalMarketState:
+    """Return aggregated global market state for the given solar system."""
+    return runtime.get_global_market(system_id=system_id)
+
 
 @app.get("/game/agent/context/{state_id}")
 def get_agent_context(state_id: str) -> dict:
-    """Return the LLM context snapshot for an AI-controlled state (debug/MCP)."""
-    ctx = runtime.get_agent_context(state_id)
-    if ctx is None:
+    """Return the LLM context snapshot (state, scoreboard, recent events, memory) for a State entity."""
+    result = runtime.get_agent_context(state_id)
+    if result is None:
         raise HTTPException(status_code=404, detail=f"State {state_id!r} not found")
-    return ctx
+    return result
 
 
 @app.post("/game/agent/run/{state_id}", response_model=AgentAction)
 def run_agent_for_state(state_id: str) -> AgentAction:
-    """Synchronously trigger one LLM agent decision cycle for the given state."""
+    """Synchronously run one LLM agent cycle for a State entity and return the resulting action."""
     try:
         return runtime.run_agent_for_state(state_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-
-@app.get("/game/agent/memory/{state_id}", response_model=AgentMemory)
-def get_agent_memory(state_id: str) -> AgentMemory:
-    """Return the rolling agent memory for the given state."""
-    mem = runtime.get_agent_memory(state_id)
-    if mem is None:
-        # Return empty memory rather than 404 — caller may query before first run
-        return AgentMemory(entityId=state_id)
-    return mem
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
