@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "C:/Users/wafhi/AppData/LocalLow/DefaultCompany/Game"
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"docker compose": true
+		},
+		"powershell.cwd": "terraformation",
+		"postman.settings.dotenv-detection-notification-visibility": false
+	}
+}
