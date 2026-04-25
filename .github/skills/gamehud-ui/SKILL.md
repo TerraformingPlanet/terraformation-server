@@ -1,123 +1,140 @@
 ---
 name: gamehud-ui
-description: 'Use when implementing or refactoring the code-driven Unity HUD in GameHUD.cs: RightPanel tile inspector, building list/actions, market/contract sections, icon rendering, TMP dropdowns, badge rows, Font Awesome or TMP sprite integration. Trigger words: GameHUD, RightPanel, building HUD, icon, Font Awesome, TMP, dropdown, code-driven UI, tile inspector, badge, market panel, contract panel.'
-argument-hint: 'Describe the HUD/UI task: e.g. "add building icons in GameHUD", "refactor RightPanel building list", "integrate TMP font or sprite icons for buildings"'
+description: 'Use when implementing or refactoring the UI Toolkit HUD in GameHUDController.cs: TileInspector, BottomActionBar, EventFeed, LeftPanel, TopBar, building list, icon rendering. Trigger words: GameHUDController, GameHUD, RightPanel, building HUD, icon, TileInspector, BottomActionBar, EventFeed, dropdown, code-driven UI, tile inspector, badge, market panel, contract panel.'
+argument-hint: 'Describe the HUD/UI task: e.g. "add building icons", "refactor TileInspector", "wire BottomActionBar tab"'
 ---
 
 # GameHUD UI — Terraformation
 
+## Architecture — Migration GameHUD → GameHUDController
+
+Le HUD a migré de `GameHUD.cs` (uGUI Canvas code-driven) vers `GameHUDController.cs` (UI Toolkit).
+
+**IMPORTANT** : `GameHUD.cs` est LEGACY. Son canvas uGUI est détruit au démarrage par `GameHUDController.Start()`.
+Ne plus éditer `GameHUD.cs` pour les nouvelles features.
+
+### Structure UI Toolkit actuelle
+
+```
+_root (VisualElement, position:Absolute, 100%×100%)
+├── _topBar          — TopBar.uxml + TopBar.uss
+├── _leftPanel       — LeftPanel.uxml + LeftPanel.uss  (vue Planète)
+├── _tileInspector   — TileInspector.uxml + TileInspector.uss  (sélection tuile)
+├── _eventFeed       — Panneau droit, construit en C# (position:Absolute right:0)
+└── _bottomBar       — BottomActionBar.uxml + BottomActionBar.uss
+```
+
+### BottomActionBar — 5 tabs d'axe corp
+
+| Tab | Nom | Couleur accent | Index |
+|-----|-----|---------------|-------|
+| 0 | TERRITOIRE | `--text-accent` (bleu) | 0 |
+| 1 | CONSTRUCTION | `--construction-orange` | 1 |
+| 2 | MARCHÉ | jaune | 2 |
+| 3 | CONTRATS | vert | 3 |
+| 4 | TERRAFORM | `--diplomacy-purple` | 4 |
+
+Active tab class: `bottom-action-bar__tab--active`.
+Visible uniquement en `ViewState.Planet`.
+
+### TileInspector — sections gardées
+
+Après nettoyage (sections migrées vers tabs), il ne reste que :
+- Header (terrain + tileId + close)
+- PROPRIÉTAIRE (badge, claim/unclaim)
+- BÂTIMENTS (building-list-container)
+- Status label
+
+Les sections FILE DE CONSTRUCTION, MARCHÉ, CONTRATS, NATIONALISATION, ÉCOLOGIE ont été supprimées → elles vivront dans les panels contextuels des tabs.
+
 ## When to Use
 
-- Editing `Game/Assets/Scripts/UI/GameHUD.cs`
-- Adding or refactoring code-driven HUD sections in the RightPanel or DebugDrawer
-- Implementing building, market, or contract UI in the HUD
-- Integrating iconography for UI-only presentation (Font Awesome, TMP font assets, TMP sprite assets)
-- Changing TMP dropdowns, labels, badge rows, or building list rendering
-- Any task where gameplay building types must be displayed in UI without leaking presentation details into the data model
+- Editing `Game/Assets/Scripts/UI/GameHUDController.cs`
+- Ajout/refactor de sections dans TileInspector, BottomActionBar, EventFeed, LeftPanel, TopBar
+- Implémentation building, marché, contrats dans les panels de tabs
+- Iconographie UI (Font Awesome, TMP font assets, TMP sprite assets)
+- TMP dropdowns, labels, badge rows, building list rendering
 
 ## Files Involved
 
 | File | Role |
 |------|------|
-| `Game/Assets/Scripts/UI/GameHUD.cs` | Main code-driven HUD implementation |
-| `Game/Assets/Scripts/UI/GameHUDBuildingIcons.cs` | UI-only mapping from `CorpBuildingType` to label/icon/tint |
-| `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` | Network mirror types (`CorpBuildingType`, `CorpBuilding`, etc.) |
-| `Game/Assets/Scripts/Economy/BuildingData.cs` | Local gameplay ScriptableObject definitions |
-| `Game/Assets/Resources/Fonts/` | Optional local UI font assets |
-| `Documentation/ROADMAP.md` | Feature progress for Phase 7.x |
-| `Documentation/ARCHITECTURE.md` | Technical decision when UI representation changes |
-| `Documentation/CHANGELOG.md` | Completed implementation trace |
+| `Game/Assets/Scripts/UI/GameHUDController.cs` | **Contrôleur principal UI Toolkit (actif)** |
+| `Game/Assets/Scripts/UI/GameHUD.cs` | Legacy uGUI — NE PAS ÉDITER |
+| `Game/Assets/UI/Templates/*.uxml` | Templates UXML (TopBar, LeftPanel, TileInspector, BottomActionBar) |
+| `Game/Assets/UI/Styles/*.uss` | Stylesheets USS (variables, base, TopBar, LeftPanel, TileInspector, BottomActionBar) |
+| `Game/Assets/UI/Components/*.uxml` | Composants réutilisables (BuildingCard, ConstructionCard) |
+| `Game/Assets/Scripts/UI/GameHUDBuildingIcons.cs` | UI-only mapping CorpBuildingType → label/icon/tint |
+| `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` | Mirror types |
+| `Documentation/ROADMAP.md` | Feature progress |
+| `Documentation/ARCHITECTURE.md` | Décisions techniques |
 
 ## Core Rules
 
-### 1. Keep gameplay and presentation separate
+### 1. Inline styles obligatoires pour les containers positionnés avec CloneTree
 
-- `CorpBuildingType`, `CorpBuilding`, and `BuildingData` remain gameplay/data types
-- Glyphs, icon names, font asset paths, and colors are **UI-only** concerns
-- Never make gameplay logic depend on a glyph or UI string
+`CloneTree()` dans un container existant **n'applique pas** les `<Style src="...">` déclarés dans le UXML.
+→ Toujours appliquer les styles de layout critiques en C# inline **après** le clone :
 
-### 2. Use a central icon mapping layer
+```csharp
+_myPanel.style.position       = Position.Absolute;
+_myPanel.style.right          = new StyleLength(0f);   // float f, pas int
+_myPanel.style.flexDirection  = FlexDirection.Row;
+// etc.
+```
 
-Do not scatter icon literals throughout `GameHUD.cs`.
+⚠️ Utiliser `0f` / `52f` pas `0` / `52` : `StyleLength(int)` est ambigu avec `StyleLength(StyleKeyword)`.
 
-Preferred approach:
-- Create or update a single mapping file such as `GameHUDBuildingIcons.cs`
-- Map `CorpBuildingType` to:
-  - user-facing display name
-  - icon token or unicode
-  - fallback glyph/text
-  - tint/color
+### 2. Préférer `Instantiate()` pour les templates racine
 
-### 3. Always provide a fallback
+Pour les panels racine (TopBar, LeftPanel) : utiliser `template.Instantiate()` + `_root.Add()`.
+Pour les templates clonés dans un container déjà positionné (BottomActionBar, TileInspector) : utiliser `asset.CloneTree(_root)` + forcer les styles inline.
 
-If using a font-based icon system:
-- The HUD must still render something readable if the font is missing or TMP cannot create/load the font asset
-- Fallback should be visible and deterministic (`M`, `F`, `E`, `R`, `?`, etc.)
+### 3. GameHUD legacy — ne pas contourner la destruction
 
-### 4. Prefer code-driven UI consistency
+`GameHUDController.Start()` détruit `GameHUDCanvas` (enfant de GameHUD).
+Si GameHUD ajoute un nouveau panel, il faut le détruire aussi dans GameHUDController.
 
-When adding a new UI element in `GameHUD.cs`:
-- Reuse the existing helper patterns (`MakeLabel`, `MakeButton`, dropdown builders, row layouts)
-- Keep alignment, spacing, and colors consistent with the existing HUD
-- Avoid creating hidden one-off layout code when a reusable helper is possible
+### 4. Keep gameplay and presentation separate
 
-### 5. Scope icon work to HUD unless explicitly asked otherwise
+- `CorpBuildingType`, `CorpBuilding`, et `BuildingData` restent des types gameplay
+- Glyphs, icon names, font asset paths, colors sont **UI-only** → dans `GameHUDBuildingIcons.cs`
 
-Font Awesome or TMP icon work is, by default:
-- for HUD panels
-- for dropdowns/lists/badges/buttons
-- **not** for world-space rendering on tiles, globe overlays, or local scene props
+### 5. Always provide a fallback
 
-If the user wants visible buildings on the map/globe/local scene, treat that as a separate rendering task.
+Si un template UXML est null → fallback procédural C# (`BuildXxxProcedural()`).
+Toujours loguer un warning si le template est manquant.
 
 ## Recommended Procedure
 
-### Step 1 — Read the current HUD section before editing
+### Step 1 — Lire le contrôleur avant d'éditer
 
-For any change, read the relevant `GameHUD.cs` region first:
-- the state fields
-- the panel construction block in `BuildRightPanel()`
-- the refresh coroutine/method that populates the section
-- the UI helpers at the bottom of the file
+Lire la région concernée dans `GameHUDController.cs` :
+- les champs runtime (`_xxx`)
+- la méthode `BuildXxx()`
+- la coroutine de refresh si elle existe
+- `OnViewChanged()` pour la visibilité
 
-### Step 2 — Identify whether the change is data, UI, or both
+### Step 2 — Identifier data vs UI vs les deux
 
-- If only labels/icons/layout change: keep changes inside `GameHUD.cs` and UI mapping files
-- If a new server field is required: stop and also use `simulation-contract-sync`
-- If a new gameplay mechanic changes tick behavior: stop and also use `gameplay-tick-feature`
+- Si seulement labels/layout : rester dans `GameHUDController.cs` et USS
+- Si nouveau champ serveur requis : aussi utiliser `simulation-contract-sync`
+- Si nouvelle mécanique tick : aussi utiliser `gameplay-tick-feature`
 
-### Step 3 — Add/update the icon mapping
+### Step 3 — Appliquer les styles inline après CloneTree
 
-For building icons:
-1. Extend `GameHUDBuildingIcons.cs`
-2. Add display name, icon token/unicode, fallback, tint
-3. Keep unknown types on a safe default entry
+Voir règle 1 ci-dessus. Ne pas oublier `flex-direction` si le container doit être `Row`.
 
-### Step 4 — Render through helpers, not ad hoc strings
+### Step 4 — Rendre les entrées interactives avec Button, pas Label
 
-Preferred rendering structure for building rows:
-- icon label
-- text label
-- optional secondary status (ticks, workers, outputs)
+Les listes d'événements ou d'items cliquables → `Button` avec `RegisterCallback<ClickEvent>`.
+`Label` pour affichage pur, `Button` pour toute interaction.
 
-Do not rely on one large multiline string if structured rows are feasible.
+### Step 5 — Mettre à jour la doc si changement de convention
 
-### Step 5 — Handle TMP/font integration safely
-
-If using a font file in `Assets/Resources/Fonts/`:
-- Load via `Resources.Load<Font>()`
-- Create `TMP_FontAsset` dynamically when needed
-- Preload needed glyphs when practical
-- Log a warning and fall back gracefully if loading fails
-
-If font integration proves unstable, switch to a `TMP Sprite Asset` without changing the mapping layer.
-
-### Step 6 — Update documentation when the implementation changes project conventions
-
-Update docs when relevant:
-- `ROADMAP.md` — if a visible Phase 7.x UI feature is implemented
-- `ARCHITECTURE.md` — if a new technical convention is introduced (e.g. icon mapping layer, local font assets, fallback policy)
-- `CHANGELOG.md` — if the feature is complete enough to trace historically
+- `ROADMAP.md` — si une feature visible est implémentée
+- `ARCHITECTURE.md` — si une nouvelle convention technique est introduite
+- `CHANGELOG.md` — si la feature est complète
 
 ## Common Mistakes
 
