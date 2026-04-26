@@ -816,7 +816,7 @@ def run_body_tile_checks(body_id: str, preset_name: str) -> dict:
     Sample H3 surface tiles for a body and validate dominant terrain matches a preset.
 
     Reads authoritative tile data from the DedicatedServer. Does not require Unity.
-    Useful after bootstrap-sol to verify that bodies in the galaxy have the correct
+    Useful after bootstrap to verify that bodies in the galaxy have the correct
     terrain distribution for their configured preset.
 
     Args:
@@ -1494,6 +1494,119 @@ def register_interior_zone(
 
 
 # ---------------------------------------------------------------------------
+# Debug — Tile & overlay inspection tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool
+def get_body_tiles_lod(body_id: str, h3_resolution: int = 3, page: int = 0, size: int = 200) -> dict:
+    """
+    Return tiles at a given H3 resolution for LOD debug purposes.
+    Same data source as FetchAndColorizeHiLod (res=3) in PlanetSphereGoldberg.
+    Use to verify that the right tiles + terrain types are served before Unity renders them.
+    Does not require Unity. Wraps GET /bodies/{body_id}/tiles/lod.
+
+    Args:
+        body_id: UUID of the spherical body.
+        h3_resolution: H3 resolution — 0=122 tiles, 1=842, 2=5882, 3=41162.
+        page: Page index (0-based, default 0).
+        size: Tiles per page (1–10000, default 200).
+    """
+    return {"tiles": _server_get(f"/bodies/{body_id}/tiles/lod", h3_resolution=h3_resolution, page=page, size=size)}
+
+
+@mcp.tool
+def get_tile_state(body_id: str, tile_id: str) -> dict:
+    """
+    Return the State and Territory owning a specific tile, or null if unowned.
+    Useful to verify state overlay correctness — matches the data FetchStateOverlay uses for borders.
+    Does not require Unity. Wraps GET /bodies/{body_id}/tiles/{tile_id}/state.
+
+    Args:
+        body_id: UUID of the spherical body.
+        tile_id: H3 cell index string (e.g. "820007fffffffff").
+    """
+    return _server_get(f"/bodies/{body_id}/tiles/{tile_id}/state")
+
+
+@mcp.tool
+def get_body_state_tile_colors(body_id: str) -> dict:
+    """
+    Return the raw tile→state color mapping for a planet body.
+    This is exactly the data returned to PlanetSphereGoldberg.FetchStateOverlay.
+    Use to debug missing/wrong state colors on the globe without needing Unity.
+    Does not require Unity. Wraps GET /game/bodies/{body_id}/state-tile-colors.
+
+    Args:
+        body_id: UUID of the spherical body.
+    """
+    items = _server_get(f"/game/bodies/{body_id}/state-tile-colors")
+    return {
+        "bodyId": body_id,
+        "count": len(items) if isinstance(items, list) else 0,
+        "items": items,
+    }
+
+
+@mcp.tool
+def get_cell_detail(q: int = 0, r: int = 0) -> dict:
+    """
+    Get the detailed state of a local hex cell by axial coordinates.
+    Returns waterRatio, temperature, waterClassification, terrainType, and biome.
+    Use to validate local region generation or debug specific cells after open_server_region.
+    Does not require Unity. Wraps GET /debug/cell.
+
+    Args:
+        q: Axial Q coordinate of the cell (default 0).
+        r: Axial R coordinate of the cell (default 0).
+    """
+    return _server_get("/debug/cell", q=q, r=r)
+
+
+@mcp.tool
+def debug_tile_overlay(body_id: str, tile_id: str) -> dict:
+    """
+    Composite debug tool: returns tile data + state/territory ownership + direct neighbors in one call.
+    Use when a tile looks wrong in the globe overlay (wrong color, missing border, wrong terrain).
+    Does not require Unity.
+
+    Args:
+        body_id: UUID of the spherical body.
+        tile_id: H3 cell index string (e.g. "820007fffffffff").
+    """
+    tile       = _safe_server_get(f"/bodies/{body_id}/tiles/{tile_id}")
+    ownership  = _safe_server_get(f"/bodies/{body_id}/tiles/{tile_id}/state")
+    neighbors_raw = _safe_server_get(f"/bodies/{body_id}/tiles/{tile_id}/neighbors")
+
+    neighbors = []
+    if isinstance(neighbors_raw, list):
+        neighbors = [
+            {
+                "tileId":              t.get("tileId"),
+                "terrainType":         t.get("terrainType"),
+                "waterClassification": t.get("waterClassification"),
+            }
+            for t in neighbors_raw
+        ]
+
+    return {
+        "bodyId": body_id,
+        "tileId": tile_id,
+        "tile": {
+            "terrainType":         tile.get("terrainType"),
+            "waterClassification": tile.get("waterClassification"),
+            "waterRatio":          tile.get("waterRatio"),
+            "temperature":         tile.get("temperature"),
+            "isHabitable":         tile.get("isHabitable"),
+        },
+        "stateOwnership": {
+            "state":     ownership.get("state"),
+            "territory": ownership.get("territory"),
+        },
+        "neighbors": neighbors,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Galaxy layer MCP tools
 # ---------------------------------------------------------------------------
 
@@ -1774,13 +1887,13 @@ def debug_noise_distribution(
 
 
 @mcp.tool
-def bootstrap_sol() -> dict:
+def bootstrap() -> dict:
     """
     Bootstrap the Sol solar system: 8 planets + key moons, Earth as active planet.
     Wipes all existing bodies and galaxy state first.
     Earth has waterLevel=0.71 (Coast coherence, seed=1004).
     """
-    return _server_post("/commands/bootstrap-sol")
+    return _server_post("/commands/bootstrap")
 
 
 # ── Sprint MCP-3: Gameplay / Corporation tools ─────────────────────────────
@@ -2076,6 +2189,20 @@ def list_states() -> dict:
 
 
 @mcp.tool
+def get_planet_states(body_id: str) -> dict:
+    """
+    Return a compact summary of all nation-States and their territories for a given planet body.
+    Shows: state name, profile, territory count, total tile count, and each territory's name + tile count.
+    Use this to quickly verify that countries have been generated on a planet after bootstrap.
+    Does not require Unity in Play Mode.
+
+    Args:
+        body_id: UUID of the SphericalBody (e.g. Earth). Use get_body_overview or list_bodies to find it.
+    """
+    return _server_get(f"/game/bodies/{body_id}/states-summary")
+
+
+@mcp.tool
 def get_state(state_id: str) -> dict:
     """
     Return a single State by ID.
@@ -2085,6 +2212,31 @@ def get_state(state_id: str) -> dict:
         state_id: UUID of the State.
     """
     return _server_get(f"/game/states/{state_id}")
+
+
+@mcp.tool
+def list_territories(body_id: str = "") -> dict:
+    """
+    Return all territories on a given body. If body_id is empty, returns all territories.
+    Does not require Unity in Play Mode.
+
+    Args:
+        body_id: UUID of the SphericalBody (e.g. Earth). Empty string = all bodies.
+    """
+    url = f"/game/territories?body_id={body_id}" if body_id else "/game/territories"
+    return _server_get(url)
+
+
+@mcp.tool
+def get_territory(territory_id: str) -> dict:
+    """
+    Return a single Territory by ID.
+    Does not require Unity in Play Mode.
+
+    Args:
+        territory_id: UUID of the Territory.
+    """
+    return _server_get(f"/game/territories/{territory_id}")
 
 
 @mcp.tool
