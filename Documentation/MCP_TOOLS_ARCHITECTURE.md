@@ -297,6 +297,25 @@ All tools do not require Unity in Play Mode.
 - **Endpoint** : `GET /game/scoreboard`
 - **Retour** : `list[ScoreboardEntry]` triée par score décroissant
 
+## Overlay couleurs — endpoints dédiés (sans date de phase)
+
+Ces endpoints remplacent la logique client qui recalculait les couleurs localement.  
+Le serveur est désormais la **seule source de vérité** pour les couleurs d'overlay.
+
+| Endpoint | Description | DTO retourné |
+|---|---|---|
+| `GET /game/bodies/{body_id}/state-tile-colors` | Couleurs d'overlay politique (États) pour un corps | `list[StateTileColorDto]` |
+| `GET /bodies/{body_id}/ownership-tiles` | Couleurs d'overlay propriété (corporations) pour un corps | `list[OwnershipTileDto]` |
+
+**`GET /bodies/{body_id}/ownership-tiles`**
+- **Remplace** : `GET /game/corporations` + boucle client `CorpColorFromId`
+- **Avantage** : retourne uniquement les tuiles du corps demandé, avec les couleurs RGB pré-calculées
+- **Note** : ne nécessite pas Unity en Play Mode
+
+**`GET /game/bodies/{body_id}/state-tile-colors`**
+- **Remplace** : précédent endpoint sans couleurs + `StateColorFromId` client
+- **Avantage** : couleurs stables et cohérentes entre client et serveur
+
 All Phase 7.5 tools do not require Unity in Play Mode.
 
 La séparation des responsabilités est stable. `get_view_state` est le seul tool définitivement ancré sur le bridge Unity.

@@ -616,6 +616,47 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 
 ---
 
+## ✅ Phase Colonisation Initiale Terre — Partition territoriale + population bootstrap
+
+> Design de référence : [Description_du_jeu.md §colonisation](description_jeu/Description_du_jeu.md)
+
+**Objectif** : au premier `bootstrap_sol()`, toutes les tuiles terrestres d'Earth sont partitionnées en territoires appartenant à 7 États-nations continentaux avec une population seedée.
+
+### Critères de sortie
+
+- [x] `TerritoryData` + `StateProfile` + `STATE_PROFILES` dans `models.py`
+- [x] `StateData` enrichi : `territoryIds`, `literacyRate`, `profileKey`
+- [x] `logic/colonization.py` : `build_territories_from_tiles`, `is_terrestrial_tile`, `seed_tile_population`, `tile_population_factor`, `assign_tile_to_continent`
+- [x] Multiplicateurs terrain/eau : Vegetation×1.5, Coast×1.5, Roche×0.5, OpenOcean=0, Glace=0
+- [x] Distribution population 40% Poor / 59% Middle / 1% Rich (via `PopDistribution` injectable, jamais hardcoded)
+- [x] 5 profils `STATE_PROFILES` : Standard, RicheUtopique (1/98/1), EnDeveloppement, Pauvre, Autoritaire
+- [x] 7 zones continentales : NordAmérique, SudAmérique, Europe, Afrique, MoyenOrient, Asie, Océanie
+- [x] BFS flood-fill pour garantir la contiguïté des territoires
+- [x] `persistence.py` : table `territories`, ABC + InMemory + PostgresRepository
+- [x] `runtime.py` : `_territories`, `_territory_tile_index`, `_bootstrap_earth_colonization_locked()`, `list_territories()`, `get_territory()`, `get_tile_territory()`
+- [x] Hydratation `_territories` dans `_hydrate_from_saved()`
+- [x] `DedicatedServer/app/server.py` : `GET /game/territories` + `GET /game/territories/{id}`
+- [x] `Mcp/server.py` : `list_territories()` + `get_territory()`
+- [x] `SimulationContracts.cs` : `TerritoryData`, `PopDistribution`, `SimStateData` enrichi
+- [x] `test_phase_earth_colonization.py` — 9 tests (T01–T08) + `test_p_colonisation_terre.py` assertion
+
+### Fichiers modifiés
+
+| Fichier | Changement |
+|---------|------------|
+| `SimulationCore/terraformation_sim/models.py` | `PopDistribution`, `StateProfile`, `STATE_PROFILES`, `TerritoryData`, `StateData` enrichi |
+| `SimulationCore/terraformation_sim/logic/colonization.py` | Nouveau fichier — 7 fonctions pures |
+| `SimulationCore/terraformation_sim/logic/__init__.py` | Exports colonisation |
+| `SimulationCore/terraformation_sim/persistence.py` | Table `territories`, ABC, InMemory, PostgresRepository |
+| `SimulationCore/terraformation_sim/runtime.py` | Registres, bootstrap, hydrate, méthodes publiques |
+| `DedicatedServer/app/server.py` | 2 nouveaux endpoints |
+| `Mcp/server.py` | 2 nouveaux tools |
+| `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` | `TerritoryData`, `PopDistribution`, `SimStateData` enrichi |
+| `SimulationCore/tests/test_phase_earth_colonization.py` | 8 tests (T01–T08) |
+| `SimulationCore/tests/assertions/test_p_colonisation_terre.py` | Assertion script |
+
+---
+
 ## Phase 12 — Polish
 
 ### ✅ Sprint UI (2026-04-21)
@@ -631,6 +672,51 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 - [ ] Sound design
 - [ ] Optimisation performances (profiler Unity)
 - [ ] Distribution (itch.io ou autre)
+
+---
+
+## ⚠️ Dettes Techniques — Audit 2026-04-26
+
+> Dérives identifiées lors de l'audit cross-projet du 2026-04-26. À traiter avant la Phase 13 (Mirror Networking).
+
+### A — Contrats C# manquants dans `SimulationContracts.cs`
+
+Modèles Python existants sans miroir C# dans `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` :
+
+- [ ] `TradeRoute`, `SpaceTravel`, `ExpeditionUnit` (Phase 9) — utilisés dans `GET /travel` mais non désérialisables côté Unity
+- [ ] `GlobalMarketState` (Phase 9.5) — endpoint `/game/global-market` sans réception Unity
+- [ ] `AgentAction`, `AgentMemory`, `AgentActionType` (Phase 8.5) — agent LLM sans surface Unity
+- [ ] `CorpProfile`, `BotFSMState` (Phase 11.2) — FSM corpo sans miroir C#
+
+### B — Endpoints DedicatedServer manquants
+
+Endpoints présents dans `Mcp/server.py` ou consommés par Unity, absents de `DedicatedServer/app/server.py` :
+
+- [ ] `GET /game/territories` et `GET /game/territories/{id}` — existent via MCP mais non exposés en REST direct
+- [ ] `WebSocket /game/ws/events` — Phase 10 marquée ✅ mais endpoint WS absent du serveur dédié ; `NativeWebSocket` Unity ne peut pas se connecter
+
+### C — Bug Unity : port WebSocket incorrect
+
+- [ ] `Game/Assets/Scripts/Networking/SimulationWebSocketClient.cs` : `simulationServerUrl = "http://localhost:8001"` → `"http://localhost:8080"` (port 8001 = Roadmap service, pas DedicatedServer)
+
+### D — Dérives simulation runtime
+
+- [ ] Passe `solarIrradiance` post-bootstrap manquante — les tuiles `solarIrradiance` ne sont pas recalculées après `bootstrap_sol` ; valeurs stale si la star change
+- [ ] `_region_mutations` non persistées en DB — les mutations de région disparaissent au redémarrage serveur ; nécessite une table ou colonne dédiée dans `persistence.py`
+
+### E — Scripts d'assertions manquants
+
+Phases `done` sans `assertionScript` lié dans `roadmap.json` :
+
+- [ ] Créer `SimulationCore/tests/assertions/test_p8_events.py` (Phase 8)
+- [ ] Créer `SimulationCore/tests/assertions/test_p10_multiplayer.py` (Phase 10)
+- [ ] Créer `SimulationCore/tests/assertions/test_p113_gm.py` (Phase 11.3)
+- [ ] Créer `SimulationCore/tests/assertions/test_p115_ecology.py` (Phase 11.5)
+- [ ] Créer `SimulationCore/tests/assertions/test_p94_prices.py` (Phase 9.4)
+
+### F — Documentation MCP tools debug
+
+- [ ] Documenter dans `Documentation/MCP_TOOLS_ARCHITECTURE.md` les 5 tools debug récents non référencés : `debug_generation_stats`, `debug_noise_distribution`, `compare_generation_profiles`, `compare_presets`, `run_body_tile_checks`
 
 ---
 
@@ -661,6 +747,7 @@ Référence complète : [MCP_TOOLS_ARCHITECTURE.md](MCP_TOOLS_ARCHITECTURE.md)
 | 12 Polish P1+P2 | Tick counter TopBar + EventType FR popup | ✅ Terminé 2026-04-21 |
 | 12 Polish P3+P4 | Équilibrage économique v1 (8 constantes) + Tooltips flottants HUD | ✅ Terminé 2026-04-22 |
 | Sprint DB | Persistence complète des 9 entités gameplay (PostgreSQL write-through + hydratation) | ✅ Terminé 2026-04-21 |
+| **Colonisation Initiale Terre** | **Partition territoriale Earth + 7 nations + population bootstrap (PopDistribution injectable)** | **✅ Terminé 2026-04-25** |
 | 12 Polish suite | Menus, sound, perf, distribution | ⬜ Continu |
 | Rébellion | SatisfactionScore tuile → EventType.Rébellion → perte contrôle | ⬜ Non démarré |
 | Réseau énergétique | Segments entre tuiles, capacité, marché local énergie | ⬜ Non démarré |

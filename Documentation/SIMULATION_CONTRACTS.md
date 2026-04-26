@@ -61,7 +61,9 @@ Toute modification d'un type partagé doit être appliquée **dans les deux fich
 | `SimulationCommand` | `struct SimulationCommand` | 8 champs identiques |
 | `SimulationEvent` | `struct SimulationEvent` | 7 champs identiques |
 | `ClaimedTile` | `struct ClaimedTile` | `bodyId`, `tileId` — Phase 7.1 |
-| `CorporationData` | `struct CorporationData` | `id`, `name`, `credits`, `claimedTiles[]`, `score`, `isAI` — Phase 7.1 |
+| `CorporationData` | `struct CorporationData` | `id`, `name`, `credits`, `claimedTiles[]`, `score`, `isAI`, `colorR/G/B` — Phase 7.1 / couleurs serveur |
+| `StateTileColorDto` | `struct StateTileColorDto` | `tileId`, `stateId`, `stateName`, `profileKey`, `colorR/G/B` — couleurs calculées serveur |
+| `OwnershipTileDto` | `struct OwnershipTileDto` | `tileId`, `corpId`, `colorR/G/B` — couleurs calculées serveur |
 | `SocialClass` | `enum SocialClass : int` | `Poor=0`, `Middle=1`, `Rich=2` — Phase 7.3 |
 | `PopulationTier` | `struct PopulationTier` | `socialClass`, `count`, `avgIncome` — Phase 7.3 / 9.6 |
 | `ResourceListing` | `struct ResourceListing` | `resourceType`, `price`, `supply`, `demand` — Phase 7.3 |
@@ -353,6 +355,50 @@ Struct flat utilisée pour le champ `employmentSlots` de `CorpBuilding`. Clés f
 | `profile` | `profile` | `CorpProfile` | `CorpProfile` | Défaut `Economiste` — fixe à la création |
 | `fsmState` | `fsmState` | `BotFSMState` | `BotFSMState` | Défaut `Idle` — mis à jour chaque tick par le FSM |
 | `fsmThresholds` | *(non exposé C#)* | `dict[str, float]` | — | Seuils internes, jamais désérialisés côté client |
+
+---
+## Couleurs overlay — transfert vers le serveur
+
+> **Décision** : les calculs de couleurs (corporations et États) sont désormais exclusivement du côté **serveur Python**. Le client Unity consomme des valeurs RGB `[0,1]` précalculées. Plus aucun algorithme de couleur (HSV hash, palette États) ne doit être maintenu côté C#.
+
+### Algorithmes serveur (`models.py`)
+
+| Fonction | Algorithme | Identique à l'ancien C# |
+|---|---|---|
+| `_corp_color_rgb(corp_id)` | Hash 8 premiers chars UUID → HSV (S=0.85, V=0.90) | ✅ `GoldbergFaceColorizer.CorpColorFromId` |
+| `_state_color_rgb(state_id)` | Hash 8 premiers chars → index dans palette 10 couleurs | ✅ `PlanetSphereGoldberg.StateColorFromId` |
+
+### StateTileColorDto (Pydantic / struct C#)
+| Champ | Type Python | Type C# | Notes |
+|---|---|---|---|
+| `tileId` | `str` | `string` | Index H3 |
+| `stateId` | `str` | `string` | |
+| `stateName` | `str` | `string` | |
+| `profileKey` | `str` | `string` | |
+| `colorR` | `float` | `float` | \[0,1\] |
+| `colorG` | `float` | `float` | \[0,1\] |
+| `colorB` | `float` | `float` | \[0,1\] |
+
+**Endpoint** : `GET /game/bodies/{body_id}/state-tile-colors`
+
+### OwnershipTileDto (Pydantic / struct C#)
+| Champ | Type Python | Type C# | Notes |
+|---|---|---|---|
+| `tileId` | `str` | `string` | Index H3 |
+| `corpId` | `str` | `string` | UUID de la corporation propriétaire |
+| `colorR` | `float` | `float` | \[0,1\] |
+| `colorG` | `float` | `float` | \[0,1\] |
+| `colorB` | `float` | `float` | \[0,1\] |
+
+**Endpoint** : `GET /bodies/{body_id}/ownership-tiles`  
+**Remplace** : `GET /game/corporations` + boucle client (`GoldbergFaceColorizer.CorpColorFromId`)
+
+### CorporationData — champs couleur ajoutés
+| Champ Python | Champ C# | Type | Notes |
+|---|---|---|---|
+| `colorR` | `colorR` | `float` | \[0,1\] — calculé à `register_corporation` |
+| `colorG` | `colorG` | `float` | \[0,1\] — calculé à `register_corporation` |
+| `colorB` | `colorB` | `float` | \[0,1\] — calculé à `register_corporation` |
 
 ### AgentActionType — valeurs ajoutées (Phase 11.2)
 | Python | C# | Valeur | Notes |

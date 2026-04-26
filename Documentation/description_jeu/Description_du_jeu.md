@@ -76,7 +76,8 @@ Galaxie
 ```
 
 - Chaque tuile de surface est l'unité de base exploitable
-- Une tuile appartient à un **État**, une **corporation**, ou à personne (espace non colonisé)
+- Une tuile appartient à un **État** ou à personne (espace non colonisé).
+  Les corporations n'**own** jamais une tuile directement — elles y exercent une influence via leurs bâtiments et leurs États vassaux.
 - Les planètes sont représentées avec une grille **H3** (hexagones géospatiaux hiérarchiques)
 - Chaque corps céleste a également **5 tuiles orbitales** (Points de Lagrange) contrôlables séparément
 
@@ -519,11 +520,16 @@ Déclenché sur événements clés (pas chaque tick) :
 
 Les bots utilisent les **mêmes endpoints API** que les joueurs humains. Profil fixe à la création, seuils FSM ajustables par le LLM. La création d'une corpo IA est réservée à l'admin ou au GM (`is_ai=True`).
 
-### Claim de territoire
-- Envoyer une **caravane de colonisation** vers une tuile sans gouvernement
+### Mission de colonisation
+
+> **Les corporations ne revendiquent PAS les tuiles de mondes habités.** Sur Terre (ou toute planète avec des États existants), les corps font pression via la loyauté et la corruption.
+
+Sur un **monde mort sans gouvernement** :
+- Envoyer une **caravane de colonisation** vers une tuile libre
 - La caravane transporte une population de base — elle prend du temps à arriver
 - Tuile occupée → conquête requise
-- Créer un **État vassal** à partir de tuiles entièrement contrôlées
+- À l'arrivée : si tuile libre → création d'un **État vassal** (`isVassal=true`, `vassalCorpId=corp_id`, `loyalty[corp_id]=1.0`)
+- L'État vassal est toujours contrôlé par l'IA ; la corpo l'influence via sa loyauté et ses quêtes
 
 ---
 
@@ -535,6 +541,20 @@ Les bots utilisent les **mêmes endpoints API** que les joueurs humains. Profil 
 - **Taux de corruption** : passif (moins efficace) ou exploitable par les corporations
 - **Bureaucratie** (stat RPG) : délai des décisions = base × (1 + % bureaucratie)
 - Contrôlés par la simulation IA, pilotables par un **agent LLM**
+
+### Types d'États
+
+| Type | Définition | Champs modèle |
+|---|---|---|
+| **Indépendant** | État neutre, géré par IA | `isVassal=false` |
+| **Vassal** | Créé par une mission de colonisation corpo | `isVassal=true`, `vassalCorpId=<id>`, `loyalty[corpId]=1.0` |
+| **Soumis** | État indépendant dont le `dependenceScore` dépasse un seuil | `loyalty[corpId]` élevée |
+
+**dependenceScore** = `corruptionRate×0.4 + loyalty[corpId]×0.4 + (globalRep/100)×0.2`
+- Monte via : quêtes tenues, contrats honorés, aide en crise
+- Baisse via : contrats rompus, nationalisation, réputation publique basse
+- Si score > `toleranceThreshold` : l'État peut déclencher une nationalisation
+- Si score < seuil de rébellion (TBD) : un État vassal peut proclamer son indépendance
 
 ### Seuil de tolérance & Nationalisation
 - Chaque corpo présente a un score calculé (puissance, comportement, contrats)
@@ -762,6 +782,6 @@ score = credits + (claimedTiles × 100) + (globalReputation × 50)
 | Multijoueur | Nombre de joueurs, synchronisation des ticks | ❓ Ouvert |
 | Génération procédurale | Quoi est généré au démarrage (planètes, ressources, États initiaux…) | ❓ Ouvert |
 | Militaire | Profondeur du système de combat / milices | ❓ Ouvert |
-| États vassaux | Conditions d'autonomisation, rupture de vassalité | ❓ Ouvert |
+| États vassaux | Conditions d'autonomisation, rupture de vassalité | ✅ Décidé — voir §11 + §12 |
 | Quota de décisions | Valeur exacte, coût différencié par type d'action ? | ❓ Ouvert |
 | Marché global | Formation uniquement par événement ou aussi par action joueur ? | ❓ Ouvert |
