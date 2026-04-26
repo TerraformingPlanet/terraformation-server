@@ -40,6 +40,15 @@ from .interior import (
     compute_body_position_at_tick,
     generate_interior_cells,
 )
+from .colonization import (
+    assign_tile_to_continent,
+    build_territories_from_tiles,
+    is_terrestrial_tile,
+    seed_tile_population,
+    tile_population_factor,
+    TERRAIN_POP_MULTIPLIERS,
+    WATER_POP_MULTIPLIERS,
+)
 
 __all__ = [
     # stellar
@@ -72,4 +81,12 @@ __all__ = [
     # interior + orbital
     "compute_body_position_at_tick",
     "generate_interior_cells",
+    # colonization
+    "assign_tile_to_continent",
+    "build_territories_from_tiles",
+    "is_terrestrial_tile",
+    "seed_tile_population",
+    "tile_population_factor",
+    "TERRAIN_POP_MULTIPLIERS",
+    "WATER_POP_MULTIPLIERS",
 ]

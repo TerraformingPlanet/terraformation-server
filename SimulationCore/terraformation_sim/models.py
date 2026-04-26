@@ -2,8 +2,60 @@ from __future__ import annotations
 
 from enum import IntEnum
 from typing import Annotated, Literal
+import colorsys
 
 from pydantic import BaseModel, Field
+
+
+def _corp_color_rgb(corp_id: str) -> tuple[float, float, float]:
+    """Compute corporation color from ID (port of C# CorpColorFromId)."""
+    if not corp_id:
+        return (1.0, 1.0, 1.0)  # white
+    hash_val = 17
+    count = 0
+    for char in corp_id:
+        if char == '-':
+            continue
+        if count >= 8:
+            break
+        hash_val = hash_val * 31 + ord(char)
+        count += 1
+    hue = (hash_val & 0x7FFFFFFF) % 360 / 360.0
+    # HSV to RGB: S=0.85, V=0.90
+    r, g, b = colorsys.hsv_to_rgb(hue, 0.85, 0.90)
+    return (r, g, b)
+
+
+# State color palette (port of C# _statePalette)
+_STATE_PALETTE = [
+    (0.20, 0.55, 0.85),  # bleu
+    (0.86, 0.20, 0.22),  # rouge
+    (0.18, 0.68, 0.32),  # vert
+    (0.95, 0.75, 0.10),  # jaune
+    (0.60, 0.20, 0.80),  # violet
+    (1.00, 0.50, 0.10),  # orange
+    (0.10, 0.70, 0.70),  # cyan
+    (0.85, 0.30, 0.65),  # rose
+    (0.40, 0.25, 0.12),  # marron
+    (0.55, 0.75, 0.20),  # vert lime
+]
+
+
+def _state_color_rgb(state_id: str) -> tuple[float, float, float]:
+    """Compute state color from ID (port of C# StateColorFromId)."""
+    if not state_id:
+        return _STATE_PALETTE[0]
+    hash_val = 17
+    count = 0
+    for char in state_id:
+        if char == '-':
+            continue
+        if count >= 8:
+            break
+        hash_val = hash_val * 31 + ord(char)
+        count += 1
+    idx = (hash_val & 0x7FFFFFFF) % len(_STATE_PALETTE)
+    return _STATE_PALETTE[idx]
 
 
 class TerrainType(IntEnum):
@@ -418,7 +470,10 @@ class CorporationData(BaseModel):
     id: str = ""
     name: str = ""
     credits: float = 0.0
-    claimedTiles: list[ClaimedTile] = Field(default_factory=list)
+    # claimedTiles is an internal runtime field — excluded from API serialization.
+    # Corps no longer "own" tiles; population / building-tile tracking is an
+    # implementation detail migrated progressively to StateData.
+    claimedTiles: list[ClaimedTile] = Field(default_factory=list, exclude=True)
     score: float = 0.0
     isAI: bool = False
     buildings: list[BuildingData] = Field(default_factory=list)
@@ -428,6 +483,10 @@ class CorporationData(BaseModel):
     profile: CorpProfile = CorpProfile.Economiste
     fsmState: BotFSMState = BotFSMState.Idle
     fsmThresholds: dict = Field(default_factory=dict)  # overrides for CORP_FSM_DEFAULTS
+    # Color fields (computed from id)
+    colorR: float = 0.0
+    colorG: float = 0.0
+    colorB: float = 0.0
 
 
 # ── Market layer (Phase 7.3) ──────────────────────────────────────────────────
@@ -509,16 +568,111 @@ class StateType(IntEnum):
     Alien       = 2
 
 
+# ── Population Distribution & State Profiles (Phase Colonisation) ─────────────
+
+class PopDistribution(BaseModel):
+    """Fractional distribution of population across social classes.
+    Values should sum to 1.0. Passed explicitly to seeding functions so the
+    distribution can evolve over time (events, policies, tick pressure).
+    """
+    poor: float = 0.40
+    middle: float = 0.59
+    rich: float = 0.01
+
+
+class StateProfile(BaseModel):
+    """Preset values for a StateData at bootstrap time.
+    Using a named profile speeds up world generation and makes balance tweaks
+    easy without touching individual StateData instances.
+    """
+    popDistribution: PopDistribution = Field(default_factory=PopDistribution)
+    literacyRate: float = 0.75     # [0,1] — affects research output, agent efficiency
+    taxRate: float = 0.25
+    corruptionRate: float = 0.20
+    bureaucracy: float = 0.30
+
+
+STATE_PROFILES: dict[str, StateProfile] = {
+    "Standard": StateProfile(
+        popDistribution=PopDistribution(poor=0.40, middle=0.59, rich=0.01),
+        literacyRate=0.75, taxRate=0.25, corruptionRate=0.20, bureaucracy=0.30,
+    ),
+    "RicheUtopique": StateProfile(
+        popDistribution=PopDistribution(poor=0.01, middle=0.98, rich=0.01),
+        literacyRate=1.00, taxRate=0.15, corruptionRate=0.00, bureaucracy=0.10,
+    ),
+    "EnDeveloppement": StateProfile(
+        popDistribution=PopDistribution(poor=0.70, middle=0.28, rich=0.02),
+        literacyRate=0.55, taxRate=0.30, corruptionRate=0.40, bureaucracy=0.50,
+    ),
+    "Pauvre": StateProfile(
+        popDistribution=PopDistribution(poor=0.85, middle=0.14, rich=0.01),
+        literacyRate=0.35, taxRate=0.35, corruptionRate=0.60, bureaucracy=0.70,
+    ),
+    "Autoritaire": StateProfile(
+        popDistribution=PopDistribution(poor=0.60, middle=0.35, rich=0.05),
+        literacyRate=0.65, taxRate=0.45, corruptionRate=0.50, bureaucracy=0.80,
+    ),
+}
+
+
+# ── Territory layer (Phase Colonisation) ──────────────────────────────────────
+
+class TerritoryData(BaseModel):
+    """A contiguous group of tiles on a body surface owned by a StateData.
+    tileIds are H3 cell id strings. The territory has a fixed bodyId so it can
+    always be resolved back to its parent planet/moon without extra lookups.
+    populationBase is the reference size used when seeding new tiles added to
+    this territory after the initial bootstrap.
+    """
+    id: str = ""
+    name: str = ""
+    stateId: str = ""
+    bodyId: str = ""
+    tileIds: list[str] = Field(default_factory=list)
+    populationBase: int = 500
+    profileKey: str = "Standard"  # key into STATE_PROFILES
+
+
 class StateData(BaseModel):
     id: str = ""
     name: str = ""
     stateType: StateType = StateType.Capitalist
     tileIds: list[str] = Field(default_factory=list)
+    territoryIds: list[str] = Field(default_factory=list)  # Phase Colonisation
     bureaucracy: float = 0.1       # 0..1 — délai multiplicateur sur décisions
     corruptionRate: float = 0.1    # 0..1 — réduit le délai de nationalisation ET modifie l'efficacité de l'État
     toleranceThreshold: float = 0.5  # seuil du score de tolérance au-delà duquel la nationalisation est déclenchée
     taxRate: float = 0.15          # Phase 7.5.1 — taux de taxe propagé aux marchés locaux couverts par cet État
+    literacyRate: float = 0.75     # Phase Colonisation — [0,1] taux d'alphabétisation
+    profileKey: str = "Standard"   # Phase Colonisation — clé du StateProfile utilisé au bootstrap
     isAiControlled: bool = False   # True → un agent LLM pilote cet état (Phase 8.5)
+    # ── Vassal / soumission system ────────────────────────────────────────────
+    isVassal: bool = False         # True → créé par une mission de colonisation corpo
+    vassalCorpId: str | None = None  # corpo fondatrice (si isVassal=True) ou corpo dominante
+    # loyalty[corpId] = [0..1] — score de loyauté bilatéral corpo→état
+    # Monte via quêtes/contrats tenus/aide en crise, baisse via trahison/rupture
+    loyalty: dict[str, float] = Field(default_factory=dict)
+
+
+class StateTileColorDto(BaseModel):
+    """DTO for state tile colors returned by /game/bodies/{body_id}/state-tile-colors."""
+    tileId: str = ""
+    stateId: str = ""
+    stateName: str = ""
+    profileKey: str = ""
+    colorR: float = 0.0
+    colorG: float = 0.0
+    colorB: float = 0.0
+
+
+class OwnershipTileDto(BaseModel):
+    """DTO for ownership tile colors returned by /bodies/{body_id}/ownership-tiles."""
+    tileId: str = ""
+    corpId: str = ""
+    colorR: float = 0.0
+    colorG: float = 0.0
+    colorB: float = 0.0
 
 class ReputationEventReason(IntEnum):
     ContractCompleted         = 0
@@ -661,7 +815,7 @@ class AtmosphericComposition(BaseModel):
                 return
 
 
-# Reference preset atmospheres (used by bootstrap_sol and tests)
+# Reference preset atmospheres (used by bootstrap() and tests)
 ATMOSPHERE_PRESETS: dict[str, AtmosphericComposition] = {
     "earth": AtmosphericComposition(
         totalPressureKpa=101.3,
