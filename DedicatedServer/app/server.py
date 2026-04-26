@@ -50,6 +50,8 @@ from terraformation_sim import (
     AgentAction,
     SpeciesData,
     ConstructionItem,
+    StateTileColorDto,
+    OwnershipTileDto,
 )
 
 
@@ -78,6 +80,16 @@ class _AuthResponse(_BaseModel):
     token: str
     player_id: str
     username: str
+
+
+class StateTileColorDto(_BaseModel):
+    tileId: str
+    stateId: str
+    stateName: str
+    profileKey: str
+    colorR: float
+    colorG: float
+    colorB: float
 
 
 app = FastAPI(title="terraformation-dedicated-server", version="0.2.0")
@@ -170,18 +182,9 @@ def get_action_catalog() -> SimulationActionCatalog:
     return SimulationActionCatalog(actions=runtime.action_definitions())
 
 
-@app.post("/commands/bootstrap-demo", response_model=WorldState)
-def bootstrap_demo(planet_name: str = "Astra-Prime",
-                   projection_override: DebugCoherenceOverride = DebugCoherenceOverride.Coast,
-                   projection_water_level: float = 0.08) -> WorldState:
-    return runtime.bootstrap_demo(planet_name=planet_name,
-                                  projection_override=projection_override,
-                                  projection_water_level=projection_water_level)
-
-
-@app.post("/commands/bootstrap-sol", response_model=WorldState)
-def bootstrap_sol() -> WorldState:
-    return runtime.bootstrap_sol()
+@app.post("/commands/bootstrap", response_model=WorldState)
+def bootstrap() -> WorldState:
+    return runtime.bootstrap()
 
 
 @app.post("/commands/open-region", response_model=RegionState)
@@ -255,7 +258,7 @@ def get_body(body_id: str) -> AnyBodyState:
 
 @app.get("/bodies/{body_id}/tiles", response_model=list[GoldbergTileState])
 def get_body_tiles(body_id: str, page: int = 0, size: int = 100) -> list[GoldbergTileState]:
-    size = min(max(1, size), 200)
+    size = min(max(1, size), 5000)
     try:
         return runtime.get_body_tiles(body_id, page=page, size=size)
     except KeyError as exc:
@@ -855,29 +858,47 @@ def create_corporation(body: _CreateCorporationRequest) -> CorporationData:
     return runtime.register_corporation(name=body.name, is_ai=body.is_ai)
 
 
-@app.post("/game/corporations/{corp_id}/claim-hex", response_model=CorporationData)
-def claim_hex(corp_id: str, body_id: str, tile_id: str) -> CorporationData:
-    """Claim a free tile on behalf of a corporation.
-    Returns 404 if the corporation does not exist.
-    Returns 409 if the tile is already claimed.
+@app.get("/game/states/{state_id}/dependence/{corp_id}")
+def get_dependence_score(state_id: str, corp_id: str) -> dict:
+    """Return the dependenceScore of a state toward a corp.
+
+    dependenceScore = corruptionRate×0.4 + loyalty[corp_id]×0.4 + (globalRep/100)×0.2
+    Also returns the individual components and isVassal flag.
+    Returns 404 if state or corp not found.
     """
     try:
-        return runtime.claim_tile(corp_id, body_id, tile_id)
+        score = runtime.get_dependence_score(state_id, corp_id)
+        state = runtime.get_state(state_id)
+        return {
+            "stateId": state_id,
+            "corpId": corp_id,
+            "dependenceScore": score,
+            "isVassal": state.isVassal,
+            "vassalCorpId": state.vassalCorpId,
+            "loyalty": state.loyalty.get(corp_id, 0.0),
+        }
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
 
 
-@app.delete("/game/corporations/{corp_id}/claim-hex", response_model=CorporationData)
-def unclaim_hex(corp_id: str, body_id: str, tile_id: str) -> CorporationData:
-    """Release a previously claimed tile from a corporation."""
+@app.post("/game/states/{state_id}/loyalty/{corp_id}")
+def set_loyalty(state_id: str, corp_id: str, delta: float) -> dict:
+    """Adjust bilateral loyalty corp→state by delta, clamped to [0, 1].
+
+    Returns new loyalty value and updated dependenceScore.
+    Returns 404 if state or corp not found.
+    """
     try:
-        return runtime.unclaim_tile(corp_id, body_id, tile_id)
+        new_loyalty = runtime.set_loyalty(state_id, corp_id, delta)
+        score = runtime.get_dependence_score(state_id, corp_id)
+        return {
+            "stateId": state_id,
+            "corpId": corp_id,
+            "loyalty": new_loyalty,
+            "dependenceScore": score,
+        }
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
 
 
 # ── Game layer — Buildings (Phase 7.2) ────────────────────────────────────────
@@ -886,7 +907,7 @@ def unclaim_hex(corp_id: str, body_id: str, tile_id: str) -> CorporationData:
 def construct_building(corp_id: str, body_id: str, tile_id: str, building_type: int) -> ConstructionItem:
     """Enqueue a building for multi-tick construction (Phase 10.5).
     Returns the ConstructionItem added to the territory queue.
-    Returns 404 if corp not found, 409 if tile not claimed or building already queued.
+    Returns 404 if corp not found, 409 if building already queued on this tile.
     """
     try:
         return runtime.construct_building(corp_id, body_id, tile_id, BuildingType(building_type))
@@ -1192,6 +1213,24 @@ def list_game_events(limit: int = 20) -> list[EventData]:
 def get_global_market(system_id: str = "sol") -> GlobalMarketState:
     """Return aggregated global market state for the given solar system."""
     return runtime.get_global_market(system_id=system_id)
+
+
+@app.get("/game/bodies/{body_id}/state-tile-colors", response_model=list[StateTileColorDto])
+def get_body_state_tile_colors(body_id: str) -> list[StateTileColorDto]:
+    """Return tile colors for state territories on the given body.
+    
+    This is for Phase colonisation (political map overlay).
+    """
+    return [StateTileColorDto(**d) for d in runtime.get_body_state_tile_colors(body_id)]
+
+
+@app.get("/bodies/{body_id}/ownership-tiles", response_model=list[OwnershipTileDto])
+def get_body_ownership_tiles(body_id: str) -> list[OwnershipTileDto]:
+    """Return tile colors for corporation ownership on the given body.
+    
+    This is for ownership overlay.
+    """
+    return [OwnershipTileDto(**d) for d in runtime.get_body_ownership_tiles(body_id)]
 
 
 @app.get("/game/agent/context/{state_id}")
