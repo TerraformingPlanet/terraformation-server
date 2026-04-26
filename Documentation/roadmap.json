@@ -306,6 +306,21 @@
       "roadmapAnchor": "**P4**"
     },
     {
+      "id": "p-colonisation-terre",
+      "name": "Phase Colonisation Initiale Terre — Partition territoriale + population bootstrap",
+      "status": "done",
+      "completedDate": "2026-04-25",
+      "tests": [
+        "test_phase_earth_colonization.py"
+      ],
+      "validationFilter": "colonisation_terre",
+      "exitCriteria": "Toutes les tuiles terrestres Earth appartiennent à un territoire ; 7 États-nations créés par zones continentales ; population seedée (40/59/1 poor/middle/rich) via STATE_PROFILES paramétrisables ; TerritoryData persisté PostgreSQL ; GET /game/territories exposé ; 8 tests passants",
+      "designRef": "Description_du_jeu.md §colonisation",
+      "roadmapAnchor": "Phase Colonisation Initiale Terre",
+      "assertionScript": "SimulationCore/tests/assertions/test_p_colonisation_terre.py",
+      "notes": "PopDistribution injectable (jamais hardcoded) — profils: Standard/RicheUtopique/EnDeveloppement/Pauvre/Autoritaire. BFS flood-fill pour contiguïté territoires."
+    },
+    {
       "id": "p12-polish-ux",
       "name": "Phase 12 Polish — UI/UX complet",
       "status": "done",
@@ -542,6 +557,66 @@
       "designRef": "Description_du_jeu.md §19",
       "roadmapAnchor": "Phase Leaderboard",
       "notes": null
+    },
+    {
+      "id": "debt-contracts-csharp",
+      "name": "Dette A — Contrats C# manquants (TradeRoute, GlobalMarket, Agent, FSM)",
+      "status": "pending",
+      "completedDate": null,
+      "validationFilter": null,
+      "exitCriteria": "TradeRoute, SpaceTravel, ExpeditionUnit (Phase 9), GlobalMarketState (Phase 9.5), AgentAction/AgentMemory/AgentActionType (Phase 8.5), CorpProfile/BotFSMState (Phase 11.2) ajoutés dans SimulationContracts.cs avec round-trip JSON validé",
+      "roadmapAnchor": "Dette A — Contrats C# manquants",
+      "notes": "Audit 2026-04-26 — skill simulation-contract-sync"
+    },
+    {
+      "id": "debt-server-endpoints",
+      "name": "Dette B — Endpoints DedicatedServer manquants (/territories + WebSocket)",
+      "status": "pending",
+      "completedDate": null,
+      "validationFilter": null,
+      "exitCriteria": "GET /game/territories, GET /game/territories/{id} exposés dans server.py ; WebSocket /game/ws/events implémenté et connecté depuis NativeWebSocket Unity",
+      "roadmapAnchor": "Dette B — Endpoints DedicatedServer manquants",
+      "notes": "Audit 2026-04-26 — skill dedicated-server-endpoint. Phase 10 ✅ mais WS non implémenté côté serveur dédié."
+    },
+    {
+      "id": "debt-websocket-port",
+      "name": "Dette C — Bug Unity port WebSocket (8001→8080)",
+      "status": "pending",
+      "completedDate": null,
+      "validationFilter": null,
+      "exitCriteria": "SimulationWebSocketClient.cs : simulationServerUrl corrigé localhost:8001 → localhost:8080",
+      "roadmapAnchor": "Dette C — Bug Unity port WebSocket",
+      "notes": "Audit 2026-04-26 — port 8001 = Roadmap service, pas DedicatedServer"
+    },
+    {
+      "id": "debt-runtime-drift",
+      "name": "Dette D — Dérives runtime simulation (solarIrradiance + region_mutations)",
+      "status": "pending",
+      "completedDate": null,
+      "validationFilter": null,
+      "exitCriteria": "Passe solarIrradiance post-bootstrap implémentée ; _region_mutations persistées en DB (table ou colonne dédiée dans persistence.py)",
+      "roadmapAnchor": "Dette D — Dérives runtime simulation",
+      "notes": "Audit 2026-04-26"
+    },
+    {
+      "id": "debt-assertion-scripts",
+      "name": "Dette E — Scripts d'assertions manquants (Phases 8, 10, 11.3, 11.5, 9.4)",
+      "status": "pending",
+      "completedDate": null,
+      "validationFilter": null,
+      "exitCriteria": "test_p8_events.py, test_p10_multiplayer.py, test_p113_gm.py, test_p115_ecology.py, test_p94_prices.py créés dans SimulationCore/tests/assertions/ ; chaque phase liée via assertionScript dans roadmap.json",
+      "roadmapAnchor": "Dette E — Scripts d'assertions manquants",
+      "notes": "Audit 2026-04-26 — template : SimulationCore/tests/assertions/_template.py"
+    },
+    {
+      "id": "debt-mcp-doc",
+      "name": "Dette F — Documentation MCP tools debug non référencés",
+      "status": "pending",
+      "completedDate": null,
+      "validationFilter": null,
+      "exitCriteria": "5 tools debug documentés dans MCP_TOOLS_ARCHITECTURE.md : debug_generation_stats, debug_noise_distribution, compare_generation_profiles, compare_presets, run_body_tile_checks",
+      "roadmapAnchor": "Dette F — Documentation MCP tools debug",
+      "notes": "Audit 2026-04-26"
     }
   ],
   "testFileRegistry": {
