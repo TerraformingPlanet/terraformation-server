@@ -19,7 +19,7 @@ Tests couverts :
     T12  run_gm_narrative_check returns None when balanced
     T13  run_gm_narrative_check returns 'none' lever when imbalanced
     T14  run_gm_narrative_check respects cooldown (second call returns None)
-    T15  bootstrap_sol resets GM cooldown and last lever
+    T15  bootstrap resets GM cooldown and last lever
 
 Pas de Docker, pas de réseau. Durée < 3 s.
 """
@@ -183,7 +183,7 @@ def test_T10_pick_gm_lever_alien_pop_when_unknown_last():
 def test_T11_gm_check_returns_none_when_no_corps():
     from terraformation_sim.runtime import InMemorySimulationRuntime as SimulationRuntime
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
     result = rt.run_gm_narrative_check()
     assert result is None
 
@@ -193,7 +193,7 @@ def test_T12_gm_check_returns_none_when_balanced(monkeypatch):
     monkeypatch.setenv("GM_IMBALANCE_THRESHOLD", "2.5")
     from terraformation_sim.runtime import InMemorySimulationRuntime as SimulationRuntime
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
     # Register two corps with equal credits (score=0 initially → both return 0)
     rt.register_corporation("CorpA", is_ai=True)
     rt.register_corporation("CorpB", is_ai=True)
@@ -209,7 +209,7 @@ def test_T13_gm_check_returns_lever_when_imbalanced(monkeypatch):
     from terraformation_sim.runtime import InMemorySimulationRuntime as SimulationRuntime
     from unittest.mock import patch
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
 
     ctx = {
         "imbalanceRatio": 3.0, "candidateTileIds": [], "allTileIds": [],
@@ -221,7 +221,7 @@ def test_T13_gm_check_returns_lever_when_imbalanced(monkeypatch):
     # M2: returns a real lever name (not None, not 'none')
     assert result is not None
     assert result in {"alien_pop", "megastructure", "empire_galactique"}
-    rt.bootstrap_sol()
+    rt.bootstrap()
 
     # Mock detect_imbalance to always return True
     import terraformation_sim.logic.gm as gm_mod
@@ -239,7 +239,7 @@ def test_T14_gm_check_cooldown_prevents_second_call(monkeypatch):
     from terraformation_sim.runtime import InMemorySimulationRuntime as SimulationRuntime
     from unittest.mock import patch
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
 
     ctx = {
         "imbalanceRatio": 3.0, "candidateTileIds": [], "allTileIds": [],
@@ -255,13 +255,13 @@ def test_T14_gm_check_cooldown_prevents_second_call(monkeypatch):
 
 
 @_skip_no_noise
-def test_T15_bootstrap_sol_resets_gm_state(monkeypatch):
+def test_T15_bootstrap_resets_gm_state(monkeypatch):
     monkeypatch.setenv("GM_IMBALANCE_THRESHOLD", "2.5")
     monkeypatch.setenv("GM_COOLDOWN_TICKS", "20")
     from terraformation_sim.runtime import InMemorySimulationRuntime as SimulationRuntime
     from unittest.mock import patch
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
 
     ctx = {
         "imbalanceRatio": 3.0, "candidateTileIds": [], "allTileIds": [],
@@ -272,7 +272,7 @@ def test_T15_bootstrap_sol_resets_gm_state(monkeypatch):
         assert rt._gm_cooldown_tick > 0
 
     # Re-bootstrap should reset
-    rt.bootstrap_sol()
+    rt.bootstrap()
     assert rt._gm_cooldown_tick == 0
     assert rt._gm_last_lever == ""
 
@@ -329,7 +329,7 @@ def test_T22_build_alien_pop_plan_returns_n_tiles():
 def test_T23_execute_alien_pop_creates_alien_state():
     from terraformation_sim.runtime import InMemorySimulationRuntime as SimulationRuntime
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
     ctx = {
         "tick": 1,
         "candidateTileIds": ["a", "b", "c", "d", "e", "f"],
@@ -350,7 +350,7 @@ def test_T23_execute_alien_pop_creates_alien_state():
 def test_T24_execute_megastructure_injects_event():
     from terraformation_sim.runtime import InMemorySimulationRuntime as SimulationRuntime
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
     ctx = {
         "tick": 5,
         "candidateTileIds": ["tile_x"],
@@ -369,7 +369,7 @@ def test_T24_execute_megastructure_injects_event():
 def test_T25_execute_empire_galactique_creates_state_and_events():
     from terraformation_sim.runtime import InMemorySimulationRuntime as SimulationRuntime
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
     corp_a = rt.register_corporation("CorpA", is_ai=False)
     corp_b = rt.register_corporation("CorpB", is_ai=False)
     all_corp_ids = [corp_a.id, corp_b.id]

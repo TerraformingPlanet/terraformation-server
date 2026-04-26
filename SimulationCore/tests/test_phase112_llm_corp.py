@@ -333,7 +333,7 @@ def test_T16_run_corp_agent_fallback_on_exception(monkeypatch):
 def test_T17_get_corp_agent_context_returns_dict():
     from terraformation_sim.runtime import SimulationRuntime
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
     cid = rt.register_corporation("BotCorp", profile="Expansionniste", is_ai=True)
     ctx = rt.get_corp_agent_context(cid)
     assert ctx is not None
@@ -345,7 +345,7 @@ def test_T17_get_corp_agent_context_returns_dict():
 def test_T18_get_corp_agent_context_none_for_unknown():
     from terraformation_sim.runtime import SimulationRuntime
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
     result = rt.get_corp_agent_context("unknown-id")
     assert result is None
 
@@ -354,7 +354,7 @@ def test_T18_get_corp_agent_context_none_for_unknown():
 def test_T19_run_agent_for_corp_raises_for_unknown():
     from terraformation_sim.runtime import SimulationRuntime
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
     with pytest.raises(ValueError, match="not found"):
         rt.run_agent_for_corp("unknown-id")
 
@@ -366,7 +366,7 @@ def test_T20_run_agent_for_corp_noop_without_llm_env(monkeypatch):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     from terraformation_sim.runtime import SimulationRuntime
     rt = SimulationRuntime()
-    rt.bootstrap_sol()
+    rt.bootstrap()
     cid = rt.register_corporation("BotCorp", profile="Economiste", is_ai=True)
     action = rt.run_agent_for_corp(cid)
     assert action.entityId == cid

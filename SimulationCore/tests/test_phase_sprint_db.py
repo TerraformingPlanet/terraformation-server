@@ -6,7 +6,7 @@ Tests couverts :
     T02 — claim_tile + hydrate → _tile_ownership reconstruit correctement
     T03 — propose_contract → SavedState → hydrate → contrat présent
     T04 — create_state + upsert_reputation → SavedState → hydrate → state + rep présents
-    T05 — bootstrap_sol() appelle clear_X() pour les 9 entités (mock repo)
+    T05 — bootstrap() appelle clear_X() pour les 9 entités (mock repo)
 
 Pas de Docker, pas de réseau. Durée < 5 s.
 """
@@ -192,8 +192,8 @@ class TestSprintDb:
 
     # ── T05 ─────────────────────────────────────────────────────────────────
 
-    def test_T05_bootstrap_sol_calls_all_clears(self):
-        """bootstrap_sol() must call clear_X() on all 9 entity tables."""
+    def test_T05_bootstrap_calls_all_clears(self):
+        """bootstrap() must call clear_X() on all 9 entity tables."""
         rt = _make_rt()
 
         mock_repo = MagicMock(spec_set=rt._repo)
@@ -221,7 +221,7 @@ class TestSprintDb:
         mock_repo.clear_expeditions.return_value = None
 
         rt._repo = mock_repo
-        rt.bootstrap_sol()
+        rt.bootstrap()
 
         expected_clears = [
             "clear_cell_mutations",
@@ -237,5 +237,5 @@ class TestSprintDb:
         ]
         for method_name in expected_clears:
             getattr(mock_repo, method_name).assert_called_once(), (
-                f"Expected {method_name}() to be called once by bootstrap_sol()"
+                f"Expected {method_name}() to be called once by bootstrap()"
             )

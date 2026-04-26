@@ -115,7 +115,7 @@ def rt():
     from terraformation_sim.persistence import InMemoryRepository
     repo = InMemoryRepository()
     runtime = InMemorySimulationRuntime(repository=repo)
-    runtime.bootstrap_sol()
+    runtime.bootstrap()
     return runtime
 
 

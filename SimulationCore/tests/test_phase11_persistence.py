@@ -4,7 +4,7 @@ test_phase11_persistence.py — Region mutations hydration from SavedState.
 Tests couverts :
     T01 — _hydrate_from_saved() avec cell_mutations peuplé → _region_mutations correct
     T02 — JSON malformé dans cell_mutations → ignoré silencieusement
-    T03 — bootstrap_sol() appelle clear_cell_mutations() sur le repo
+    T03 — bootstrap() appelle clear_cell_mutations() sur le repo
 
 Pas de Docker, pas de réseau. Durée < 2 s.
 """
@@ -115,8 +115,8 @@ def test_T02_hydrate_ignores_malformed_cell_json():
     assert region.get((2, 2)) == (0.1, 0.2)
 
 
-def test_T03_bootstrap_sol_calls_clear_cell_mutations():
-    """T03 — bootstrap_sol() wipes _region_mutations and calls clear_cell_mutations()."""
+def test_T03_bootstrap_calls_clear_cell_mutations():
+    """T03 — bootstrap() wipes _region_mutations and calls clear_cell_mutations()."""
     mock_repo = MagicMock(spec=InMemoryRepository)
     mock_repo.load.return_value = SavedState()
     rt = InMemorySimulationRuntime(
@@ -126,7 +126,7 @@ def test_T03_bootstrap_sol_calls_clear_cell_mutations():
     # Pre-populate to verify wipe
     rt._region_mutations = {"0.470,0.180": {(1, 1): (0.5, 0.5)}}
 
-    rt.bootstrap_sol()
+    rt.bootstrap()
 
     assert rt._region_mutations == {}
     mock_repo.clear_cell_mutations.assert_called_once()

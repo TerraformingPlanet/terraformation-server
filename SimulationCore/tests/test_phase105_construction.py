@@ -16,7 +16,7 @@ Tests couverts :
     - Doublon interdit (même buildingType + tileId)
     - cancel_construction_item() supprime l'item
     - list_construction_queues() filtre par corp
-    - bootstrap_sol() efface les queues
+    - bootstrap() efface les queues
 
 Pas de Docker, pas de réseau. Durée < 2 s.
 """
@@ -299,5 +299,5 @@ def test_bootstrap_wipes_construction_queues():
     _add_corp(rt, CORP_A, TILE_A)
     rt.construct_building(CORP_A, BODY_ID, TILE_A, BuildingType.Mine)
     assert rt._construction_queues
-    rt.bootstrap_sol()
+    rt.bootstrap()
     assert not rt._construction_queues
