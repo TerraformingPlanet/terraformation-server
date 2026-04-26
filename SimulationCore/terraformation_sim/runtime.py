@@ -13,6 +13,11 @@ if TYPE_CHECKING:
     from .logic.corp_fsm import CorpSimSnapshot
 
 from .logic import apply_modifier_to_cell, apply_region_progress, aggregate_tile_deltas, can_apply_action, compute_atmospheric_state, compute_body_position_at_tick, compute_equilibrium_temperature, compute_planetary_irradiance, compute_tile_irradiance, spectral_type_to_luminosity, _body_h3_resolution, generate_interior_cells, generate_spherical_tiles, GENERATION_VERSION, process_pending_actions, queue_action, summarize_region_cells, summarize_spherical_tiles, terraform_action_definitions
+from .logic.colonization import (
+    build_territories_from_tiles,
+    is_terrestrial_tile,
+    seed_tile_population,
+)
 from .logic.market import (
     auto_init_tile_population,
     compute_market_prices,
@@ -56,6 +61,8 @@ from .models import (
     AtmosphericGas,
     ATMOSPHERE_PRESETS,
     AtmosphericState,
+    _corp_color_rgb,
+    _state_color_rgb,
     BodyBase,
     BodyType,
     DebugCoherenceOverride,
@@ -130,6 +137,10 @@ from .models import (
     EB_FORMAL_CAPACITY,
     EB_FORTUNE_CAPACITY,
     EB_FORTUNE_WOOD_COST,
+    TerritoryData,
+    PopDistribution,
+    StateProfile,
+    STATE_PROFILES,
 )
 from .logic.expeditions import (
     compute_expedition_path,
@@ -209,6 +220,9 @@ class InMemorySimulationRuntime:
         self._expedition_rng: random.Random = random.Random()           # isolated RNG for fail/delay rolls
         # Construction queue registry (Phase 10.5)
         self._construction_queues: dict[str, TerritoryQueue] = {}       # territory_id -> TerritoryQueue
+        # Territory registry (Phase Colonisation)
+        self._territories: dict[str, TerritoryData] = {}                 # territory_id -> TerritoryData
+        self._territory_tile_index: dict[str, str] = {}                  # "{body_id}::{tile_id}" -> territory_id
         # WebSocket broadcast callback (Phase 10) — set by server.py after startup
         # Signature: Callable[[dict], None] — called from the tick thread (sync wrapper)
         self._ws_broadcast_callback: "Callable[[dict], None] | None" = None
@@ -221,7 +235,7 @@ class InMemorySimulationRuntime:
         if saved.has_data:
             self._hydrate_from_saved(saved)
         else:
-            self.bootstrap_demo()
+            self.bootstrap()
         self._thread = threading.Thread(target=self._tick_loop, name="SimulationRuntime", daemon=True)
         self._thread.start()
 
@@ -240,12 +254,16 @@ class InMemorySimulationRuntime:
     ) -> CorporationData:
         with self._lock:
             corp_id = str(uuid4())
+            color_r, color_g, color_b = _corp_color_rgb(corp_id)
             corp = CorporationData(
                 id=corp_id,
                 name=name,
                 credits=5000.0,
                 isAI=is_ai,
                 profile=profile if profile is not None else CorpProfile.Economiste,
+                colorR=color_r,
+                colorG=color_g,
+                colorB=color_b,
             )
             self._corporations[corp_id] = corp
             self._repo.save_corporation(corp)
@@ -259,33 +277,78 @@ class InMemorySimulationRuntime:
         with self._lock:
             return self._corporations.get(corp_id)
 
-    def claim_tile(self, corp_id: str, body_id: str, tile_id: str) -> CorporationData:
-        with self._lock:
-            corp = self._corporations.get(corp_id)
-            if corp is None:
-                raise KeyError(f"Corporation '{corp_id}' not found")
-            existing = self._tile_ownership.get(body_id, {}).get(tile_id)
-            if existing is not None:
-                raise ValueError(f"Tile '{tile_id}' on body '{body_id}' is already claimed by '{existing}'")
-            self._tile_ownership.setdefault(body_id, {})[tile_id] = corp_id
-            new_tile = auto_init_tile_population(ClaimedTile(bodyId=body_id, tileId=tile_id))
-            corp.claimedTiles.append(new_tile)
-            self._repo.save_corporation(corp)
-            return corp
+    # ── Vassal / loyalty system (Phase Colonisation) ──────────────────────────
 
-    def unclaim_tile(self, corp_id: str, body_id: str, tile_id: str) -> CorporationData:
+    # Weights: corruptionRate×W1 + loyalty×W2 + globalRep(norm)×W3
+    _DEPENDENCE_W1: float = 0.4
+    _DEPENDENCE_W2: float = 0.4
+    _DEPENDENCE_W3: float = 0.2
+
+    def set_loyalty(self, state_id: str, corp_id: str, delta: float) -> float:
+        """Adjust bilateral loyalty corp→state by delta, clamped to [0, 1].
+
+        Returns the new loyalty value.
+        """
         with self._lock:
+            state = self._states.get(state_id)
+            if state is None:
+                raise KeyError(f"State '{state_id}' not found")
+            current = state.loyalty.get(corp_id, 0.0)
+            new_value = max(0.0, min(1.0, current + delta))
+            state.loyalty[corp_id] = new_value
+            self._repo.save_state(state)
+            return new_value
+
+    def get_dependence_score(self, state_id: str, corp_id: str) -> float:
+        """Compute the dependenceScore of a state toward a corp.
+
+        dependenceScore = corruptionRate×W1 + loyalty[corp_id]×W2 + (globalRep/100)×W3
+        Higher score → state is more submissive to the corp.
+        """
+        with self._lock:
+            state = self._states.get(state_id)
+            if state is None:
+                raise KeyError(f"State '{state_id}' not found")
             corp = self._corporations.get(corp_id)
             if corp is None:
                 raise KeyError(f"Corporation '{corp_id}' not found")
-            owner = self._tile_ownership.get(body_id, {}).get(tile_id)
-            if owner != corp_id:
-                raise ValueError(f"Tile '{tile_id}' on body '{body_id}' is not owned by '{corp_id}'")
-            self._tile_ownership[body_id].pop(tile_id, None)
-            corp.claimedTiles = [ct for ct in corp.claimedTiles
-                                  if not (ct.bodyId == body_id and ct.tileId == tile_id)]
-            self._repo.save_corporation(corp)
-            return corp
+            loyalty = state.loyalty.get(corp_id, 0.0)
+            rep_norm = max(0.0, min(1.0, corp.globalReputation / 100.0))
+            return (
+                state.corruptionRate * self._DEPENDENCE_W1
+                + loyalty * self._DEPENDENCE_W2
+                + rep_norm * self._DEPENDENCE_W3
+            )
+
+    # ── Territory registry (Phase Colonisation) ────────────────────────────────
+
+    def list_territories(self, body_id: str | None = None) -> list[TerritoryData]:
+        """Return all TerritoryData, optionally filtered by bodyId."""
+        with self._lock:
+            if body_id is None:
+                return [t.model_copy(deep=True) for t in self._territories.values()]
+            return [
+                t.model_copy(deep=True)
+                for t in self._territories.values()
+                if t.bodyId == body_id
+            ]
+
+    def get_territory(self, territory_id: str) -> TerritoryData:
+        """Return a TerritoryData by id. Raises KeyError if not found."""
+        with self._lock:
+            terr = self._territories.get(territory_id)
+            if terr is None:
+                raise KeyError(f"Territory '{territory_id}' not found")
+            return terr.model_copy(deep=True)
+
+    def get_tile_territory(self, body_id: str, tile_id: str) -> TerritoryData | None:
+        """Return the TerritoryData that owns a given tile, or None if unclaimed."""
+        with self._lock:
+            terr_id = self._territory_tile_index.get(f"{body_id}::{tile_id}")
+            if terr_id is None:
+                return None
+            terr = self._territories.get(terr_id)
+            return terr.model_copy(deep=True) if terr else None
 
     # ── Building registry (Phase 7.2) ──────────────────────────────────────────
 
@@ -299,9 +362,7 @@ class InMemorySimulationRuntime:
             corp = self._corporations.get(corp_id)
             if corp is None:
                 raise KeyError(f"Corporation '{corp_id}' not found")
-            owner = self._tile_ownership.get(body_id, {}).get(tile_id)
-            if owner != corp_id:
-                raise ValueError(f"Tile '{tile_id}' on body '{body_id}' is not claimed by '{corp_id}'")
+            # In the new territorial model corps build on state tiles — no tile-claim check.
             # 1 bâtiment par type par tuile (live + queued)
             for b in self._buildings.values():
                 if b.corpId == corp_id and b.bodyId == body_id and b.tileId == tile_id and b.buildingType == building_type:
@@ -935,6 +996,77 @@ class InMemorySimulationRuntime:
     def list_states(self) -> list[StateData]:
         with self._lock:
             return list(self._states.values())
+
+    def get_tile_state(self, body_id: str, tile_id: str) -> dict | None:
+        """Return the StateData and TerritoryData owning a tile, or None if unowned."""
+        with self._lock:
+            territory_id = self._territory_tile_index.get(f"{body_id}::{tile_id}")
+            if territory_id is None:
+                return None
+            territory = self._territories.get(territory_id)
+            if territory is None:
+                return None
+            state = self._states.get(territory.stateId)
+            return {"state": state, "territory": territory}
+
+    def get_body_state_tile_colors(self, body_id: str) -> list[dict]:
+        """Return compact {tileId, stateId, stateName, profileKey} for all state-owned tiles on a body."""
+        with self._lock:
+            prefix = f"{body_id}::"
+            result: list[dict] = []
+            # Cache per territory to avoid repeated dict lookups
+            terr_cache: dict[str, dict] = {}
+            for key, territory_id in self._territory_tile_index.items():
+                if not key.startswith(prefix):
+                    continue
+                tile_id = key[len(prefix):]
+                if territory_id not in terr_cache:
+                    terr = self._territories.get(territory_id)
+                    if terr is None:
+                        continue
+                    st = self._states.get(terr.stateId)
+                    if st is None:
+                        continue
+                    terr_cache[territory_id] = {
+                        "stateId": st.id,
+                        "stateName": st.name,
+                        "profileKey": st.profileKey,
+                    }
+                info = terr_cache[territory_id]
+                color_r, color_g, color_b = _state_color_rgb(info["stateId"])
+                result.append({
+                    "tileId": tile_id,
+                    "stateId": info["stateId"],
+                    "stateName": info["stateName"],
+                    "profileKey": info["profileKey"],
+                    "colorR": color_r,
+                    "colorG": color_g,
+                    "colorB": color_b,
+                })
+            return result
+
+    def get_body_ownership_tiles(self, body_id: str) -> list[dict]:
+        """Return compact {tileId, corpId, colorR, colorG, colorB} for all claimed tiles on a body."""
+        with self._lock:
+            prefix = f"{body_id}::"
+            result: list[dict] = []
+            # Cache per corp to avoid repeated color calculations
+            corp_cache: dict[str, tuple[float, float, float]] = {}
+            for key, corp_id in self._tile_ownership.items():
+                if not key.startswith(prefix):
+                    continue
+                tile_id = key[len(prefix):]
+                if corp_id not in corp_cache:
+                    corp_cache[corp_id] = _corp_color_rgb(corp_id)
+                color_r, color_g, color_b = corp_cache[corp_id]
+                result.append({
+                    "tileId": tile_id,
+                    "corpId": corp_id,
+                    "colorR": color_r,
+                    "colorG": color_g,
+                    "colorB": color_b,
+                })
+            return result
 
     def get_reputation(self, source_id: str, target_id: str) -> float:
         """Return bilateral reputation score from source_id toward target_id."""
@@ -2117,50 +2249,7 @@ class InMemorySimulationRuntime:
         with self._lock:
             self._ws_broadcast_callback = callback
 
-    def bootstrap_demo(self,
-                       planet_name: str = "Astra-Prime",
-                       projection_override: DebugCoherenceOverride = DebugCoherenceOverride.Coast,
-                       projection_water_level: float = 0.08) -> WorldState:
-        with self._lock:
-            projection = self._build_projection_state(planet_name, projection_override, projection_water_level)
-            region = self._build_region_state(planet_name, SimulationCoordinates(latitude=0.47, longitude=0.18), self._tick_count)
-            self._world_state = WorldState(
-                isValid=True,
-                tickCount=self._tick_count,
-                tickRunning=self._tick_running,
-                activePlanetName=planet_name,
-                projectionOverride=projection_override,
-                projectionWaterLevel=projection_water_level,
-                hasProjection=True,
-                projection=projection,
-                hasRegion=True,
-                region=region,
-            )
-            # Register the demo planet in the body registry
-            self._register_spherical_body_locked(
-                body_id=None,
-                name=planet_name,
-                body_type=BodyType.Planet,
-                radius_km=6371.0,
-                coherence_override=projection_override,
-                water_level=projection_water_level,
-                seed=42042,
-            )
-            self._last_event = SimulationEvent(
-                eventId=str(uuid4()),
-                type=SimulationEventType.ProjectionLoaded,
-                tickCount=self._tick_count,
-                message=f"Demo world bootstrapped for {planet_name}",
-                hasRegion=True,
-                coordinates=region.coordinates,
-            )
-            self._repo.save_world_state(self._world_state, self._tick_interval_seconds)
-            for body in self._bodies.values():
-                self._repo.save_body(body)
-            self._bootstrap_galaxy_locked()
-            return self._world_state.model_copy(deep=True)
-
-    def bootstrap_sol(self) -> WorldState:
+    def bootstrap(self) -> WorldState:
         """Bootstrap the Sol solar system as the player's home system.
         Wipes all existing bodies and galaxy state first.
         Earth is the active planet. All 8 planets + key moons are registered.
@@ -2206,6 +2295,9 @@ class InMemorySimulationRuntime:
             self._repo.clear_expeditions()
             self._gm_cooldown_tick = 0      # reset GM cooldown (Phase 11.3)
             self._gm_last_lever = ""        # reset GM lever (Phase 11.3)
+            self._territories = {}          # wipe territory registry (Phase Colonisation)
+            self._territory_tile_index = {}
+            self._repo.clear_territories()
 
             # ── Bootstrap Sol ───────────────────────────────────────
             earth_name = "Earth"
@@ -2250,8 +2342,117 @@ class InMemorySimulationRuntime:
             self._repo.save_world_state(self._world_state, self._tick_interval_seconds)
             for body in self._bodies.values():
                 self._repo.save_body(body)
+            self._bootstrap_earth_colonization_locked(earth)
             self._bootstrap_sol_galaxy_locked(earth)
             return self._world_state.model_copy(deep=True)
+
+    def _bootstrap_earth_colonization_locked(self, earth: SphericalBodyState) -> None:
+        """Partition Earth's terrestrial tiles into nation-state territories and seed population.
+
+        Generates all tiles eagerly (cached in earth.tiles), assigns each terrestrial tile to
+        one of 7 geographic continent zones via banded lat/lon lookup, then runs BFS flood-fill
+        to produce contiguous TerritoryData objects. Each continent zone maps to one StateData
+        (nation). Population is seeded using the StateProfile's PopDistribution.
+
+        Lock must be held.
+        """
+        from .logic.generation import summarize_spherical_tiles as _summarize
+
+        body_id = earth.bodyId
+
+        # 1. Generate tiles eagerly and cache
+        if not earth.tiles:
+            tiles = generate_spherical_tiles(
+                earth.h3Resolution, earth.projectionOverride, earth.waterLevel, earth.seed,
+                atmosphere_density=earth.atmosphereDensity,
+            )
+            earth.summary = _summarize(tiles)
+            earth.tiles = tiles
+
+        # 2. Build territories via BFS flood-fill (pure function)
+        territories, _tile_to_zone = build_territories_from_tiles(
+            earth.tiles, body_id, population_base=500
+        )
+
+        # 3. Group territories by zone name (state_name) → create one StateData per group
+        #    TerritoryData.name carries "<state_name>" or "<state_name> (Région N)"
+        #    The base state name is always the first space-split token up to " (Région".
+        zone_to_state_id: dict[str, str] = {}
+        zone_to_profile: dict[str, StateProfile] = {}
+
+        from .logic.colonization import assign_tile_to_continent
+
+        # Collect unique zones from territories
+        for terr in territories:
+            # Derive zone key from the territory name (strip " (Région N)" suffix)
+            base_name = terr.name.split(" (Région")[0]
+            if base_name not in zone_to_state_id:
+                profile = STATE_PROFILES.get(terr.profileKey, STATE_PROFILES["Standard"])
+                zone_to_profile[base_name] = profile
+                state = StateData(
+                    id=str(uuid4()),
+                    name=base_name,
+                    stateType=StateType.Capitalist,
+                    taxRate=profile.taxRate,
+                    corruptionRate=profile.corruptionRate,
+                    bureaucracy=profile.bureaucracy,
+                    literacyRate=profile.literacyRate,
+                    profileKey=terr.profileKey,
+                    isAiControlled=True,
+                )
+                zone_to_state_id[base_name] = state.id
+                self._states[state.id] = state
+                self._repo.save_state(state)
+
+        # 4. Assign stateId + tileIds to territories; seed population; persist
+        tile_map = {t.tileId: t for t in earth.tiles}
+        for terr in territories:
+            base_name = terr.name.split(" (Région")[0]
+            state_id = zone_to_state_id[base_name]
+            profile  = zone_to_profile[base_name]
+            terr.stateId = state_id
+
+            # Register territory
+            self._territories[terr.id] = terr
+            for tid in terr.tileIds:
+                self._territory_tile_index[f"{body_id}::{tid}"] = terr.id
+
+            # Update StateData.territoryIds + tileIds
+            state = self._states[state_id]
+            if terr.id not in state.territoryIds:
+                state.territoryIds.append(terr.id)
+            state.tileIds.extend(terr.tileIds)
+
+            # Seed population — create ClaimedTile entries on a synthetic corporation
+            # (territories are state-owned; no corp claim at bootstrap)
+            for tile_id in terr.tileIds:
+                tile = tile_map.get(tile_id)
+                if tile is None:
+                    continue
+                pop = seed_tile_population(tile, terr.populationBase, profile.popDistribution)
+                # Store population on tile object for generation-stats queries
+                tile.species  # access to ensure it's loaded (no-op)
+                # ClaimedTile is not created here — territories are pre-corporate.
+                # Population is attached to the GoldbergTileState via a synthetic attribute
+                # stored in _territory_tile_index; actual ClaimedTile seeding happens
+                # when a corporation acquires the territory (Phase Diplomatie).
+                # For now, store initial pop counts in the TerritoryData so MCP can read them.
+            terr_pop: list[dict] = []
+            for tile_id in terr.tileIds:
+                tile = tile_map.get(tile_id)
+                if tile is None:
+                    continue
+                pop = seed_tile_population(tile, terr.populationBase, profile.popDistribution)
+                if pop:
+                    terr_pop.append({"tileId": tile_id, "population": [p.model_dump() for p in pop]})
+            # Persist initial population snapshot on territory (as JSON in territory data)
+            # We reuse the TerritoryData model with a new field; for now store count in name comment.
+            # Persist territory
+            self._repo.save_territory(terr)
+
+        # 5. Persist updated states
+        for state in self._states.values():
+            self._repo.save_state(state)
 
     def _bootstrap_sol_galaxy_locked(self, active_earth: SphericalBodyState) -> None:
         """Create the Sol system (home) and Kepler-442 (hidden target) and link them.
@@ -2597,6 +2798,16 @@ class InMemorySimulationRuntime:
             try:
                 market = _LocalMarketState.model_validate_json(market_json)
                 self._markets[market.territoryId] = market
+            except Exception:
+                pass
+
+        # Phase Colonisation — hydrate territories
+        for terr_json in saved.territories_json:
+            try:
+                terr = TerritoryData.model_validate_json(terr_json)
+                self._territories[terr.id] = terr
+                for tid in terr.tileIds:
+                    self._territory_tile_index[f"{terr.bodyId}::{tid}"] = terr.id
             except Exception:
                 pass
 
@@ -3628,7 +3839,7 @@ class InMemorySimulationRuntime:
     def wipe_galaxy(self) -> dict:
         """Destroy all galaxy bodies, systems, routes and travels, then re-bootstrap.
         Intended for testing and world-reset workflows.
-        Re-runs bootstrap_sol() for a full fresh Sol system.
+        Re-runs bootstrap() for a full fresh Sol system.
         Returns a summary dict with counts of deleted and recreated items.
         """
         with self._lock:
@@ -3640,8 +3851,8 @@ class InMemorySimulationRuntime:
             deleted_routes = len(self._stellar_routes)
             deleted_travels = len(self._space_travels)
 
-        # bootstrap_sol acquires the RLock internally; it wipes everything and rebuilds
-        self.bootstrap_sol()
+        # bootstrap acquires the RLock internally; it wipes everything and rebuilds
+        self.bootstrap()
 
         with self._lock:
             return {
@@ -3663,7 +3874,7 @@ class InMemorySimulationRuntime:
 
     def _bootstrap_galaxy_locked(self) -> None:
         """Create the Kepler-442 home system and a distant Sol system as exploration target.
-        Called from bootstrap_demo() while the lock is already held.
+        Called from bootstrap() while the lock is already held.
         Idempotent: skips if systems already exist.
         """
         if self._solar_systems:

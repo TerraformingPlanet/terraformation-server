@@ -102,6 +102,7 @@ class SavedState:
     expeditions_json: list[str] = field(default_factory=list)
     construction_queues_json: list[str] = field(default_factory=list)
     markets_json: list[str] = field(default_factory=list)
+    territories_json: list[str] = field(default_factory=list)  # Phase Colonisation
 
     @property
     def has_data(self) -> bool:
@@ -234,6 +235,13 @@ class StateRepository(ABC):
     def clear_markets(self) -> None: ...
 
     @abstractmethod
+    def save_territory(self, territory: "TerritoryData") -> None: ...  # Phase Colonisation
+    @abstractmethod
+    def delete_territory(self, territory_id: str) -> None: ...
+    @abstractmethod
+    def clear_territories(self) -> None: ...
+
+    @abstractmethod
     def load(self) -> SavedState: ...
 
 
@@ -289,6 +297,10 @@ class InMemoryRepository(StateRepository):
     def save_market(self, market) -> None: pass
     def delete_market(self, territory_id) -> None: pass
     def clear_markets(self) -> None: pass
+    # Phase Colonisation
+    def save_territory(self, territory) -> None: pass
+    def delete_territory(self, territory_id) -> None: pass
+    def clear_territories(self) -> None: pass
 
     def load(self) -> SavedState:
         return SavedState()
@@ -423,6 +435,12 @@ _markets_table = Table(
     "markets", _metadata,
     Column("territory_id", String(128), primary_key=True),
     Column("market_json", Text, nullable=False),
+)
+
+_territories_table = Table(
+    "territories", _metadata,
+    Column("territory_id", String(128), primary_key=True),
+    Column("territory_json", Text, nullable=False),
 )
 
 
@@ -686,6 +704,17 @@ class PostgresRepository(StateRepository):
         with self._engine.begin() as conn:
             conn.execute(_markets_table.delete())
 
+    # Phase Colonisation
+    def save_territory(self, territory: "TerritoryData") -> None:
+        self._upsert(_territories_table, "territory_id", territory.id, "territory_json", territory.model_dump_json())
+
+    def delete_territory(self, territory_id: str) -> None:
+        self._delete_by_pk(_territories_table, "territory_id", territory_id)
+
+    def clear_territories(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_territories_table.delete())
+
     def save_solar_system(self, system: "SolarSystemState") -> None:
         row = {"system_id": system.systemId, "system_json": system.model_dump_json()}
         stmt = pg_insert(_solar_systems_table).values(row).on_conflict_do_update(
@@ -853,5 +882,8 @@ class PostgresRepository(StateRepository):
 
             market_rows = conn.execute(_markets_table.select()).fetchall()
             state.markets_json = [row.market_json for row in market_rows]
+
+            territory_rows = conn.execute(_territories_table.select()).fetchall()
+            state.territories_json = [row.territory_json for row in territory_rows]
 
         return state
