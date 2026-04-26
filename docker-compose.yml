@@ -22,7 +22,7 @@ services:
       retries: 5
 
   # -------------------------------------------------------------------------
-  # FastMCP — AI agent bridge for the Terraformation game
+  # FastMCP — AI agent bridgée for the Terraformation game
   # Phase 2: connects to Unity running on the Docker host (port 48621)
   # Phase 3: change GAME_BRIDGE_URL to http://unity-server:48621 once
   #          the Unity dedicated server is containerised

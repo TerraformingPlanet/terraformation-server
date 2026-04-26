@@ -52,6 +52,39 @@ Références conditionnelles :
 | Roadmap | FastAPI + SQLite (port 8001) | `Roadmap/` — `python Roadmap/run.py` |
 | Réseau client | Mirror Networking | Phase 10 (pas encore implémenté) |
 
+## Délégation vers Cline (LLM local)
+
+Quand l'utilisateur demande un plan à déléguer à Cline, produire obligatoirement ce format — Cline le lit via `/from-copilot` :
+
+```markdown
+## Contexte
+- Fichiers impliqués : [liste avec chemins complets]
+- État actuel : [ce qui existe, ce qui manque]
+
+## Objectif
+[Description en 2-3 phrases de ce qui doit être produit]
+
+## Tâches
+1. [action atomique — fichier cible]
+2. [action atomique — fichier cible]
+...
+
+## Contraintes
+- [règles spécifiques à cette tâche]
+
+## Validation
+- [commande ou vérification manuelle pour confirmer que c'est bon]
+```
+
+Modèles recommandés pour Cline :
+- Code (Python/C#/USS) → `Gemma4-A4B-NoThink`
+- Tâche complexe multi-fichiers → `qwen3.5-sonnet-30b`
+- Simple / atomique → `Gemma4-A4B-NoThink`
+
+Backend LLM local : `http://192.168.5.213:41200/v1`
+
+---
+
 ## Règles de contribution doc
 
 - Nouvelle mécanique → `Documentation/description_jeu/Description_du_jeu.md` (source de vérité design)

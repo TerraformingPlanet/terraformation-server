@@ -1,0 +1,33 @@
+# Cline — fichiers exclus du contexte
+
+# Environnements Python
+.venv/
+.venv-1/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# Unity cache & build
+Game/Library/
+Game/Temp/
+Game/Logs/
+Game/obj/
+Game/Build/
+
+# Artefacts générés
+Artifacts/
+
+# Git
+.git/
+
+# Dépendances Node (si un jour)
+node_modules/
+
+# Fichiers binaires / assets lourds
+**/*.png
+**/*.jpg
+**/*.fbx
+**/*.wav
+**/*.mp3
+**/*.asset
+**/*.meta

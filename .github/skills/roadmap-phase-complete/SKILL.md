@@ -8,18 +8,24 @@ argument-hint: "Spécifier l'id de la phase (ex: 'p12-polish-ux') ou demander -L
 
 ## Architecture
 
-Le Roadmap Service (`Roadmap/`) est une application FastAPI + FastMCP **locale**, port **8001**. Pas de Docker.
+Le Roadmap Service (`Roadmap/`) est une application FastAPI + FastMCP qui tourne **dans Docker**, port **8001**.
 
-- **State store** : SQLite `Roadmap/roadmap.db` (local, persistant)
-- **Launcher** : `e:\terraformation\.venv\Scripts\python.exe e:\terraformation\Roadmap\run.py`
-- **Pytest gate** : le service lance pytest localement via subprocess (WORKSPACE_PATH auto-détecté)
+> ⚠️ **IMPORTANT — deux DB distinctes** :
+> - `Roadmap/roadmap.db` → fichier local (utilisé par `migrate.py` lancé localement)
+> - `/data/roadmap.db` (volume Docker) → DB **réelle** utilisée par le service HTTP
+>
+> `migrate.py --update` local **ne met PAS à jour** la DB Docker. Voir section **Sync DB Docker** ci-dessous.
+
+- **State store** : SQLite volume Docker `/data/roadmap.db`
+- **Container** : `terraformation-roadmap` (healthy sur port 8001)
+- **Pytest gate** : le service lance pytest via subprocess (WORKSPACE_PATH = `/workspace` monté)
 - **MCP endpoint** : `http://localhost:8001/mcp` — tools préfixés `roadmap_*`
-- **Seed** : `python Roadmap/migrate.py` depuis `Documentation/roadmap.json`
+- **roadmap.json** monté dans le container à `/workspace/Documentation/roadmap.json`
 
 ## Principe
 
 **Ne jamais cocher `[ ]` → `[x]` dans ROADMAP.md directement.**
-Toujours passer par ce protocole. La source de vérité machine est la DB SQLite locale.
+Toujours passer par ce protocole. La source de vérité machine est la DB SQLite Docker.
 
 ---
 
@@ -29,7 +35,7 @@ Toujours passer par ce protocole. La source de vérité machine est la DB SQLite
 |---------|------|
 | `Roadmap/app/server.py` | FastAPI + FastMCP — source de vérité runtime |
 | `Roadmap/app/db.py` | SQLite CRUD — table `phases` |
-| `Roadmap/run.py` | Lanceur local — `python run.py` |
+| `Roadmap/run.py` | Lanceur (non utilisé en prod) — le service tourne via Docker |
 | `Roadmap/migrate.py` | Seed/migration depuis `Documentation/roadmap.json` |
 | `Documentation/roadmap.json` | Seed canonique — format source |
 | `Documentation/ROADMAP.md` | Vue humaine — `[ ]` → `[x]` géré par `Set-PhaseComplete.ps1` |
@@ -38,25 +44,62 @@ Toujours passer par ce protocole. La source de vérité machine est la DB SQLite
 
 ---
 
-## Prérequis : démarrer le service
+## Prérequis : vérifier le service
 
 ```powershell
-# Démarrage local (no Docker)
-e:\terraformation\.venv\Scripts\python.exe e:\terraformation\Roadmap\run.py
+# Vérifier que le container est up
+docker ps --filter "name=roadmap" --format "{{.Names}}\t{{.Status}}"
+# Attendu : terraformation-roadmap   Up X minutes (healthy)
 
-# Vérifier
+# Vérifier l'API
 Invoke-RestMethod http://localhost:8001/health  # → {"status":"ok"}
 ```
 
-## Seed initial (une seule fois par DB vierge)
+Si le container n'est pas up :
+```powershell
+cd e:\terraformation ; docker compose up -d terraformation-roadmap
+```
+
+---
+
+## ⚠️ Sync DB Docker — OBLIGATOIRE après ajout d'une nouvelle phase dans roadmap.json
+
+Après chaque `git pull` ou modification de `Documentation/roadmap.json`, synchroniser la DB Docker :
 
 ```powershell
-# Importer toutes les phases depuis roadmap.json
-e:\terraformation\.venv\Scripts\python.exe e:\terraformation\Roadmap\migrate.py
-
-# Mettre à jour les métadonnées sans écraser les statuts
-e:\terraformation\.venv\Scripts\python.exe e:\terraformation\Roadmap\migrate.py --update
+docker exec -e DB_PATH=/data/roadmap.db terraformation-roadmap python -c "
+import os, sys, json
+sys.path.insert(0, '/app')
+os.environ.setdefault('DB_PATH', '/data/roadmap.db')
+from app import db
+db.configure('/data/roadmap.db')
+db.init_schema()
+with open('/workspace/Documentation/roadmap.json') as f:
+    data = json.load(f)
+phases = data['phases']
+for p in phases:
+    if p.get('status') == 'in-progress':
+        p['status'] = 'pending'
+from app.models import SeedPhaseInput
+records = [SeedPhaseInput(**p).to_record() for p in phases]
+inserted, skipped = db.seed_phases(records, update_metadata=True)
+print(f'inserted={inserted} skipped={skipped} total={len(records)}')
+"
 ```
+
+**Pourquoi** : `SeedPhaseInput` n'accepte que `not-started | pending | done` ; le JSON peut contenir `in-progress` → normalisation nécessaire.
+
+Vérifier ensuite :
+```powershell
+Invoke-RestMethod "http://localhost:8001/phases/<id-de-la-nouvelle-phase>"
+# → doit retourner la phase, pas 404
+```
+
+---
+
+## Seed initial (première fois sur DB vierge)
+
+Utiliser la commande docker exec ci-dessus (`inserted=N skipped=0`).
 
 ---
 
@@ -191,6 +234,45 @@ Réponse type :
 
 ---
 
+## Délégation Cline — template
+
+Quand la complétion d'une phase implique plusieurs fichiers ou des modifications répétitives (ex: cocher des `[ ]` en masse, archiver dans CHANGELOG), déléguer à Cline via `/from-copilot` :
+
+```markdown
+## Contexte
+- Fichiers impliqués :
+  - `e:\terraformation\Documentation\roadmap.json`
+  - `e:\terraformation\Documentation\ROADMAP.md`
+  - `e:\terraformation\Documentation\CHANGELOG.md`
+- État actuel : la phase `<id>` est marquée `done` dans le service (date: <date>).
+  Les `[ ]` dans ROADMAP.md n'ont pas encore été cochés.
+
+## Objectif
+Cocher tous les critères `[ ]` → `[x]` de la section "Phase <Nom>" dans ROADMAP.md,
+mettre à jour le titre (🚧 → ✅), mettre à jour la table récapitulative,
+puis archiver le bloc dans CHANGELOG.md si la phase parente est entièrement terminée.
+
+## Tâches
+1. Dans `ROADMAP.md` : remplacer `## 🚧 Phase <Nom>` par `## ✅ Phase <Nom>` — fichier cible
+2. Dans `ROADMAP.md` : tous les `- [ ]` sous ce bloc → `- [x]` — fichier cible
+3. Dans `ROADMAP.md` : table récapitulative — colonne statut → `✅ Terminé <date>` — fichier cible
+4. Dans `roadmap.json` : `"status": "pending"` → `"status": "done"`, `"completedDate": null` → `"completedDate": "<date>"` — fichier cible
+5. (Optionnel) Archiver le bloc dans `CHANGELOG.md` si toute la phase parente est done
+
+## Contraintes
+- Ne pas modifier les lignes déjà cochées `[x]`
+- Conserver le formatage Markdown existant
+- Date au format ISO `YYYY-MM-DD`
+
+## Validation
+- `grep "🚧" Documentation/ROADMAP.md` → aucun résultat pour cette phase
+- `grep "p-<id>" Documentation/roadmap.json | grep "done"` → présent
+```
+
+Modèle recommandé : `Gemma4-A4B-NoThink` (tâche simple multi-fichiers Markdown/JSON).
+
+---
+
 ## Règles strictes
 
 - **BLOCAGE** : `complete` avec `assertion_script` retourne HTTP 422 si pytest échoue
@@ -199,7 +281,7 @@ Réponse type :
 - **Toujours** appeler `roadmap_validate_phase` avant `roadmap_complete_phase` quand un `assertion_script` est configuré
 - **Toujours** vérifier `exit_criteria` avant de déclencher la complétion
 - Pour les phases sans script : validation visuelle obligatoire (screenshot ou `-Force` explicite)
-- **Pas de Docker** — le service se lance avec `python run.py` depuis `Roadmap/`
+- **Service Docker** — `terraformation-roadmap` sur port 8001 ; `migrate.py` local ne touche pas la DB Docker ; utiliser le docker exec de sync (section **Sync DB Docker**)
 - **À chaque phase implémentée**, l'agent DOIT :
   1. Créer `SimulationCore/tests/assertions/test_<phase_id_underscored>.py` (copier `_template.py`)
   2. Mettre à jour `assertion_script` de la phase via `roadmap_add_phase` ou `roadmap_update_phase`
