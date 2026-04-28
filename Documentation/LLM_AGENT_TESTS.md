@@ -39,7 +39,7 @@ SimulationCore/tests/
 | `LLM_API_KEY` | `sk-...` | Clé API (générée dans `.env`) |
 | `LLM_MODEL` | `gemma4` | Modèle par défaut (Always-On 4B) |
 | `LLM_MODEL_FAST` | `gemma4` | Always-On, latence ~5s — décisions simples |
-| `LLM_MODEL_DEEP` | `Gemma4-A4B-NoThink` | **Modèle agent (10/10 benchmark)** — nationalist_react 7.9s, MCP 1-5s |
+| `LLM_MODEL_DEEP` | `Gemma4-A4B` | **Modèle agent (10/10 benchmark)** — NoThink via `chat_template_kwargs` — nationalist_react 7.9s, MCP 1-5s |
 | `LLM_MODEL_REASON` | `qwen3.5-sonnet-30b` | **Raisonnement long** (planning, GM narratif) — 10/10, tools_call 11.1s |
 | `LLM_MODE` | `tools` | Mode appel : `tools` (function-calling) ou `json` |
 | `AGENT_TICK_INTERVAL` | `10` | Fréquence de déclenchement de l'agent (ticks) |
@@ -190,6 +190,31 @@ spec = importlib.util.spec_from_file_location("terraformation_sim.models", _SIM 
 
 Ne jamais hardcoder `r"e:\terraformation\..."` — ça casse dans le conteneur Docker.
 
+### 5. `build_system_prompt` et le mode `tools`
+
+`build_system_prompt(state)` génère par défaut les règles JSON ("Return EXACTLY ONE action using the JSON schema").
+Ces instructions entrent en **conflit** avec `tool_choice=required` : le modèle répond avec du texte JSON
+au lieu d'un `tool_call`, provoquant un `KeyError: 'tool_calls'`.
+
+**Toujours passer `mode="tools"`** quand on appelle `call_llm_tools` :
+
+```python
+# ✓ Correct — prompt adapté au mode tools (pas d'instructions JSON)
+messages = [
+    {"role": "system", "content": build_system_prompt(state, mode="tools")},
+    {"role": "user",   "content": build_state_context(state, tick)},
+]
+result = call_llm_tools(messages, AGENT_TOOLS_SCHEMA, ...)
+
+# ✗ Provoque KeyError: 'tool_calls' — le prompt JSON pousse le modèle à répondre en texte
+messages = [
+    {"role": "system", "content": build_system_prompt(state)},  # mode='json' par défaut
+    ...
+]
+```
+
+`run_agent` passe automatiquement `mode=llm_mode` à `build_system_prompt` — pas besoin de le gérer manuellement dans le runtime.
+
 ---
 
 ## Mocker le LLM dans les scénarios
@@ -256,7 +281,7 @@ e:\terraformation\.venv\Scripts\pytest.exe `
 **Prérequis** dans `.env` :
 ```
 LLM_DIRECT_BASE_URL=http://192.168.5.213:41200/v1   # direct llama-swap, pas OpenWebUI
-LLM_BENCHMARK_MODELS=gemma4,Gemma4-A4B-NoThink,Qwen2.5-14B-Instruct-Q4_K_M,...
+LLM_BENCHMARK_MODELS=Gemma4-A4B,qwen3.5-sonnet-30b,...
 ```
 
 **Warm-up automatique** : avant le premier test de chaque modèle [Big], la fixture envoie
@@ -278,7 +303,13 @@ sur un modèle incompatible.
 |--------|-------|------------------|------------|--------|
 | **Gemma4-A4B-NoThink** (26B) | **10/10** ✅ | 7.9s | 2.7s | **`LLM_MODEL_DEEP`** |
 | **qwen3.5-sonnet-30b** (30B) | **10/10** ✅ | 25.7s | 11.1s | **`LLM_MODEL_REASON`** |
-| Qwen3-8B-Q4_K_M (8B) | 9/10 | 120.0s ⚠️ | ❌ thinking mode | Candidat si fix /no_think |
+## Résultats benchmark Run 4 (28 avril 2026)
+
+> Modèle renommé `Gemma4-A4B-NoThink` → `Gemma4-A4B` côté llama-swap. NoThink activé via `chat_template_kwargs: {enable_thinking: false}` dans le payload. Migration `.env` + fix `call_llm_tools`.
+
+| Modèle | Score | json_parse | tools_call | stable_noop | nationalist_react | capitalist_crisis | mcp×5 | Verdict |
+|--------|-------|-----------|-----------|------------|------------------|------------------|-------|---------|
+| **Gemma4-A4B** (26B) | **10/10** ✅ | 3.2s | 4.7s | 14.7s | 27.0s | 18.6s | 3-9s | **`LLM_MODEL_DEEP`** || Qwen3-8B-Q4_K_M (8B) | 9/10 | 120.0s ⚠️ | ❌ thinking mode | Candidat si fix /no_think |
 | qwen3.5-opus-9b (9B) | 8/10 | ❌ timeout | 12.5s | Éliminé |
 | Qwen3-14B-Q4_K_M (14B) | 7/10 | ❌ 180s timeout | ❌ | Éliminé |
 | gemma4 (4B always-on) | 9/9 ✅ | 96.0s (⚠️ GPU partagé) | skip | **`LLM_MODEL_FAST`** |
@@ -288,7 +319,7 @@ sur un modèle incompatible.
 ### Fixes apportés pendant le benchmark
 
 - **`call_llm_tools` `max_tokens=300`** (`agent.py`) — évite les freezes de génération sur les 26B+
-- **`test_bench_tools_call` prompt neutre** — le system prompt JSON (`build_system_prompt`) conflicte avec `tool_choice=required` ; remplacé par un prompt minimal pour ce test
+- **`build_system_prompt(mode=...)` paramètre mode** (`agent.py`) — `_RULES_TOOLS` sans instructions JSON pour le mode tools ; `run_agent` passe `mode=llm_mode` automatiquement. Fix définitif du `KeyError: 'tool_calls'` (précédemment workauffé par prompt neutre dans le benchmark)
 - **`ABORT_THRESHOLD=4`** (`conftest.py`) — early-abort après 4 échecs, évite de perdre 3min sur un modèle blacklisté
 - **`temperature=0.1`** dans `tools_call` — `0.0` causait des freezes sur certains modèles
 

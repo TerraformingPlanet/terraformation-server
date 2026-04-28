@@ -133,11 +133,23 @@ _RULES = (
     '  TriggerNationalization: {"targetCorpId": "...", "tileId": "..."}\n'
 )
 
+_RULES_TOOLS = (
+    "\n\nIMPORTANT RULES:\n"
+    "1. You must act in the INTERESTS of your state and its population, not any individual corporation.\n"
+    "2. You must be IMPARTIAL — do not favour a corporation because it previously helped you.\n"
+    "3. RESPECT your state's agenda: use SetTolerance cautiously, TriggerNationalization only when justified.\n"
+    "4. Choose NoOp when no significant change is needed. Do not over-react to minor fluctuations.\n"
+    "5. CRITICAL: if the context contains \"inCrisis\": true, you MUST choose ProposeContract or SetTolerance.\n"
+    "   NoOp is FORBIDDEN when inCrisis=true. Passive maintenance is not an acceptable action during a crisis.\n"
+    "6. Call EXACTLY ONE of the available tools to return your decision. Do NOT return JSON text.\n"
+)
 
-def build_system_prompt(state: StateData) -> str:
-    """Return a system prompt tailored to the state's type."""
+
+def build_system_prompt(state: StateData, mode: str = "json") -> str:
+    """Return a system prompt tailored to the state's type and LLM mode."""
     personality = _PERSONALITY.get(state.stateType, _PERSONALITY[StateType.Capitalist])
-    return personality + _RULES
+    rules = _RULES_TOOLS if mode == "tools" else _RULES
+    return personality + rules
 
 
 def build_state_context(
@@ -200,6 +212,13 @@ def build_state_context(
 
     if recent_events:
         ctx["recentEvents"] = recent_events
+        broken = [e for e in recent_events if e.get("type") == "ContractBroken"]
+        if broken:
+            offenders = list({e.get("corpId", "unknown") for e in broken})
+            ctx["state"]["brokenContractAlert"] = (
+                f"ALERT: {len(broken)} contract(s) recently broken by {', '.join(offenders)}. "
+                "SetTolerance or TriggerNationalization recommended."
+            )
     if reputations:
         ctx["reputations"] = reputations
     if memory:
@@ -236,6 +255,8 @@ def call_llm_json(
         "messages": messages,
         "response_format": {"type": "json_object"},
         "temperature": temperature,
+        "max_tokens": 400,
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     resp = httpx.post(
         f"{llm_url}/chat/completions",
@@ -270,6 +291,7 @@ def call_llm_tools(
         "tool_choice": "required",
         "temperature": temperature,
         "max_tokens": 300,  # un tool call ne dépasse jamais quelques tokens
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     resp = httpx.post(
         f"{llm_url}/chat/completions",
@@ -460,7 +482,7 @@ def run_agent(
         logger.warning("run_agent: LLM env vars missing (urgency=%s) — returning NoOp for state %s", urgency, state.id)
         return AgentAction(entityId=state.id)
 
-    system_msg = build_system_prompt(state)
+    system_msg = build_system_prompt(state, mode=llm_mode)
     context    = build_state_context(
         state, tick,
         scoreboard=scoreboard,

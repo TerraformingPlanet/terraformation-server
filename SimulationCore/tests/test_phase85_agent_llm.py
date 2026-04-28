@@ -66,9 +66,9 @@ def _make_stable_state() -> StateData:
     )
 
 
-def _minimal_messages(state: StateData, tick: int = 1) -> list[dict]:
+def _minimal_messages(state: StateData, tick: int = 1, mode: str = "json") -> list[dict]:
     return [
-        {"role": "system",  "content": build_system_prompt(state)},
+        {"role": "system",  "content": build_system_prompt(state, mode=mode)},
         {"role": "user",    "content": build_state_context(state, tick)},
     ]
 
@@ -95,7 +95,7 @@ def test_call_llm_json_returns_parseable_dict(fast_model):
 def test_call_llm_tools_returns_valid_tool_name(deep_model):
     """call_llm_tools returns a tool name that is in the known action map."""
     state = _make_stable_state()
-    messages = _minimal_messages(state)
+    messages = _minimal_messages(state, mode="tools")
     result = call_llm_tools(messages, AGENT_TOOLS_SCHEMA,
                             llm_url=deep_model["base_url"],
                             model=deep_model["model"],
