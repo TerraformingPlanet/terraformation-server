@@ -101,7 +101,7 @@ Le client Unity commence aussi à être repositionné comme **adaptateur de snap
 - L'iconographie UI des bâtiments est une couche de présentation séparée côté client Unity
 - `GameHUDBuildingIcons.cs` mappe `CorpBuildingType` vers un libellé, une teinte et un token d'icône
 - La source visuelle actuelle est une police locale `Font Awesome 7 Free-Solid-900.otf` placée sous `Assets/Resources/Fonts/`
-- `GameHUD.cs` tente de créer un `TMP_FontAsset` dynamique à runtime ; si la police ou les glyphes sont indisponibles, le HUD retombe sur un fallback texte (`M`, `F`, `E`, `R`)
+- Le rendu des icônes bâtiments est géré par les sous-contrôleurs HUD (`TileInspectorController`, `BottomActionBarController`) via `GameHUDBuildingIcons.cs` ; si la police ou les glyphes sont indisponibles, fallback texte (`M`, `F`, `E`, `R`)
 - Conséquence : la logique gameplay ne dépend jamais d'un glyph, d'un nom d'icône ou d'un asset UI particulier ; la source visuelle pourra être remplacée plus tard par un `TMP Sprite Asset` sans modifier les types métier
 
 ### Système de Vues 3 Niveaux
@@ -146,71 +146,188 @@ Implémenté dans une seule scène `Game.unity` — 3 racines de GameObject acti
 Assets/
 ├── Scripts/
 │   ├── HexGrid/          # HexMetrics, HexMesh, HexGrid, HexCell, HexInput
-│   ├── World/            # Modèle 4 niveaux + pipeline de génération
-│   │   ├── Cosmos/       # Hiérarchie corps célestes (Phase 6.9)
+│   ├── World/
+│   │   ├── Cosmos/       # Hiérarchie corps célestes
 │   │   │   ├── CelestialBody.cs      # Base ScriptableObject abstraite
 │   │   │   ├── OrbitalBody.cs        # Physique, atmo, géo, couches WorldLayer
-│   │   │   ├── StarBody.cs           # Étoile complète (remplace StarData struct)
-│   │   │   ├── Planet.cs             # Planète (Rocky, OceanWorld, Desert, Volcanic)
-│   │   │   ├── Moon.cs               # Lune colonisable
-│   │   │   ├── Asteroid.cs           # Astéroïde / corps mineur
-│   │   │   ├── GasGiant.cs           # Géante gazeuse (non-atterrissable)
-│   │   │   └── GalaxyData.cs         # Conteneur galaxie
-│   │   ├── CelestialBodyData.cs  # Structs partagées (PlanetaryPhysics, AtmosphericComposition…)
-│   │   ├── StarData.cs           # Legacy — peut être supprimé après migration
-│   │   ├── OrbitalParameters.cs
-│   │   ├── SolarSystemData.cs
-│   │   ├── MapRegion.cs
-│   │   ├── PlanetaryWeatherState.cs
-│   │   ├── MapGenerator.cs
-│   │   ├── MapGenParameters.cs
-│   │   ├── PlanetaryHexGrid.cs       # Grille Mercator — vue locale (HexGrid) + constantes résolution sphère GP
-│   │   ├── PlanetSphere.cs           # Archivé — remplacé par PlanetSphereGoldberg
-│   │   ├── PlanetTextureGenerator.cs # Archivé — remplacé par GoldbergFaceColorizer.ColorizeFromServerTiles
-│   │   └── Systems/      # Pipeline IHexSystem (Phase 4)
-│   │       ├── IHexSystem.cs
-│   │       ├── GenerationContext.cs
+│   │   │   ├── StarBody.cs
+│   │   │   ├── Planet.cs
+│   │   │   ├── Moon.cs
+│   │   │   ├── Asteroid.cs
+│   │   │   ├── GasGiant.cs
+│   │   │   └── GalaxyData.cs
+│   │   ├── Data/         # Structs et contrats de données
+│   │   │   ├── CelestialBodyData.cs  # PlanetaryPhysics, AtmosphericComposition…
+│   │   │   ├── StarData.cs           # Legacy
+│   │   │   ├── OrbitalParameters.cs
+│   │   │   ├── SolarSystemData.cs
+│   │   │   ├── IHexSystem.cs         # Interface pipeline génération
+│   │   │   ├── TerraformAction.cs
+│   │   │   ├── TerraformActionData.cs
+│   │   │   └── TerraformProgressTracker.cs
+│   │   ├── Generation/   # Pipeline génération monde
+│   │   │   ├── MapRegion.cs
+│   │   │   ├── MapGenerator.cs
+│   │   │   ├── MapGenParameters.cs
+│   │   │   ├── PlanetaryHexGrid.cs   # Constantes résolution sphère GP + grille Mercator
+│   │   │   ├── PlanetaryWeatherState.cs
+│   │   │   ├── GenerationContext.cs
+│   │   │   ├── GoldbergSphereGenerator.cs
+│   │   │   └── LocalProjection.cs
+│   │   ├── Hexasphere/   # Géométrie sphère de Goldberg (bas niveau)
+│   │   │   ├── Hexasphere.cs
+│   │   │   ├── Face.cs
+│   │   │   ├── Tile.cs
+│   │   │   ├── Point.cs
+│   │   │   └── MeshDetails.cs
+│   │   ├── Input/        # Entrées caméra vue planétaire
+│   │   │   ├── PlanetFlatInput.cs
+│   │   │   └── PlanetTangentInput.cs
+│   │   ├── Rendering/    # Rendu planète, sphère Goldberg, overlays
+│   │   │   ├── PlanetSphereGoldberg.cs            # Sphère GP principale — fetch tiles, clic, overlay
+│   │   │   ├── PlanetSphereGoldbergServerFetch.cs # Fetch paginé GET /bodies/{id}/tiles
+│   │   │   ├── PlanetSphereGoldbergInput.cs       # Raycasting clic → OnH3TileResolved
+│   │   │   ├── PlanetSphereGoldbergOverlay.cs     # Colorisation territoire / ownership
+│   │   │   ├── GoldbergFaceColorizer.cs           # Nearest-neighbor lat/lon → TerrainType → Color
+│   │   │   ├── GoldbergAtmosphere.cs
+│   │   │   ├── PlanetFlatMesh.cs
+│   │   │   ├── PlanetFlatView.cs
+│   │   │   ├── PlanetTangentMesh.cs
+│   │   │   ├── PlanetTangentView.cs
+│   │   │   ├── PlanetSphere.cs                    # Archivé — précédente sphère UV
+│   │   │   ├── PlanetTextureGenerator.cs          # Archivé
+│   │   │   ├── FlatDebugOverlay.cs
+│   │   │   ├── OwnershipBorderRenderer.cs
+│   │   │   ├── PlanetCloudLayer.cs
+│   │   │   ├── MinimapController.cs
+│   │   │   ├── TerrainColorPalette.cs
+│   │   │   └── WorldLayer.cs
+│   │   └── Systems/      # IHexSystem pipeline (Phase 4)
 │   │       ├── HeightSystem.cs
 │   │       ├── TemperatureSystem.cs
 │   │       ├── WaterSystem.cs
+│   │       ├── WaterClassificationSystem.cs
+│   │       ├── HydrologySystem.cs
 │   │       ├── WindSystem.cs
 │   │       ├── SoilSystem.cs
 │   │       ├── BiomeSystem.cs
 │   │       ├── RiverSystem.cs
-│   │       └── ValidationSystem.cs
-│   ├── Corporation/      # Entités politiques (Phase 6.9)
-│   │   └── PoliticalEntity.cs    # OwnerType, HexOwnership, PoliticalEntity, Corporation, NationState
-│   ├── Economy/          # Ressources et bâtiments (Phase 6.9)
-│   │   ├── ResourceType.cs       # ResourceType enum + ResourceStack struct
-│   │   ├── BuildingData.cs       # BuildingType + BuildingData ScriptableObject
-│   │   └── BuildingInstance.cs   # Instance runtime d'un bâtiment
-│   ├── Projects/         # Projets longue-durée (Phase 6.9)
-│   │   └── Project.cs            # Project abstrait + 5 sous-types concrets
-│   ├── Events/           # EventManager, EventData, déclenchement
-│   ├── Networking/       # SimulationWebSocketClient, auth helpers
-│   └── UI/               # CameraController, ViewManager, HUD, tooltips, popups, scoreboard
-│       ├── ViewManager.cs            # Machine d'état 3 vues, transitions
-│       ├── SolarSystemView.cs        # Rendu système solaire (sphères + LineRenderer)
-│       └── CameraController.cs      # Pan/zoom/orbit selon IViewMode
+│   │       ├── ValidationSystem.cs
+│   │       ├── CoherenceValidationSystem.cs
+│   │       └── TerraformSystem.cs
+│   ├── Corporation/      # Entités politiques
+│   │   └── PoliticalEntity.cs
+│   ├── Economy/
+│   │   ├── ResourceType.cs
+│   │   ├── BuildingData.cs
+│   │   └── BuildingInstance.cs
+│   ├── Events/
+│   ├── Networking/       # SimulationWebSocketClient, SimHttp, auth helpers
+│   └── UI/
+│       ├── CameraController.cs
+│       ├── ViewManager.cs            # Machine d'état 3 vues (SolarSystem → Planet → Local)
+│       ├── SolarSystemView.cs
+│       ├── GalaxyView.cs
+│       ├── GameHUDController.cs      # Orchestrateur HUD principal — voir section HUD ci-dessous
+│       ├── TerraformHUD.cs           # Events OnProgressUpdated, OnRegionStateChanged
+│       ├── TestLaunchMenu.cs         # Legacy UGUI — Hydrology Test Launcher (s'ouvre via btn Debug)
+│       ├── DebugHydrologyPanel.cs    # Legacy UGUI — panneau projection/hydro (F10)
+│       ├── LoginPanel.cs
+│       └── HUD/                      # Sous-contrôleurs UI Toolkit
+│           ├── TopBarController.cs           # Barre haute : retour, nom planète, tick, barre terraform, debug
+│           ├── LeftPanelController.cs        # Panneau gauche : données atmo + scoreboard (caché si vide)
+│           ├── TileInspectorController.cs    # Panneau gauche : inspecteur tuile (remplace LeftPanel au clic)
+│           ├── TerritoryPanelController.cs   # Panneau droit : état / territoire (s'ouvre via badge tuile)
+│           ├── BottomActionBarController.cs  # Barre basse : onglets Territoire/Construction/Marché…
+│           ├── EventFeedController.cs        # Flux d'événements overlay
+│           ├── DebugDrawerController.cs      # Tiroir debug (toggle bouton Debug / F9)
+│           └── TimeControlsController.cs     # Contrôles vitesse tick (1x, 2x, 10x…)
+│
+├── Scripts/Editor/
+│   ├── HUDAssetsSetup.cs     # MenuItem "Terraformation/Setup HUD Assets" — assigne les UXML/USS sur GameHUDController
+│   └── SceneSetupHelper.cs
+│
+├── UI/
+│   ├── HUDTheme.tss          # Thème PanelSettings — importe tous les USS via @import
+│   ├── Templates/            # UXML par contrôleur
+│   │   ├── TileInspector.uxml
+│   │   ├── BottomActionBar.uxml
+│   │   ├── DebugDrawer.uxml
+│   │   ├── EventFeed.uxml
+│   │   ├── EventPopup.uxml
+│   │   ├── TopBar.uxml
+│   │   ├── LeftPanel.uxml
+│   │   └── Tooltip.uxml
+│   └── Styles/               # USS tokens + styles par composant
+│       ├── variables.uss     # Design tokens CSS (couleurs, tailles, espacements)
+│       ├── base.uss          # Styles globaux (séparateur, label, btn)
+│       ├── TopBar.uss
+│       ├── LeftPanel.uss
+│       ├── TileInspector.uss # Inclut .territory-panel + .tile-inspector__badge-btn
+│       ├── BottomActionBar.uss
+│       ├── DebugDrawer.uss
+│       └── DESIGN.md         # Source de vérité design tokens (synced vers variables.uss)
 │
 ├── ScriptableObjects/
-│   ├── Worlds/           # SolarSystemData, OrbitalBody assets (Planet/Moon/Asteroid…), MapRegion
-│   ├── Terrains/         # TerrainData par type (roche, glace, eau…)
-│   ├── Buildings/        # BuildingData (mine, serre, raffinerie…)
-│   └── Events/           # EventData (TempêteSolaire, RencontreAlien…)
+│   ├── Worlds/
+│   ├── Terrains/
+│   ├── Buildings/
+│   └── Events/
 │
 ├── Materials/
-│   └── HexVertexColor.mat  # Material URP avec vertex colors pour le mesh
+│   └── HexVertexColor.mat
 │
 ├── Prefabs/
-│   ├── Buildings/
-│   └── UI/
 │
 └── Scenes/
     ├── MainMenu.unity
     ├── Game.unity
     └── Loading.unity
 ```
+
+---
+
+## Architecture HUD Unity (UI Toolkit)
+
+> **Décision [2026-05]** : Abandon de l'ancien `GameHUD.cs` UGUI. Tout le HUD principal est construit via **UI Toolkit** (code-driven, pas de `UIDocument.sourceAsset`). `GameHUDController.cs` orchestre 8 sous-contrôleurs `MonoBehaviour`.
+
+### Hiérarchie de composants
+
+```
+[HUDController]  (GameObject dans Game.unity)
+  ├── GameHUDController          ← Point d'entrée, UIDocument racine, wiring ViewManager
+  ├── TopBarController           ← Bouton retour, nom planète, tick, barre terraform inline, bouton Debug
+  ├── LeftPanelController        ← Données atmosphériques + scoreboard (masqué si pas de données)
+  ├── TileInspectorController    ← Inspecteur tuile sélectionnée (badge territoire → TerritoryPanel)
+  ├── TerritoryPanelController   ← Panneau droit : état / territoire / population
+  ├── BottomActionBarController  ← Onglets Territoire / Construction / Marché / Diplomatie
+  ├── EventFeedController        ← Flux événements overlay
+  ├── DebugDrawerController      ← Tiroir debug (toggle F9 / bouton Debug)
+  └── TimeControlsController     ← Contrôles vitesse tick
+```
+
+### Règles de construction HUD
+
+1. **Aucun `UIDocument.sourceAsset`** — les templates UXML sont des `[SerializeField] VisualTreeAsset` sur `GameHUDController`, passés aux sous-contrôleurs via `Initialize(root, template)`.
+2. **Styles inline pour layout critique** — après `CloneTree()`, les propriétés `position`, `flex-direction`, `bottom`, `right` sont forcées en C# inline (CloneTree n'applique pas les `<Style src>` du UXML dans un conteneur existant).
+3. **Visibilité conditionnelle** : `LeftPanelController` n'affiche le panneau que si `_hasAtmoData = true` (évite un panneau vide au démarrage). De même `TerritoryPanelController` démarre caché.
+4. **Single event source** : F9 est géré uniquement par `GameHUDController.ToggleDebugDrawer()` → `testLaunchMenu?.ToggleMenu()`. `TestLaunchMenu.Update()` ne capture plus F9 pour éviter le double-déclenchement.
+
+### Flux TileInspector → TerritoryPanel
+
+```
+Clic tuile → PlanetSphereGoldbergInput.OnH3TileResolved(GoldbergTileState)
+  → GameHUDController.OnTileSelected()
+    → TileInspectorController.ShowTile(tile)
+      → badge territoire (initiales stateName) visible si tile.stateId non vide
+      → clic badge → GameHUDController.ShowTerritoryPanel(stateId, stateName)
+        → TerritoryPanelController.ShowTerritory(stateId)
+          → GET /game/states/{stateId} → RenderState(StateDto)
+```
+
+### Barre terraform (TopBar)
+
+La barre de progression TERRAFORMATION est embarquée **inline** dans `TopBarController.BuildTopBarProcedural()` : label "TERRA" + track 80 px + fill (width en `Percent`) + label pourcentage. `SetTerraformProgress(float progress)` la masque si `progress >= 1f`.
 
 ---
 
