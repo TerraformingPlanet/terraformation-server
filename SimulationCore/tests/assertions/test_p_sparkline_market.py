@@ -39,7 +39,7 @@ def test_sparkline_extends_visual_element():
 
 def test_sparkline_has_generate_visual_content():
     content = _read(SPARKLINE_CS)
-    assert "GenerateVisualContent" in content, "GenerateVisualContent(MeshGenerationContext) manquant"
+    assert "generateVisualContent" in content, "generateVisualContent callback manquant"
     assert "MeshGenerationContext" in content, "MeshGenerationContext manquant"
 
 
