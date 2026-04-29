@@ -123,6 +123,8 @@ def _add_human_corp(rt, corp_id: str) -> CorporationData:
 @_skip_no_noise
 def test_world_agent_cycle_empty_world():
     rt = _make_runtime()
+    rt._states.clear()
+    rt._corporations.clear()
     triggered = rt.run_world_agent_cycle(reason="test")
     assert isinstance(triggered, list)
     assert triggered == []

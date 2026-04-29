@@ -42,6 +42,11 @@ def main() -> None:
         help="Also update metadata for phases that already exist (preserves status/completed_date)",
     )
     parser.add_argument(
+        "--restore",
+        action="store_true",
+        help="Full upsert including status/completed_date — disaster-recovery only (overwrites DB state)",
+    )
+    parser.add_argument(
         "--db",
         dest="db_path",
         default=os.environ["DB_PATH"],
@@ -68,9 +73,9 @@ def main() -> None:
         # Assign sortOrder from array index if not set in JSON (preserves roadmap.json order)
         p.setdefault("sortOrder", i)
         records.append(SeedPhaseInput(**p).to_record())
-    inserted, skipped = db.seed_phases(records, update_metadata=args.update)
+    inserted, skipped = db.seed_phases(records, update_metadata=args.update, restore=args.restore)
 
-    action = "Updated" if args.update else "Inserted"
+    action = "Restored" if args.restore else ("Updated" if args.update else "Inserted")
     print(f"DB: {args.db_path}")
     print(f"{action}: {inserted}  |  Skipped: {skipped}  |  Total: {len(records)}")
 

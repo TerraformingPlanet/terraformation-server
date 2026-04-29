@@ -62,7 +62,7 @@ def _add_exclusion(model: str, reason: str, score: str) -> None:
 try:
     from dotenv import load_dotenv
     _env_path = Path(__file__).resolve().parent.parent.parent / ".env"
-    load_dotenv(dotenv_path=str(_env_path), override=False)
+    load_dotenv(dotenv_path=str(_env_path), override=True)
 except ImportError:
     pass  # python-dotenv not installed — rely on shell environment
 
@@ -124,10 +124,11 @@ def llm_env():
 @pytest.fixture(scope="session")
 def fast_model(llm_env):
     """
-    Returns an llm_env dict overridden with the Always-On 4B model.
-    Use in LLM tests to keep latency low without touching production LLM_MODEL.
+    Returns an llm_env dict overridden with the Always-On fast model.
+    Uses LLM_MODEL_FAST env var, falls back to llm_env["model"].
     """
-    return {**llm_env, "model": "gemma4"}
+    model = os.environ.get("LLM_MODEL_FAST", "").strip() or llm_env["model"]
+    return {**llm_env, "model": model}
 
 
 @pytest.fixture(scope="session")

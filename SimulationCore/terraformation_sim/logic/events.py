@@ -14,8 +14,8 @@ from ..models import (
     EventData,
     EventEffect,
     EventType,
-    ResourceType,
 )
+from ..registry import RESOURCE_REGISTRY
 
 # ── Event catalogue ───────────────────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ GAME_EVENT_CONFIGS: list[dict] = [
         "weight": 15,
         "creditsDelta": -200.0,
         "reputationDelta": 0.0,
-        "resourceType": ResourceType.Energy.name,
+        "resourceType": "Energy",
         "resourceDelta": -50.0,
         "populationDelta": 0.0,
     },
@@ -52,7 +52,7 @@ GAME_EVENT_CONFIGS: list[dict] = [
         "weight": 20,
         "creditsDelta": 100.0,
         "reputationDelta": 5.0,
-        "resourceType": ResourceType.Iron.name,
+        "resourceType": "Iron",
         "resourceDelta": 80.0,
         "populationDelta": 0.0,
     },
@@ -74,7 +74,7 @@ GAME_EVENT_CONFIGS: list[dict] = [
         "weight": 8,
         "creditsDelta": -300.0,
         "reputationDelta": -10.0,
-        "resourceType": ResourceType.Minerals.name,
+        "resourceType": "Minerals",
         "resourceDelta": -30.0,
         "populationDelta": 0.0,
     },
@@ -96,7 +96,7 @@ GAME_EVENT_CONFIGS: list[dict] = [
         "weight": 13,
         "creditsDelta": 0.0,
         "reputationDelta": 5.0,
-        "resourceType": ResourceType.Food.name,
+        "resourceType": "Food",
         "resourceDelta": -40.0,
         "populationDelta": 2000.0,
     },

@@ -54,9 +54,28 @@ Références conditionnelles :
 
 ## Délégation vers Cline (LLM local)
 
-Quand l'utilisateur demande un plan à déléguer à Cline, produire obligatoirement ce format — Cline le lit via `/from-copilot` :
+### Workflow clineTask/ (recommandé)
+
+Copilot crée un fichier dans `clineTask/pending/` avec le format ci-dessous, puis le lance via :
+
+```powershell
+# YOLO — auto-approve tout (tâches de dev standard)
+.\Tools\Invoke-ClineTask.ps1 .\clineTask\pending\YYYY-MM-DD_slug.md
+
+# Review — Cline demande confirmation (tâches risquées : delete, refacto large)
+.\Tools\Invoke-ClineTask.ps1 .\clineTask\pending\YYYY-MM-DD_slug.md -Review
+```
+
+Le fichier est automatiquement déplacé dans `clineTask/done/` après exécution.
+
+### Format du fichier tâche
 
 ```markdown
+---
+model: Gemma4-A4B-NoThink
+mode: yolo
+---
+
 ## Contexte
 - Fichiers impliqués : [liste avec chemins complets]
 - État actuel : [ce qui existe, ce qui manque]
@@ -76,12 +95,18 @@ Quand l'utilisateur demande un plan à déléguer à Cline, produire obligatoire
 - [commande ou vérification manuelle pour confirmer que c'est bon]
 ```
 
-Modèles recommandés pour Cline :
-- Code (Python/C#/USS) → `Gemma4-A4B-NoThink`
-- Tâche complexe multi-fichiers → `qwen3.5-sonnet-30b`
-- Simple / atomique → `Gemma4-A4B-NoThink`
+### Modèles disponibles (Always-On = pas d'attente)
 
-Backend LLM local : `http://192.168.5.213:41200/v1`
+| Tâche | Modèle | Latence |
+|---|---|---|
+| Code (Python/C#/USS) | `Gemma4-A4B-NoThink` | 1-5s ✅ Always-On |
+| Simple / atomique | `Gemma4-A4B-NoThink` | 1-5s ✅ Always-On |
+| Tâche complexe multi-fichiers | `qwen3.5-sonnet-30b` | ~90s swap ⚠️ |
+
+> `qwen3.5-sonnet-30b` est lent (swap Big group). Préférer `Gemma4-A4B-NoThink` par défaut.
+
+Backend LLM local : `http://192.168.5.213:41200/v1`  
+Template tâche : `clineTask/_template.md`
 
 ---
 

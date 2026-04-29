@@ -16,8 +16,8 @@ services:
       DB_PATH: /data/roadmap.db
       WORKSPACE_PATH: /workspace
     volumes:
-      # Persistent SQLite state
-      - roadmap_db:/data
+      # Persistent SQLite state — bind mount so the .db file lives on the host
+      - ../Artifacts/roadmap:/data
       # Workspace mounted read-only for pytest execution
       - ..:/workspace:ro
     restart: unless-stopped
@@ -27,7 +27,3 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
-
-volumes:
-  roadmap_db:
-    driver: local

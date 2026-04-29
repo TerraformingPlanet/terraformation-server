@@ -17,6 +17,13 @@ models = importlib.util.module_from_spec(spec)
 sys.modules["terraformation_sim.models"] = models
 spec.loader.exec_module(models)
 
+# Pre-load registry so market.py's relative import resolves
+spec_reg = importlib.util.spec_from_file_location("terraformation_sim.registry",
+    _SIM / "registry.py")
+registry_mod = importlib.util.module_from_spec(spec_reg)
+sys.modules["terraformation_sim.registry"] = registry_mod
+spec_reg.loader.exec_module(registry_mod)
+
 # Load market.py
 spec = importlib.util.spec_from_file_location("terraformation_sim.logic.market",
     _SIM / "logic" / "market.py")
@@ -25,22 +32,22 @@ sys.modules["terraformation_sim.logic.market"] = market
 spec.loader.exec_module(market)
 
 def test_resource_type_values():
-    """Vérifier que les nouvelles ressources existent avec les bonnes valeurs."""
-    assert models.ResourceType.Minerals == 0
-    assert models.ResourceType.Food == 1
-    assert models.ResourceType.Energy == 2
-    assert models.ResourceType.ResearchPoints == 3
-    assert models.ResourceType.Waste == 4
-    assert models.ResourceType.Iron == 5, f"Iron should be 5, got {models.ResourceType.Iron}"
-    assert models.ResourceType.Oxygen == 6, f"Oxygen should be 6, got {models.ResourceType.Oxygen}"
-    assert models.ResourceType.Water == 7, f"Water should be 7, got {models.ResourceType.Water}"
-    assert models.ResourceType.Tech == 8, f"Tech should be 8, got {models.ResourceType.Tech}"
+    """Vérifier que les nouvelles ressources existent (data-driven, string IDs)."""
+    assert models.ResourceType.Minerals == "Minerals"
+    assert models.ResourceType.Food == "Food"
+    assert models.ResourceType.Energy == "Energy"
+    assert models.ResourceType.ResearchPoints == "ResearchPoints"
+    assert models.ResourceType.Waste == "Waste"
+    assert models.ResourceType.Iron == "Iron", f"Iron should be 'Iron', got {models.ResourceType.Iron}"
+    assert models.ResourceType.Oxygen == "Oxygen", f"Oxygen should be 'Oxygen', got {models.ResourceType.Oxygen}"
+    assert models.ResourceType.Water == "Water", f"Water should be 'Water', got {models.ResourceType.Water}"
+    assert models.ResourceType.Tech == "Tech", f"Tech should be 'Tech', got {models.ResourceType.Tech}"
     print("✓ ResourceType values correct")
 
 def test_tradable_resources_includes_new():
     """Vérifier que les 4 nouvelles ressources sont dans TRADABLE_RESOURCES."""
-    tradable_names = {rt.name for rt in market.TRADABLE_RESOURCES}
-    
+    tradable_names = set(market.TRADABLE_RESOURCES)  # list[str] now
+
     assert "Iron" in tradable_names, f"Iron not in TRADABLE_RESOURCES. Got: {tradable_names}"
     assert "Oxygen" in tradable_names, f"Oxygen not in TRADABLE_RESOURCES. Got: {tradable_names}"
     assert "Water" in tradable_names, f"Water not in TRADABLE_RESOURCES. Got: {tradable_names}"
@@ -48,8 +55,8 @@ def test_tradable_resources_includes_new():
     print(f"✓ All 4 new resources in TRADABLE_RESOURCES: {tradable_names}")
 
 def test_resource_listing_roundtrip():
-    """Tester que ResourceListing peut être sérialisé/désérialisé pour chaque ResourceType."""
-    for resource_type in models.ResourceType:
+    """Tester que ResourceListing peut être sérialisé/désérialisé pour chaque resource tradable."""
+    for resource_type in market.TRADABLE_RESOURCES:  # list[str] now
         # Créer une listing
         listing = models.ResourceListing(
             resourceType=resource_type,
@@ -59,22 +66,22 @@ def test_resource_listing_roundtrip():
             priceVelocity=0.05,
             priceHistory=[1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
         )
-        
+
         # Sérialiser
         json_str = listing.model_dump_json()
         data = json.loads(json_str)
-        assert data["resourceType"] == resource_type.value, f"ResourceType {resource_type.name} round-trip failed"
-        
+        assert data["resourceType"] == resource_type, f"ResourceType {resource_type} round-trip failed"
+
         # Désérialiser
         listing2 = models.ResourceListing.model_validate_json(json_str)
-        assert listing2.resourceType == resource_type, f"ResourceType {resource_type.name} deserialize failed"
+        assert listing2.resourceType == resource_type, f"ResourceType {resource_type} deserialize failed"
         assert listing2.price == 1.5
         assert listing2.supply == 10.0
         assert listing2.demand == 8.0
         assert listing2.priceVelocity == 0.05
         assert len(listing2.priceHistory) == 6
-    
-    print(f"✓ ResourceListing round-trip OK for all {len(list(models.ResourceType))} resource types")
+
+    print(f"✓ ResourceListing round-trip OK for all {len(market.TRADABLE_RESOURCES)} resource types")
 
 def test_init_market_listings():
     """Vérifier que init_market_listings() crée une listing pour chaque TRADABLE_RESOURCE."""

@@ -246,7 +246,7 @@ All tools do not require Unity in Play Mode.
 | `list_reputations` | GET /game/reputation?corp_id= | Toutes les réputations impliquant une corpo |
 | `list_nationalizations` | GET /game/nationalizations?corp_id= | Processus de nationalisation en cours (filtre corpo optionnel) |
 | `corrupt_nationalization` | POST /game/nationalizations/{process_id}/corrupt | Tenter de corrompre un processus de nationalisation (bribe_amount) |
-| `get_scoreboard` | GET /game/scoreboard | Classement de toutes les corpos (score composite) |
+| `get_scoreboard` | GET /game/leaderboard | Classement top 10 corpos (score composite) |
 
 ### Détail des tools
 
@@ -294,8 +294,8 @@ All tools do not require Unity in Play Mode.
 
 **`get_scoreboard`**
 - **Famille** : simulation-server
-- **Endpoint** : `GET /game/scoreboard`
-- **Retour** : `list[ScoreboardEntry]` triée par score décroissant
+- **Endpoint** : `GET /game/leaderboard`
+- **Retour** : `list[ScoreboardEntry]` top 10 triée par score décroissant
 
 ## Overlay couleurs — endpoints dédiés (sans date de phase)
 
@@ -317,6 +317,67 @@ Le serveur est désormais la **seule source de vérité** pour les couleurs d'ov
 - **Avantage** : couleurs stables et cohérentes entre client et serveur
 
 All Phase 7.5 tools do not require Unity in Play Mode.
+
+## Phase 8.5 — LLM Agent Tools
+
+| Tool | HTTP call | Description |
+|------|-----------|-------------|
+| `get_agent_context` | GET /game/agent/context/{state_id} | Snapshot du contexte LLM pour un État (données État, scoreboard, événements récents, mémoire agent) |
+| `run_agent_for_state` | POST /game/agent/run/{state_id} | Déclenche un cycle LLM agent synchrone pour un État et retourne l'AgentAction résultant |
+
+### Détail des tools
+
+**`get_agent_context`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/agent/context/{state_id}`
+- **Paramètres** : `state_id: str` (UUID de l'entité État)
+- **Retour** : `{ stateData, scoreboard, recentEvents, agentMemory }`
+- **Remarque** : Utile pour inspecter ce que l'agent "voit" avant qu'il décide. Ne nécessite pas Unity en Play Mode.
+
+**`run_agent_for_state`**
+- **Famille** : simulation-server
+- **Endpoint** : `POST /game/agent/run/{state_id}`
+- **Paramètres** : `state_id: str` (UUID de l'entité État)
+- **Retour** : `AgentAction` (résultat du cycle LLM)
+- **Remarque** : Appelle le LLM — peut prendre plusieurs secondes. Ne nécessite pas Unity en Play Mode.
+
+## Phase 9.5 — Atmospheric Modification Tools
+
+| Tool | HTTP call | Description |
+|------|-----------|-------------|
+| `patch_atmosphere` | PATCH /bodies/{body_id}/atmosphere | Applique un delta additif CO₂/O₂/N₂/CH₄/H₂O à l'atmosphère d'une planète |
+
+### Détail des tools
+
+**`patch_atmosphere`**
+- **Famille** : simulation-server
+- **Endpoint** : `PATCH /bodies/{body_id}/atmosphere`
+- **Paramètres** : `body_id: str`, `gas: str` (nom du gaz), `fraction_delta: float` (delta signé)
+- **Retour** : Atmosphère mise à jour
+- **Remarque** : Le gaz doit déjà exister dans la liste des gaz du corps. fraction_delta est clampé côté serveur.
+
+## Phase 10 — Nationalization Tools
+
+| Tool | HTTP call | Description |
+|------|-----------|-------------|
+| `corrupt_nationalization` | POST /game/nationalizations/{process_id}/corrupt | Tente d'annuler un processus de nationalisation via corruption |
+| `cancel_nationalization_contract` | POST /game/nationalizations/{process_id}/cancel-contract | Annule un processus de nationalisation en rompant le contrat sous-jacent |
+
+### Détail des tools
+
+**`corrupt_nationalization`**
+- **Famille** : simulation-server
+- **Endpoint** : `POST /game/nationalizations/{process_id}/corrupt`
+- **Paramètres** : `process_id: str`, `corp_id: str`, `bribe_amount: float`
+- **Retour** : `{ success, cancelled, message }`
+- **Remarque** : Succès dépend du `corruptionRate` de l'État et du montant. Déduit `bribe_amount` des crédits de la corpo.
+
+**`cancel_nationalization_contract`**
+- **Famille** : simulation-server
+- **Endpoint** : `POST /game/nationalizations/{process_id}/cancel-contract`
+- **Paramètres** : `process_id: str`
+- **Retour** : Statut de l'annulation
+- **Remarque** : Rompt le contrat sous-jacent pour annuler le processus.
 
 La séparation des responsabilités est stable. `get_view_state` est le seul tool définitivement ancré sur le bridge Unity.
 
@@ -1266,4 +1327,79 @@ Trois tools pour piloter, inspecter et déclencher l'agent LLM qui contrôle les
 - **Paramètres** : `body_id: str`, `tile_id: str` (H3 index)
 - **Retour** : `{"species": list[SpeciesData]}` — speciesId, density, minTemp, maxTemp, minO2, maxO2, growthRate, minVegetation
 - Retourne la liste des espèces présentes sur la tuile avec leur densité de population.
+- Pas de Play Mode requis.
+
+## Phase 11.6b — Bio-marché par tuile
+
+**`get_tile_bio_market`**
+- **Famille** : simulation-server
+- **Endpoint** : `GET /game/tiles/{tile_id}/bio-market`
+- **Paramètres** : `tile_id: str` (H3 index)
+- **Retour** : `TileBioMarketState` — `tileId`, `listings[]` (resource, speciesId, abundance, abundanceHistory[8]), `tickComputed`
+- Retourne le marché biologique d'une tuile : abondance de chaque ressource produite par les espèces locales (`density × marketOutput`). Indépendant des corporations et des États.
+- `listings=[]` si aucune espèce sur la tuile (ocean vide, roche nue…).
+- 404 uniquement si `tile_id` inconnu.
+- Pas de Play Mode requis.
+- **HUD** : onglet MARCHÉ du TileInspector — affiche resource + abondance + sparkline 8 ticks (vert `rgb(80, 220, 140)`).
+
+## Debug Tools — Génération et Qualité
+
+**`debug_generation_stats`**
+- **Famille** : simulation-server (appel direct MCP → DedicatedServer, sans Unity)
+- **Endpoint** : `GET /debug/generation-stats`
+- **Paramètres** :
+  - `coherence: int` — DebugCoherenceOverride (0=None_, 1=Ocean, 2=Arid, 3=Frozen, 4=Coast, 5=Basin), défaut 4
+  - `water_level: float` — seuil mer (0.0=tout terre, 1.0=tout océan), défaut 0.71
+  - `seed: int` — graine aléatoire, défaut 1004
+  - `h3_resolution: int` — résolution H3 (0=122 tuiles, 1=842, 2=5882), défaut 2
+- **Retour** : distribution par type de terrain, stats eau/température (dry_pct, humid_pct, habitable_pct, openOceanPct, frozenPct, coastPct…). Génération purement en mémoire — jamais persisté.
+- Utilisation : itérer sur les algorithmes de génération sans lancer Unity. Exécuter avant/après toute modif de `logic.py`.
+- Pas de Play Mode requis.
+
+**`debug_noise_distribution`**
+- **Famille** : simulation-server (appel direct MCP → DedicatedServer, sans Unity)
+- **Endpoint** : `GET /debug/noise-distribution`
+- **Paramètres** :
+  - `seed: int` — graine aléatoire, défaut 1004
+  - `octave: int` — indice d'octave de bruit (0–15), défaut 10
+  - `h3_resolution: int` — résolution H3 (0=122, 1=842, 2=5882), défaut 2
+  - `buckets: int` — nombre de bins histogramme (2–50), défaut 10
+- **Retour** : histogramme de distribution + pourcentage de valeurs sous les seuils water_level courants. Utile pour détecter des biais pour une combinaison seed/octave.
+- Utilisation : diagnostiquer un preset qui réagit mal à un changement de seuil sans raison évidente.
+- Pas de Play Mode requis.
+
+**`compare_generation_profiles`**
+- **Famille** : simulation-server (appel direct MCP → DedicatedServer, sans Unity)
+- **Endpoint** : `GET /debug/generation-stats` (appelé deux fois, une fois par profil)
+- **Paramètres** :
+  - `profile_a: str` — premier profil parmi Coast, Ocean, Arid, Frozen, Basin
+  - `profile_b: str` — second profil
+  - `h3_resolution: int` — résolution H3 à tester (0–2), défaut 2
+- **Retour** : les deux lignes de résultats `resultA`/`resultB` + tableau `delta` champ par champ (dryPct, humidPct, habitablePct, openOceanPct, frozenPct, coastPct, inlandPct, basinPct, temperatureAvg…).
+- Utilisation : comparer explicitement deux presets après chaque changement serveur. Sert de garde-fou avant les smoke tests Unity.
+- Pas de Play Mode requis.
+
+**`compare_presets`**
+- **Famille** : simulation-server + Unity bridge (deux pistes)
+- **Paramètres** :
+  - `preset_a: str` — premier preset ('Ocean', 'Arid', 'Frozen', 'Coast', 'Basin')
+  - `preset_b: str` — second preset
+- **Retour** : piste 1 (`gen_compare`) = diff génération H3 via `compare_generation_profiles` ; piste 2 (`smoke_a`, `smoke_b`) = résultats smoke Unity séquentiels (launch + projection).
+- Piste 1 ne nécessite pas Unity. Piste 2 nécessite Unity en Play Mode avec le bridge `RuntimeDebugHttpServer` actif.
+- Utilisation : validation complète d'un changement de génération : d'abord la signature H3, ensuite la confirmation visuelle Unity.
+
+**`run_body_tile_checks`**
+- **Famille** : simulation-server (lit les tuiles via DedicatedServer, sans Unity)
+- **Endpoint** : `GET /bodies/{body_id}/tiles` (page=0, size=200)
+- **Paramètres** :
+  - `body_id: str` — UUID du corps sphérique (depuis `/bodies` ou tool `list_bodies`)
+  - `preset_name: str` — preset attendu : 'Ocean', 'Arid', 'Frozen', 'Coast', ou 'Basin'
+- **Retour** : terrain dominant (`dominant`), histogramme `waterClassification`, liste `checks` avec seuils par preset, flags `passed`/`failures`.
+- Seuils de validation par preset :
+  - Ocean → OpenOcean ≥ 40 %
+  - Arid → Dry ≥ 50 %
+  - Frozen → FrozenWater ≥ 5 %
+  - Coast → Coast ≥ 5 %
+  - Basin → InlandWater ≥ 5 %
+- Utilisation : vérifier après bootstrap que les corps du système solaire ont la bonne distribution de terrain pour leur preset configuré.
 - Pas de Play Mode requis.

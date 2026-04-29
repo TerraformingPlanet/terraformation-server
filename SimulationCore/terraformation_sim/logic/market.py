@@ -12,46 +12,30 @@ import h3 as _h3
 
 from ..models import (
     ClaimedTile,
+    DEFAULT_GROWTH_CONFIG,
+    GoldbergTileState,
+    GrowthConfig,
     LocalMarketState,
     PopulationTier,
     ResourceListing,
-    ResourceType,
     SocialClass,
+    ResourceId,
+    TerrainType,
+    WaterClassification,
 )
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 #: Resources that participate in the local market (Waste is excluded).
-TRADABLE_RESOURCES: list[ResourceType] = [
-    ResourceType.Minerals,
-    ResourceType.Food,
-    ResourceType.Energy,
-    ResourceType.ResearchPoints,
-    ResourceType.Iron,           # Phase 9.5
-    ResourceType.Oxygen,         # Phase 9.5
-    ResourceType.Water,          # Phase 9.5
-    ResourceType.Tech,           # Phase 9.5
-]
+# Lazy-loaded to avoid circular imports (registry → __init__ → runtime → market)
+def _get_resource_registry():
+    from ..registry import RESOURCE_REGISTRY
+    return RESOURCE_REGISTRY
 
-# Demand per person per tick, by social class and resource.
-# dict[SocialClass, dict[ResourceType, float]]
-_DEMAND_PER_PERSON: dict[SocialClass, dict[ResourceType, float]] = {
-    SocialClass.Poor: {
-        ResourceType.Food:   0.5,
-        ResourceType.Energy: 0.3,
-    },
-    SocialClass.Middle: {
-        ResourceType.Food:     1.0,
-        ResourceType.Energy:   0.8,
-        ResourceType.Minerals: 0.2,
-    },
-    SocialClass.Rich: {
-        ResourceType.Food:           1.5,
-        ResourceType.Energy:         1.5,
-        ResourceType.Minerals:       0.5,
-        ResourceType.ResearchPoints: 0.3,
-    },
-}
+def _get_tradable_resources() -> list[str]:
+    return _get_resource_registry().tradable()
+
+TRADABLE_RESOURCES: list[str] = _get_tradable_resources()
 
 _PRICE_MIN = 0.1
 _PRICE_MAX = 50.0
@@ -122,6 +106,81 @@ def init_market_listings() -> list[ResourceListing]:
     return [ResourceListing(resourceType=rt) for rt in TRADABLE_RESOURCES]
 
 
+# ── Natural population growth (tile-centric) ─────────────────────────────────
+
+# Number of ticks between growth cycles.
+# 1 tick = 1 day  →  270 ticks ≈ 9 months (human gestation period convention)
+NATURAL_GROWTH_INTERVAL: int = 270
+
+
+def apply_natural_growth(
+    tile: GoldbergTileState,
+    food_per_capita: float = 1.0,
+    config: GrowthConfig = DEFAULT_GROWTH_CONFIG,
+) -> GoldbergTileState:
+    """Apply one natural-growth cycle to a tile’s human population.
+
+    Called every NATURAL_GROWTH_INTERVAL ticks (270 = 9 months at 1 tick/day).
+    Returns an unchanged tile if there is no population or the tile is ocean/ice.
+
+    Args:
+        tile: The surface tile to update.
+        food_per_capita: [0, 1] fraction of the population’s food needs that are met.
+            0.0 = famine (max starvation); 1.0 = fully fed.
+        config: Growth parameters. Pass a custom GrowthConfig for talent-tree /
+            event overrides. Defaults to DEFAULT_GROWTH_CONFIG.
+
+    Returns:
+        A new GoldbergTileState with updated population list (model_copy pattern).
+    """
+    if not tile.population:
+        return tile
+    # Non-terrestrial tiles never have human populations
+    if tile.terrainType in (TerrainType.Eau, TerrainType.Glace):
+        return tile
+    if tile.waterClassification in (WaterClassification.OpenOcean, WaterClassification.FrozenWater):
+        return tile
+
+    food_clamp = max(0.0, min(1.0, food_per_capita))
+    net_birth = config.growthRate * config.growthMultiplier
+    net_death = (
+        config.deathRate
+        + config.starvationModifier * (1.0 - food_clamp)
+    ) * config.deathMultiplier
+
+    new_tiers: list[PopulationTier] = []
+    births_total = 0
+    for tier in tile.population:
+        if tier.count <= 0:
+            new_tiers.append(tier)
+            continue
+        deaths = max(0, round(tier.count * net_death))
+        surviving = max(0, tier.count - deaths)
+        births_total += max(0, round(tier.count * net_birth))
+        new_tiers.append(tier.model_copy(update={"count": surviving}))
+
+    # Births accumulate into the Poor tier (new arrivals are always poor)
+    if births_total > 0:
+        updated = []
+        added = False
+        for tier in new_tiers:
+            if tier.socialClass == SocialClass.Poor:
+                updated.append(tier.model_copy(update={"count": tier.count + births_total}))
+                added = True
+            else:
+                updated.append(tier)
+        if not added:
+            # No Poor tier yet — create one
+            updated.append(PopulationTier(
+                socialClass=SocialClass.Poor,
+                count=births_total,
+                avgIncome=_INCOME_DEFAULTS[SocialClass.Poor],
+            ))
+        new_tiers = updated
+
+    return tile.model_copy(update={"population": new_tiers})
+
+
 def auto_init_tile_population(tile: ClaimedTile) -> ClaimedTile:
     """If the tile has no population, seed it with 10 Poor workers.
 
@@ -138,16 +197,15 @@ def compute_population_demand(tiles: list[ClaimedTile]) -> dict[str, float]:
     """Aggregate demand across all claimed tiles, summed across social classes.
 
     Uses avgIncome as a demand multiplier per person (Phase 9.6).
-    Returns a dict keyed by ResourceType.name (e.g. "Food", "Energy").
+    Returns a dict keyed by resource_id (e.g. "Food", "Energy").
     """
     demand: dict[str, float] = {}
     for tile in tiles:
         for tier in tile.population:
-            per_person = _DEMAND_PER_PERSON.get(tier.socialClass, {})
             income_mult = tier.avgIncome if tier.avgIncome > 0.0 else 1.0
-            for resource_type, rate in per_person.items():
-                key = resource_type.name
-                demand[key] = demand.get(key, 0.0) + rate * tier.count * income_mult
+            for resource_id in TRADABLE_RESOURCES:
+                rate = _get_resource_registry().demand_for_class(tier.socialClass.name, resource_id)
+                demand[resource_id] = demand.get(resource_id, 0.0) + rate * tier.count * income_mult
     return demand
 
 
@@ -164,7 +222,7 @@ def compute_market_prices(
     """
     updated: list[ResourceListing] = []
     for listing in listings:
-        key = listing.resourceType.name
+        key = listing.resourceType
         s = max(supply.get(key, 0.0), 1e-3)
         d = demand.get(key, 0.0)
         ratio = d / s
@@ -259,10 +317,10 @@ def compute_global_market(
           - Sets priceHistory and priceVelocity to 0 (no history yet)
     """
     # Aggregate supply/demand by resource type
-    aggregates: dict[int, dict[str, float]] = {}
+    aggregates: dict[str, dict[str, float]] = {}
     
-    for resource_type in TRADABLE_RESOURCES:
-        aggregates[resource_type.value] = {
+    for resource_id in TRADABLE_RESOURCES:
+        aggregates[resource_id] = {
             "supply": 0.0,
             "demand": 0.0,
             "price_times_supply": 0.0,
@@ -272,12 +330,12 @@ def compute_global_market(
     # Iterate through all local markets
     for local in local_markets:
         for listing in local.listings:
-            rt_val = listing.resourceType.value
-            if rt_val not in aggregates:
+            resource_id = listing.resourceType
+            if resource_id not in aggregates:
                 # Skip non-tradable resources (e.g. Waste)
                 continue
             
-            agg = aggregates[rt_val]
+            agg = aggregates[resource_id]
             agg["supply"] += listing.supply
             agg["demand"] += listing.demand
             agg["price_times_supply"] += listing.price * listing.supply
@@ -285,9 +343,8 @@ def compute_global_market(
     
     # Build listings for global market
     global_listings: list[ResourceListing] = []
-    for resource_type in TRADABLE_RESOURCES:
-        rt_val = resource_type.value
-        agg = aggregates[rt_val]
+    for resource_id in TRADABLE_RESOURCES:
+        agg = aggregates[resource_id]
         
         supply = agg["supply"]
         demand = agg["demand"]
@@ -299,7 +356,7 @@ def compute_global_market(
             avg_price = 1.0
         
         listing = ResourceListing(
-            resourceType=resource_type,
+            resourceType=resource_id,
             price=avg_price,
             supply=supply,
             demand=demand,

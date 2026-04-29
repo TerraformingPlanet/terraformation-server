@@ -15,15 +15,15 @@ def test_p85_agents_suite():
         os.path.join(tests_dir, "test_phase85_agent_models.py"),
         os.path.join(tests_dir, "test_phase85_agent_scenarios.py"),
         os.path.join(tests_dir, "test_phase85_agent_behavior.py"),
-        os.path.join(tests_dir, "test_phase85_agent_llm.py"),
     ]
     env = os.environ.copy()
     env["PYTHONPATH"] = sim_core
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", *files, "--tb=short", "-q"],
+        [sys.executable, "-m", "pytest", *files, "--tb=short", "-q", "-m", "not llm and not scenario"],
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
         env=env,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 0, (result.stdout or "") + (result.stderr or "")

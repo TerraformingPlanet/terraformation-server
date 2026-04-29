@@ -65,6 +65,10 @@ class TerrainType(IntEnum):
     Eau = 3
     Vegetation = 4
     Metal = 5
+    Foret = 6
+    Desert = 7
+    Jungle = 8
+    ZoneHumide = 9
 
 
 class TerrainClass(IntEnum):
@@ -344,54 +348,104 @@ class ClaimedTile(BaseModel):
 
 # ── Buildings ─────────────────────────────────────────────────────────────────
 
-class BuildingType(IntEnum):
-    Mine        = 0
-    Farm        = 1
-    EnergyPlant = 2
-    Research    = 3
-    Road        = 4
-    SeaPort     = 5
-    Spaceport   = 6
+# Type aliases for data-driven resources and buildings
+ResourceId = str
+BuildingId = str
 
 
-class ResourceType(IntEnum):
-    Minerals       = 0
-    Food           = 1
-    Energy         = 2
-    ResearchPoints = 3
-    Waste          = 4
-    Iron           = 5      # Phase 9.5
-    Oxygen         = 6      # Phase 9.5
-    Water          = 7      # Phase 9.5
-    Tech           = 8      # Phase 9.5
+# Backward-compatible namespaces — string constants replacing former IntEnums.
+# Code can still write  BuildingType.Mine  and get "Mine".
+class BuildingType:
+    Mine        = "Mine"
+    Farm        = "Farm"
+    EnergyPlant = "EnergyPlant"
+    Research    = "Research"
+    Road        = "Road"
+    SeaPort     = "SeaPort"
+    Spaceport   = "Spaceport"
+
+    _all = ["Mine", "Farm", "EnergyPlant", "Research", "Road", "SeaPort", "Spaceport"]
+
+    def __iter__(self):
+        return iter(self._all)
+
+    def __class_getitem__(cls, item):
+        return cls._all[item]
+
+    @classmethod
+    def __iter_cls__(cls):
+        return iter(cls._all)
 
 
-# Production par tick pour chaque type de bâtiment (ResourceType → delta par tick)
-BUILDING_CONFIGS: dict[BuildingType, dict[ResourceType, float]] = {
-    BuildingType.Mine:        {ResourceType.Minerals: 2.0, ResourceType.Waste: 0.5},
-    BuildingType.Farm:        {ResourceType.Food: 3.0},
-    BuildingType.EnergyPlant: {ResourceType.Energy: 5.0, ResourceType.Waste: 1.0},
-    BuildingType.Research:    {ResourceType.Energy: -1.0, ResourceType.ResearchPoints: 1.0},
-    BuildingType.Road:        {},   # Phase 9.1 — infrastructure, no production
-    BuildingType.SeaPort:     {},   # Phase 9.1
-    BuildingType.Spaceport:   {},   # Phase 9.1
+# Make BuildingType iterable at class level (for `for bt in BuildingType:`)
+BuildingType.__iter__ = lambda self: iter(BuildingType._all)
+BuildingType.__class_iter__ = classmethod(lambda cls: iter(cls._all))
+# Patch the class to be iterable
+_orig_bt = BuildingType
+class BuildingType(_orig_bt):
+    def __init_subclass__(cls, **kwargs):
+        pass
+import builtins as _builtins
+_builtins_iter = _builtins.iter
+# Simple approach: make class iterable via metaclass trick
+class _IterableMeta(type):
+    def __iter__(cls):
+        return iter(cls._all)
+    def __contains__(cls, item):
+        return item in cls._all
+
+class BuildingType(metaclass=_IterableMeta):
+    Mine        = "Mine"
+    Farm        = "Farm"
+    EnergyPlant = "EnergyPlant"
+    Research    = "Research"
+    Road        = "Road"
+    SeaPort     = "SeaPort"
+    Spaceport   = "Spaceport"
+    _all        = ["Mine", "Farm", "EnergyPlant", "Research", "Road", "SeaPort", "Spaceport"]
+
+
+class ResourceType:
+    Minerals       = "Minerals"
+    Food           = "Food"
+    Energy         = "Energy"
+    ResearchPoints = "ResearchPoints"
+    Waste          = "Waste"
+    Iron           = "Iron"
+    Oxygen         = "Oxygen"
+    Water          = "Water"
+    Tech           = "Tech"
+    Wood           = "Wood"
+    Meat           = "Meat"
+    Biomass        = "Biomass"
+
+
+# Backward-compatible config dicts (now superseded by registry.py, kept for tests).
+# Keys are BuildingId strings matching BuildingType constants.
+BUILDING_CONFIGS: dict[str, dict[str, float]] = {
+    "Mine":        {"Minerals": 10.0, "Iron": 5.0},
+    "Farm":        {"Food": 15.0, "Wood": 2.0},
+    "EnergyPlant": {"Energy": 20.0},
+    "Research":    {"ResearchPoints": 8.0},
+    "Road":        {},
+    "SeaPort":     {},
+    "Spaceport":   {},
 }
 
-# Workers required per social class, per building type (Phase 9.6)
-EMPLOYMENT_CONFIGS: dict[BuildingType, dict[str, int]] = {
-    BuildingType.Mine:        {"Poor": 50, "Middle": 10},
-    BuildingType.Farm:        {"Poor": 30, "Middle": 5},
-    BuildingType.EnergyPlant: {"Middle": 20, "Rich": 5},
-    BuildingType.Research:    {"Middle": 10, "Rich": 15},
-    BuildingType.Road:        {},
-    BuildingType.SeaPort:     {},
-    BuildingType.Spaceport:   {},
+EMPLOYMENT_CONFIGS: dict[str, dict[str, int]] = {
+    "Mine":        {"Poor": 10, "Middle": 3},
+    "Farm":        {"Poor": 8, "Middle": 2},
+    "EnergyPlant": {"Middle": 5, "Rich": 1},
+    "Research":    {"Middle": 4, "Rich": 2},
+    "Road":        {},
+    "SeaPort":     {"Poor": 6, "Middle": 4},
+    "Spaceport":   {"Middle": 8, "Rich": 4},
 }
 
 
 class BuildingData(BaseModel):
     id: str = ""
-    buildingType: BuildingType = BuildingType.Mine
+    buildingType: BuildingId = "Mine"
     tileId: str = ""
     bodyId: str = ""
     corpId: str = ""
@@ -399,6 +453,40 @@ class BuildingData(BaseModel):
     ticksActive: int = 0
     employmentSlots: dict[str, int] = Field(default_factory=dict)  # Phase 9.6 — keys = SocialClass.name
     level: int = 1  # Phase 12 — building level [1–5]: production × level, workers required × level
+    subHexIndex: int = -1  # sub-hex slot occupied inside the tile (-1 = legacy/unassigned)
+
+
+# ── Sub-hex building slots (Phase slot-v1) ───────────────────────────────────
+
+# Default feature IDs — stable integers, extended via DB table `sub_hex_features`
+SUBHEX_FEATURE_EMPTY       = 0
+SUBHEX_FEATURE_RIVER       = 1
+SUBHEX_FEATURE_FOREST      = 2
+SUBHEX_FEATURE_MINERAL     = 3
+SUBHEX_FEATURE_WATER_SOURCE = 4
+SUBHEX_FEATURE_RESIDENTIAL = 5
+
+
+class SubHexFeatureDef(BaseModel):
+    """Definition of an environmental feature assignable to a sub-hex slot.
+
+    Stored in DB table `sub_hex_features`; the 6 built-in rows are seeded at bootstrap.
+    New features can be added via POST /game/sub-hex-features without code changes.
+    """
+    id: int                                     # stable integer ID
+    name: str                                   # code name, e.g. "River"
+    labelFr: str = ""                           # display label in French
+    description: str = ""
+    bonusBuildingTypes: list[str] = Field(default_factory=list)  # building types that benefit
+    isEnabled: bool = True
+
+
+class SubHex(BaseModel):
+    """One of the 7 sub-hexagons inside a GoldbergTileState (index 0=centre, 1-6=ring)."""
+    index: int = 0
+    feature: int = SUBHEX_FEATURE_EMPTY        # references SubHexFeatureDef.id
+    buildable: bool = True
+    buildingId: str = ""   # "" = empty; ConstructionItem.id during build; BuildingData.id when done
 
 
 # ── Construction queue (Phase 10.5) ──────────────────────────────────────────
@@ -411,14 +499,15 @@ class ConstructionStatus(IntEnum):
 
 class ConstructionItem(BaseModel):
     id: str = ""                            # UUID
-    buildingType: BuildingType = BuildingType.Mine
+    buildingType: BuildingId = "Mine"
     tileId: str = ""
     bodyId: str = ""
     corpId: str = ""
     status: ConstructionStatus = ConstructionStatus.Pending
     ticksRemaining: int = 0                 # decremented each tick by constructionPts applied
     totalCostPts: int = 0                   # total construction points needed
-    pointsAccumulated: int = 0              # accumulated so far
+    pointsAccumulated: int = 0             # accumulated so far
+    subHexIndex: int = -1                  # -1 = auto-assigned / legacy
 
 
 class TerritoryQueue(BaseModel):
@@ -432,20 +521,21 @@ class TerritoryQueue(BaseModel):
 
 
 # Building cost in construction points (Phase 10.5)
-BUILDING_CONSTRUCTION_COST: dict[BuildingType, int] = {
-    BuildingType.Mine:        50,
-    BuildingType.Farm:        40,
-    BuildingType.EnergyPlant: 90,
-    BuildingType.Research:    90,
-    BuildingType.Road:        20,
-    BuildingType.SeaPort:     120,
-    BuildingType.Spaceport:   240,
+BUILDING_CONSTRUCTION_COST: dict[BuildingId, int] = {
+    "Mine":        50,
+    "Farm":        40,
+    "EnergyPlant": 90,
+    "Research":    90,
+    "Road":        20,
+    "SeaPort":     120,
+    "Spaceport":   240,
+    "Sawmill":     45,
 }
 
 # Construction points produced per tick by an EB (formal vs de fortune)
 EB_FORMAL_CAPACITY:   float = 30.0
 EB_FORTUNE_CAPACITY:  float = 10.0
-EB_FORTUNE_WOOD_COST: float = 2.0   # Wood units consumed per tick by EB de fortune
+EB_FORTUNE_POP_THRESHOLD: int = 100  # tile population required for an EB de fortune (no Wood cost)
 
 
 # ── Bot Corporations FSM (Phase 11.2) ───────────────────────────────────────
@@ -487,12 +577,13 @@ class CorporationData(BaseModel):
     colorR: float = 0.0
     colorG: float = 0.0
     colorB: float = 0.0
+    ownerId: str = ""    # playerId of the human player who owns this corp (empty for AI)
 
 
 # ── Market layer (Phase 7.3) ──────────────────────────────────────────────────
 
 class ResourceListing(BaseModel):
-    resourceType: ResourceType = ResourceType.Food
+    resourceType: ResourceId = "Food"
     price: float = 1.0
     supply: float = 0.0
     demand: float = 0.0
@@ -516,6 +607,39 @@ class GlobalMarketState(BaseModel):
     listings: list[ResourceListing] = Field(default_factory=list)   # Aggregated across all local markets
     tick: int = 0                                                    # tick when computed
     marketCount: int = 0                                             # number of local markets aggregated
+
+
+class EcoStockListing(BaseModel):
+    """Phase 11.6 — Eco-market listing for a single species traded on the eco-market."""
+    speciesId: str = ""
+    resource: str = ""                                              # primary tradable resource key
+    totalStock: float = 0.0                                         # sum of density across all tiles
+    maxStock: int = 0                                               # number of tiles with this species
+    renewalRate: float = 0.0                                        # growth this tick across all tiles
+    extractionRate: float = 0.0                                     # total extracted this tick
+    price: float = 1.0                                              # computed market price
+
+
+class EcoMarketState(BaseModel):
+    """Phase 11.6 — Eco-market state for a single body."""
+    bodyId: str = ""
+    listings: list[EcoStockListing] = Field(default_factory=list)
+    tickComputed: int = 0
+
+
+class TileBioListing(BaseModel):
+    """Phase 11.6 — Bio-market listing for a single resource on a tile."""
+    resource: str = ""
+    speciesId: str = ""
+    abundance: float = 0.0
+    abundanceHistory: list[float] = Field(default_factory=list)
+
+
+class TileBioMarketState(BaseModel):
+    """Phase 11.6 — Bio-market state for a single tile."""
+    tileId: str = ""
+    listings: list[TileBioListing] = Field(default_factory=list)
+    tickComputed: int = 0
 
 
 # ── Contract layer (Phase 7.4) ────────────────────────────────────────────────
@@ -543,7 +667,7 @@ class ContractData(BaseModel):
     acceptorId: str = ""        # filled when accepted / bidder confirmed
     candidates: list[str] = Field(default_factory=list)  # corp IDs who bid (Public)
     # Delivery
-    resourceType: ResourceType = ResourceType.Food
+    resourceType: ResourceId = "Food"
     resourceAmount: float = 0.0
     deliveredAmount: float = 0.0
     # Finance
@@ -580,6 +704,25 @@ class PopDistribution(BaseModel):
     rich: float = 0.01
 
 
+class GrowthConfig(BaseModel):
+    """Parameters controlling natural population growth for one tile/territory.
+    All rates are applied once every NATURAL_GROWTH_INTERVAL ticks (= 270 ticks ≈ 9 months
+    at 1 tick = 1 day).
+
+    Talent tree / event overrides: pass a GrowthConfig instance with custom multipliers.
+    DEFAULT_GROWTH_CONFIG is used when no override is specified.
+    """
+    growthRate:          float = 0.00049   # births per person per 270-tick cycle (≈18‰/yr)
+    deathRate:           float = 0.00022   # natural deaths per person per cycle (≈8‰/yr)
+    starvationModifier:  float = 0.002     # extra death rate when food_per_capita = 0
+    # Talent-tree / tech-tree multiplicative hooks (1.0 = no bonus)
+    growthMultiplier:    float = 1.0       # e.g. +20% natality via Medical tech
+    deathMultiplier:     float = 1.0       # e.g. -10% mortality via Healthcare talent
+
+
+DEFAULT_GROWTH_CONFIG: GrowthConfig  # forward ref — assigned after class definition
+
+
 class StateProfile(BaseModel):
     """Preset values for a StateData at bootstrap time.
     Using a named profile speeds up world generation and makes balance tweaks
@@ -614,6 +757,9 @@ STATE_PROFILES: dict[str, StateProfile] = {
         literacyRate=0.65, taxRate=0.45, corruptionRate=0.50, bureaucracy=0.80,
     ),
 }
+
+# Singleton default — override per territory/event/talent by passing a custom GrowthConfig
+DEFAULT_GROWTH_CONFIG = GrowthConfig()
 
 
 # ── Territory layer (Phase Colonisation) ──────────────────────────────────────
@@ -866,9 +1012,14 @@ class SpeciesData(BaseModel):
     density: float = 0.0           # current population density [0, 1]
     minTemp: float = 0.0           # minimum viable temperature (°C)
     maxTemp: float = 50.0          # maximum viable temperature (°C)
+    nominalTempMin: float = 10.0   # lower bound of optimal temperature range (°C)
+    nominalTempMax: float = 30.0   # upper bound of optimal temperature range (°C)
     minO2: float = 0.0             # minimum viable O₂ fraction [0, 1]
     maxO2: float = 1.0             # maximum viable O₂ fraction [0, 1]
-    growthRate: float = 0.01       # density increase per tick when conditions met
+    nominalO2Min: float = 0.15     # lower bound of optimal O₂ range [0, 1]
+    nominalO2Max: float = 0.30     # upper bound of optimal O₂ range [0, 1]
+    growthRate: float = 0.01       # density increase per tick when conditions met (legacy)
+    growthRateAnnual: float = 3.65 # annual growth rate; per-tick = growthRateAnnual / 365.0
     marketOutput: dict[str, float] = Field(default_factory=dict)  # resource → per-tick base output
     minVegetation: float = 0.0     # required vegetation coverage (for animals)
 
@@ -908,9 +1059,61 @@ class GoldbergTileState(BaseModel):
     altitude: float = 0.0           # normalised height relative to sea level [-1, 1]
     albedo: float = 0.15            # surface albedo [0, 1]
     solarIrradiance: float = 0.0    # W/m² at tile surface
+    humidity: float = 0.0           # atmospheric humidity noise [0, 1] — generation-time only
     species: list[SpeciesData] = Field(default_factory=list)  # active species populations
     atmosphereDeltaCo2: float = 0.0 # CO₂ volume fraction delta per tick (from buildings/plants)
     atmosphereDeltaO2: float = 0.0  # O₂ volume fraction delta per tick
+    # ── Runtime biome parameters (mutate each tick / biome transition) ──
+    vegetationLevel: float = 0.0    # cumulative vegetation coverage [0, ∞]
+    treeCount: float = 0.0          # tree density [0, ∞] — Foret threshold ≈ 2000
+    hasRiver: bool = False          # river flowing through this tile
+    hasLake: bool = False           # standing water body / lake present
+    # ── Hydrological source & river (p-hydro-1 / p-hydro-2 / p-hydro-3) ────
+    hasWaterSource: bool = False         # natural spring present (fixed at generation)
+    sourceCapacity: float | None = None  # spring output rate m³/tick
+    riverFlow: float | None = None       # current flow rate through this tile m³/tick
+    riverDirection: str | None = None    # tileId of the downhill neighbour (generation-time)
+    riverSourceTileId: str | None = None # tileId of the originating spring (traceability)
+    lakeVolume: float | None = None      # water volume accumulated in basin m³
+    lakeCapacity: float | None = None    # overflow threshold m³
+    # ── Human population (tile-centric, Phase pop-growth) ──────────────────
+    population: list["PopulationTier"] = Field(default_factory=list)  # empty = uninhabited
+    # ── Sub-hex building grid (Phase slot-v1) ────────────────────────────────
+    subHexes: list["SubHex"] = Field(default_factory=list)  # empty = lazy-init on first access
+
+
+# ---------------------------------------------------------------------------
+# Biome transition rules (catalog — loaded from DB at startup)
+# ---------------------------------------------------------------------------
+
+class BiomeTransitionRule(BaseModel):
+    """One entry in the biome transition graph.
+    A tile whose terrainType is in `from_terrain_types` (empty = any) and whose
+    runtime parameters satisfy ALL non-None conditions will transition to
+    `target_terrain_type`.  When multiple rules match the rule with the highest
+    `priority` wins."""
+    rule_id: int
+    name: str = ""
+    target_terrain_type: TerrainType
+    from_terrain_types: list[TerrainType] = Field(default_factory=list)  # empty = any source
+    priority: int = 10
+    is_enabled: bool = True
+    # ── Conditions (None = not checked) ────────────────────────────────
+    temperature_min: float | None = None
+    temperature_max: float | None = None
+    humidity_min: float | None = None
+    humidity_max: float | None = None
+    vegetation_min: float | None = None
+    vegetation_max: float | None = None
+    tree_count_min: float | None = None
+    tree_count_max: float | None = None
+    has_river: bool | None = None   # None=ignore, True=required, False=must be absent
+    has_lake: bool | None = None
+    water_ratio_min: float | None = None
+    water_ratio_max: float | None = None
+    toxin_min: float | None = None
+    toxin_max: float | None = None
+    description: str = ""
 
 
 # Ticks required to travel 1 light-year along a stellar route (baseline, modifier=1.0)
@@ -1167,6 +1370,9 @@ class EventType(IntEnum):
     MigrationPopulation     = 6
     DecouverteMegastructure = 7
     EmpireGalactique        = 8
+    Piraterie               = 9
+    Panne                   = 10
+    Decouverte              = 11
 
 
 class EventEffect(BaseModel):

@@ -192,12 +192,32 @@ def _update_metadata(phase: PhaseRecord) -> None:
         )
 
 
-def seed_phases(phases: list[PhaseRecord], update_metadata: bool = False) -> tuple[int, int]:
-    """Insert new phases. With update_metadata=True, also refreshes metadata for existing ones (preserves status/completed_date). Returns (inserted_or_updated, skipped)."""
+def seed_phases(
+    phases: list[PhaseRecord],
+    update_metadata: bool = False,
+    restore: bool = False,
+) -> tuple[int, int]:
+    """Insert new phases.
+
+    - update_metadata=True  : refresh metadata for existing phases without touching status/completed_date.
+    - restore=True          : full upsert including status/completed_date (disaster-recovery only).
+    - Default (both False)  : DB is source of truth — new phases inserted as 'not-started',
+                              existing phases untouched.
+
+    Returns (inserted_or_updated, skipped).
+    """
     inserted = skipped = 0
     for phase in phases:
         existing = get_phase(phase.id)
         if existing is None:
+            if restore:
+                upsert_phase(phase)
+            else:
+                # DB is source of truth: new phases always start as not-started
+                seed_record = phase.model_copy(update={"status": "not-started", "completed_date": None})
+                upsert_phase(seed_record)
+            inserted += 1
+        elif restore:
             upsert_phase(phase)
             inserted += 1
         elif update_metadata:

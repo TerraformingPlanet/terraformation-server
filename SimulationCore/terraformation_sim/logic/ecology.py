@@ -23,17 +23,34 @@ def compute_species_growth(
 ) -> SpeciesData:
     """Return a new SpeciesData with density advanced by one tick.
 
-    Growth occurs when all conditions are met; decline (×2 rate) when outside tolerances.
+    3-tier growth model (1 tick = 1 day):
+    - Nominal zone  → full growth rate (×1.0)
+    - Viable zone   → stressed growth  (×0.2)
+    - Outside viable → decline         (×2.0 per tick, negative)
     """
+    per_tick = sp.growthRateAnnual / 365.0
+
     viable = (
         sp.minTemp <= temperature <= sp.maxTemp
         and sp.minO2 <= o2_ratio <= sp.maxO2
         and vegetation_cover >= sp.minVegetation
     )
-    if viable:
-        new_density = min(1.0, sp.density + sp.growthRate * (1.0 - sp.density))
+    in_nominal = (
+        sp.nominalTempMin <= temperature <= sp.nominalTempMax
+        and sp.nominalO2Min <= o2_ratio <= sp.nominalO2Max
+        and vegetation_cover >= sp.minVegetation
+    )
+
+    if in_nominal:
+        # Full growth — logistic saturation
+        new_density = min(1.0, sp.density + per_tick * (1.0 - sp.density))
+    elif viable:
+        # Stressed growth — 20% of nominal rate
+        new_density = min(1.0, sp.density + per_tick * 0.2 * (1.0 - sp.density))
     else:
-        new_density = max(0.0, sp.density - sp.growthRate * 2.0)
+        # Decline — 2× the per-tick rate
+        new_density = max(0.0, sp.density - per_tick * 2.0)
+
     return sp.model_copy(update={"density": new_density})
 
 
@@ -64,6 +81,26 @@ def aggregate_ecology_output(tiles: list[GoldbergTileState]) -> dict[str, float]
     return totals
 
 
+def compute_terrain_transition(
+    tile: GoldbergTileState,
+    new_species: list[SpeciesData],
+) -> TerrainType:
+    """Return the new TerrainType after ecology growth, handling Vegetation↔Forêt transition.
+
+    Thresholds (forest density):
+    - Vegetation → Forêt  : forest density ≥ 0.65 (mature canopy established)
+    - Forêt → Vegetation  : forest density < 0.15 (forest collapsed)
+    """
+    forest_density = next(
+        (sp.density for sp in new_species if sp.speciesId == "forest"), 0.0
+    )
+    if tile.terrainType == TerrainType.Vegetation and forest_density >= 0.65:
+        return TerrainType.Foret
+    if tile.terrainType == TerrainType.Foret and forest_density < 0.15:
+        return TerrainType.Vegetation
+    return tile.terrainType
+
+
 def seed_species_for_tile(
     terrain_type: TerrainType,
     water_classification: WaterClassification,
@@ -75,14 +112,22 @@ def seed_species_for_tile(
     """
     if terrain_type == TerrainType.Vegetation:
         candidates = ["grass", "forest", "insect", "herbivore"]
+    elif terrain_type == TerrainType.Foret:
+        # Forest tiles: denser forest species + full ecosystem
+        candidates = ["forest", "grass", "insect", "herbivore"]
     elif terrain_type == TerrainType.Eau:
-        candidates = ["algae"]
+        candidates = ["algae", "fish"]
     elif terrain_type == TerrainType.Glace:
         candidates = ["cyanobacteria"]
     else:
         return []
+    # Foret tiles start with higher forest density (0.5 vs 0.1 for others)
+    def _initial_density(sid: str) -> float:
+        if terrain_type == TerrainType.Foret and sid == "forest":
+            return 0.5
+        return 0.1
     return [
-        SPECIES_REGISTRY[sid].model_copy(update={"density": 0.1})
+        SPECIES_REGISTRY[sid].model_copy(update={"density": _initial_density(sid)})
         for sid in candidates
         if sid in SPECIES_REGISTRY
     ]

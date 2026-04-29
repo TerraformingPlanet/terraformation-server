@@ -30,6 +30,7 @@ from .simulation import (
 )
 from .generation import (
     _body_h3_resolution,
+    _hydrate_tiles_from_db,
     GENERATION_VERSION,
     generate_spherical_tiles,
     is_tile_habitable,
@@ -48,6 +49,23 @@ from .colonization import (
     tile_population_factor,
     TERRAIN_POP_MULTIPLIERS,
     WATER_POP_MULTIPLIERS,
+)
+from .rivers import (
+    activate_sources,
+    fill_lake_step,
+    propagate_river_step,
+    propagation_delay_ticks,
+)
+from .market import (
+    apply_natural_growth,
+    NATURAL_GROWTH_INTERVAL,
+)
+from .subhex import (
+    init_sub_hexes,
+    find_free_slot,
+    free_slot_count,
+    occupied_slot_count,
+    SLOT_RANGES,
 )
 
 __all__ = [
@@ -73,6 +91,7 @@ __all__ = [
     "terraform_action_definitions",
     # generation
     "_body_h3_resolution",
+    "_hydrate_tiles_from_db",
     "GENERATION_VERSION",
     "generate_spherical_tiles",
     "is_tile_habitable",
@@ -89,4 +108,18 @@ __all__ = [
     "tile_population_factor",
     "TERRAIN_POP_MULTIPLIERS",
     "WATER_POP_MULTIPLIERS",
+    # rivers
+    "activate_sources",
+    "fill_lake_step",
+    "propagate_river_step",
+    "propagation_delay_ticks",
+    # natural growth
+    "apply_natural_growth",
+    "NATURAL_GROWTH_INTERVAL",
+    # sub-hex slots
+    "init_sub_hexes",
+    "find_free_slot",
+    "free_slot_count",
+    "occupied_slot_count",
+    "SLOT_RANGES",
 ]

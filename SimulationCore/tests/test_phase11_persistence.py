@@ -125,6 +125,7 @@ def test_T03_bootstrap_calls_clear_cell_mutations():
 
     # Pre-populate to verify wipe
     rt._region_mutations = {"0.470,0.180": {(1, 1): (0.5, 0.5)}}
+    mock_repo.reset_mock()  # reset call counts from initial bootstrap
 
     rt.bootstrap()
 

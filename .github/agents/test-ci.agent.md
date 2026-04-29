@@ -96,7 +96,7 @@ python DedicatedServer/app/compare_generation_runs.py \
 
 1. Copier `SimulationCore/tests/assertions/_template.py` → `test_<phase_id_underscored>.py`
 2. Implémenter les assertions correspondant aux critères de sortie de la phase
-3. Lier via `assertion_script` dans la phase Roadmap (`roadmap.json` + `ROADMAP.md`)
+3. Lier via `roadmap_add_phase` ou `roadmap_update_phase` dans le Roadmap Service (`http://localhost:8001`) — champ `assertion_script`
 4. Vérifier `roadmap_test_all()` avant de marquer la phase comme complète
 
 ## Règles

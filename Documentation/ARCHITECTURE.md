@@ -86,6 +86,8 @@ Le client Unity commence aussi à être repositionné comme **adaptateur de snap
 - `tickCount` persisté toutes les 10 ticks
 - Au redémarrage du container, l'état est rechargé depuis PostgreSQL via `_hydrate_from_saved()`
 - Mode `in-memory` disponible via `SERVER_MODE=in-memory` (zéro base de données, backward-compatible)
+- **Évolution du schéma en dev** : wipe DB + `bootstrap_sol()` suffit — pas de scripts de migration SQL nécessaires en développement. Les `ALTER TABLE ADD COLUMN IF NOT EXISTS` dans `_ensure_schema()` sont conservés pour la prod/staging uniquement.
+- `population_json` (JSON sérialisé) est persisté dans la table `tiles` — hydraté au démarrage via `_hydrate_tiles_from_db()`, re-sauvegardé après bootstrap colonisation (`runtime_bootstrap.py`)
 
 ### Pas de WebGL
 - WebGL interdit les sockets IP directs → incompatible avec Mirror Networking sans transport custom
@@ -334,6 +336,8 @@ La barre de progression TERRAFORMATION est embarquée **inline** dans `TopBarCon
 ## Architecture Réseau (WebSocket FastAPI)
 
 > **Décision [2026-04-21]** : Mirror Networking remplacé par WebSocket FastAPI natif (`GET /game/ws/events?token=<JWT>`) + JWT maison (python-jose HS256, passlib bcrypt, table `players` PostgreSQL). Client Unity utilise NativeWebSocket (OpenUPM `com.endel.nativewebsocket`). Le tick serveur push `{"type":"tick_advanced","tick":N}` à tous les clients connectés. Firebase exclu (contrainte architecture existante).
+
+> **Contrainte implémentation [2026-04-28]** : `ws_broadcast()` est appelé depuis le **thread tick (synchrone)**. `WebSocket.send_text()` étant une coroutine async, le bridge se fait via `asyncio.run_coroutine_threadsafe(ws.send_text(msg), _main_event_loop)` où `_main_event_loop` est capturé au `@app.on_event("startup")`. À la connexion, le tick courant est envoyé immédiatement pour synchroniser la date chez tous les clients.
 
 ```
 [Client A]──┐

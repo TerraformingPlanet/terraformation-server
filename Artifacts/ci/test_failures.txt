@@ -1,0 +1,102 @@
+﻿........................................................................ [ 20%]
+........................................................................ [ 40%]
+........................................................................ [ 61%]
+.............F.F.FF.FFsssssFF........................................... [ 81%]
+.................................................................        [100%]
+================================== FAILURES ===================================
+__________________ test_s1_high_dominance_nationalist_reacts __________________
+SimulationCore\tests\test_phase85_agent_behavior.py:98: in test_s1_high_dominance_nationalist_reacts
+    assert action.actionType != AgentActionType.NoOp, (
+E   AssertionError: Nationalist state under 90% corp dominance should NOT return NoOp.
+E     Got: <AgentActionType.NoOp: 0>
+E     Reasoning: ''
+E   assert <AgentActionType.NoOp: 0> != <AgentActionType.NoOp: 0>
+E    +  where <AgentActionType.NoOp: 0> = AgentAction(entityId='state-s1', actionType=<AgentActionType.NoOp: 0>, params={}, reasoning='').actionType
+E    +  and   <AgentActionType.NoOp: 0> = AgentActionType.NoOp
+------------------------------ Captured log call ------------------------------
+ERROR    terraformation_sim.logic.agent:agent.py:494 run_agent LLM call failed for state state-s1: Client error '429 Too Many Requests' for url 'http://192.168.5.213:41200/v1/chat/completions'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429
+______________ test_s3_recent_broken_contracts_triggers_response ______________
+SimulationCore\tests\test_phase85_agent_behavior.py:187: in test_s3_recent_broken_contracts_triggers_response
+    assert action.actionType != AgentActionType.NoOp, (
+E   AssertionError: 3 recent broken contracts should trigger a response, not NoOp.
+E     Action: <AgentActionType.NoOp: 0>
+E     Reasoning: ''
+E   assert <AgentActionType.NoOp: 0> != <AgentActionType.NoOp: 0>
+E    +  where <AgentActionType.NoOp: 0> = AgentAction(entityId='state-s3', actionType=<AgentActionType.NoOp: 0>, params={}, reasoning='').actionType
+E    +  and   <AgentActionType.NoOp: 0> = AgentActionType.NoOp
+------------------------------ Captured log call ------------------------------
+ERROR    terraformation_sim.logic.agent:agent.py:494 run_agent LLM call failed for state state-s3: Client error '429 Too Many Requests' for url 'http://192.168.5.213:41200/v1/chat/completions'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429
+______________________ test_bench_json_parse[Gemma4-A4B] ______________________
+SimulationCore\tests\test_phase85_agent_benchmark.py:119: in test_bench_json_parse
+    assert passed, f"[{benchmark_model['_name']}] json_parse failed ù {detail}"
+E   AssertionError: [Gemma4-A4B] json_parse failed ù Client error '429 Too Many Requests' for url 'http://192.168.5.213:41200/v1/chat
+E   assert False
+----------------------------- Captured log setup ------------------------------
+WARNING  conftest.warmup:conftest.py:214 Warm-up 'Gemma4-A4B' failed after 0.2s: Client error '429 Too Many Requests' for url 'http://192.168.5.213:41200/v1/chat/completions'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429
+______________________ test_bench_tools_call[Gemma4-A4B] ______________________
+SimulationCore\tests\test_phase85_agent_benchmark.py:159: in test_bench_tools_call
+    assert passed, f"[{benchmark_model['_name']}] tools_call failed ù {detail}"
+E   AssertionError: [Gemma4-A4B] tools_call failed ù Client error '429 Too Many Requests' for url 'http://192.168.5.213:41200/v1/chat
+E   assert False
+__________________ test_bench_nationalist_react[Gemma4-A4B] ___________________
+SimulationCore\tests\test_phase85_agent_benchmark.py:229: in test_bench_nationalist_react
+    assert passed, f"[{benchmark_model['_name']}] nationalist_react: should NOT return NoOp ù {detail}"
+E   AssertionError: [Gemma4-A4B] nationalist_react: should NOT return NoOp ù action=NoOp, reasoning=''
+E   assert False
+------------------------------ Captured log call ------------------------------
+ERROR    terraformation_sim.logic.agent:agent.py:494 run_agent LLM call failed for state bench-nationalist: Client error '429 Too Many Requests' for url 'http://192.168.5.213:41200/v1/chat/completions'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429
+__________________ test_bench_capitalist_crisis[Gemma4-A4B] ___________________
+SimulationCore\tests\test_phase85_agent_benchmark.py:260: in test_bench_capitalist_crisis
+    assert passed, f"[{benchmark_model['_name']}] capitalist_crisis: expected ProposeContract/SetTolerance ù {detail}"
+E   AssertionError: [Gemma4-A4B] capitalist_crisis: expected ProposeContract/SetTolerance ù action=NoOp, reasoning=''
+E   assert False
+------------------------------ Captured log call ------------------------------
+ERROR    terraformation_sim.logic.agent:agent.py:494 run_agent LLM call failed for state bench-crisis: Client error '429 Too Many Requests' for url 'http://192.168.5.213:41200/v1/chat/completions'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429
+__________________ test_call_llm_json_returns_parseable_dict __________________
+SimulationCore\tests\test_phase85_agent_llm.py:86: in test_call_llm_json_returns_parseable_dict
+    result = call_llm_json(messages,
+SimulationCore\terraformation_sim\logic\agent.py:255: in call_llm_json
+    resp.raise_for_status()
+.venv-1\Lib\site-packages\httpx\_models.py:829: in raise_for_status
+    raise HTTPStatusError(message, request=request, response=self)
+E   httpx.HTTPStatusError: Client error '429 Too Many Requests' for url 'http://192.168.5.213:41200/v1/chat/completions'
+E   For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429
+_________________ test_call_llm_tools_returns_valid_tool_name _________________
+SimulationCore\tests\test_phase85_agent_llm.py:99: in test_call_llm_tools_returns_valid_tool_name
+    result = call_llm_tools(messages, AGENT_TOOLS_SCHEMA,
+SimulationCore\terraformation_sim\logic\agent.py:290: in call_llm_tools
+    resp.raise_for_status()
+.venv-1\Lib\site-packages\httpx\_models.py:829: in raise_for_status
+    raise HTTPStatusError(message, request=request, response=self)
+E   httpx.HTTPStatusError: Client error '429 Too Many Requests' for url 'http://192.168.5.213:41200/v1/chat/completions'
+E   For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429
+============================== warnings summary ===============================
+SimulationCore/tests/test_phase85_agent_scenarios.py::test_scenario_nationalist_under_pressure
+  E:\terraformation\SimulationCore\tests\test_phase85_agent_scenarios.py:230: UserWarning: [soft] Nationalist agent returned NoOp despite 90% corporate dominance. Reasoning: 'The state is currently stable with no corporate dominance or tolerance breaches detected.'. Consider retrying with a more capable model.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+====================== LLM Benchmark ù Comparison Table =======================
+ScÚnario            Gemma4-A4B 
+-------------------------------
+json_parse            \u274c 0.1s   
+tools_call            \u274c 0.2s   
+stable_noop           \u2705 0.2s   
+nationalist_react     \u274c 0.2s   
+capitalist_crisis     \u274c 0.2s   
+--------------------------------------  ---------------------------------------
+=========================== short test summary info ===========================
+FAILED SimulationCore/tests/test_phase85_agent_behavior.py::test_s1_high_dominance_nationalist_reacts
+FAILED SimulationCore/tests/test_phase85_agent_behavior.py::test_s3_recent_broken_contracts_triggers_response
+FAILED SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_json_parse[Gemma4-A4B]
+FAILED SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_tools_call[Gemma4-A4B]
+FAILED SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_nationalist_react[Gemma4-A4B]
+FAILED SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_capitalist_crisis[Gemma4-A4B]
+FAILED SimulationCore/tests/test_phase85_agent_llm.py::test_call_llm_json_returns_parseable_dict
+FAILED SimulationCore/tests/test_phase85_agent_llm.py::test_call_llm_tools_returns_valid_tool_name
+8 failed, 340 passed, 5 skipped, 1 warning in 266.77s (0:04:26)

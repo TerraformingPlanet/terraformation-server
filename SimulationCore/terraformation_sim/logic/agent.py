@@ -17,9 +17,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
+import time
 from typing import Any
 
 import httpx
+
+# ── LLM concurrency throttle ──────────────────────────────────────────────────
+# Prevents 429 when multiple agent threads fire simultaneously against a
+# single-slot local LLM server (llama.cpp / Ollama).  Set LLM_CONCURRENCY > 1
+# only when your LLM backend supports parallel inference.
+_LLM_SEMAPHORE = threading.Semaphore(int(os.environ.get("LLM_CONCURRENCY", "1")))
 
 from ..models import (
     AgentAction,
@@ -236,6 +244,63 @@ def _llm_headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
 
+def _post_llm_with_retry(
+    url: str,
+    payload: dict,
+    headers: dict,
+    timeout: float,
+) -> httpx.Response:
+    """
+    POST to the LLM endpoint, serialising concurrent calls via _LLM_SEMAPHORE
+    and retrying on 429 with exponential back-off.
+
+    Retry behaviour is controlled by env vars (read each call so tests can
+    patch via monkeypatch without restarting the process):
+        LLM_RETRY_429   — max attempts on 429 (default 3)
+        LLM_RETRY_DELAY — base delay in seconds before first retry (default 1.0)
+    """
+    max_attempts = int(os.environ.get("LLM_RETRY_429", "3"))
+    base_delay   = float(os.environ.get("LLM_RETRY_DELAY", "1.0"))
+
+    with _LLM_SEMAPHORE:
+        last_exc: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                resp = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+                if resp.status_code == 429 and attempt < max_attempts - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        "LLM 429 on attempt %d/%d — retrying in %.1fs",
+                        attempt + 1, max_attempts, delay,
+                    )
+                    # Release the semaphore slot while sleeping so other threads
+                    # are not starved during the back-off period.
+                    _LLM_SEMAPHORE.release()
+                    time.sleep(delay)
+                    _LLM_SEMAPHORE.acquire()
+                    continue
+                resp.raise_for_status()
+                return resp
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 429 and attempt < max_attempts - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        "LLM 429 (HTTPStatusError) on attempt %d/%d — retrying in %.1fs",
+                        attempt + 1, max_attempts, delay,
+                    )
+                    _LLM_SEMAPHORE.release()
+                    time.sleep(delay)
+                    _LLM_SEMAPHORE.acquire()
+                    last_exc = exc
+                    continue
+                raise
+        # All retries exhausted — re-raise last known exception
+        if last_exc is not None:
+            raise last_exc
+        # Fallback: should not be reached
+        raise RuntimeError("_post_llm_with_retry: exhausted retries without a response")
+
+
 def call_llm_json(
     messages: list[dict],
     llm_url: str,
@@ -258,13 +323,12 @@ def call_llm_json(
         "max_tokens": 400,
         "chat_template_kwargs": {"enable_thinking": False},
     }
-    resp = httpx.post(
+    resp = _post_llm_with_retry(
         f"{llm_url}/chat/completions",
-        json=payload,
-        headers=_llm_headers(api_key),
-        timeout=timeout,
+        payload,
+        _llm_headers(api_key),
+        timeout,
     )
-    resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
     return json.loads(content)
 
@@ -293,13 +357,12 @@ def call_llm_tools(
         "max_tokens": 300,  # un tool call ne dépasse jamais quelques tokens
         "chat_template_kwargs": {"enable_thinking": False},
     }
-    resp = httpx.post(
+    resp = _post_llm_with_retry(
         f"{llm_url}/chat/completions",
-        json=payload,
-        headers=_llm_headers(api_key),
-        timeout=timeout,
+        payload,
+        _llm_headers(api_key),
+        timeout,
     )
-    resp.raise_for_status()
     tool_call = resp.json()["choices"][0]["message"]["tool_calls"][0]
     return {
         "name": tool_call["function"]["name"],

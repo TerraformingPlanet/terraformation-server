@@ -16,7 +16,7 @@ Tu es le gardien de la documentation du projet **Terraformation & Colonisation S
 
 Lis toujours dans cet ordre avant d'écrire quoi que ce soit :
 
-1. **Roadmap Service live** → `GET http://localhost:8001/phases?status=pending` — source de vérité état. Puis `Documentation/ROADMAP.md` + `Documentation/roadmap.json` pour les détails.
+1. **Roadmap Service live** → `GET http://localhost:8001/phases?status=pending` — **source de vérité machine** (statuts, assertion_script, exit_criteria). Puis `Documentation/ROADMAP.md` pour la vue humaine détaillée.
 2. `Documentation/description_jeu/Description_du_jeu.md §lié` — **source de vérité design** (lien en tête de chaque phase du ROADMAP)
 3. `Documentation/ARCHITECTURE.md` — contraintes de stack et décisions prises
 4. `Documentation/REPOSITORY_STRUCTURE.md` — conventions de nommage et emplacement des fichiers
@@ -32,7 +32,7 @@ Références conditionnelles :
 | `Documentation/description_jeu/Description_du_jeu.md` | **Source de vérité design** — vision, mécaniques, équilibrage |
 | `Documentation/ARCHITECTURE.md` | Décisions techniques, stack, structure dossiers |
 | `Documentation/ROADMAP.md` | Backlog actif — phases et sprints avec liens vers Description_du_jeu |
-| `Documentation/roadmap.json` | État machine des phases (source pour le Roadmap Service) |
+| `Documentation/roadmap.json` | Seed canonique du Roadmap Service — **jamais modifier pour les statuts** ; passer par `roadmap_complete_phase` ou `Set-PhaseComplete.ps1` |
 | `Documentation/CHANGELOG.md` | Historique des phases complétées (ne jamais modifier ROADMAP pour du terminé) |
 | `Documentation/SIMULATION_CONTRACTS.md` | Contrats partagés Python ↔ C# |
 | `Documentation/MCP_TOOLS_ARCHITECTURE.md` | Architecture des tools MCP, endpoints, état par tool |

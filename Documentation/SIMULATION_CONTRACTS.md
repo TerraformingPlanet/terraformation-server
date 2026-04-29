@@ -34,6 +34,13 @@ Toute modification d'un type partagé doit être appliquée **dans les deux fich
 | `DebugCoherenceOverride` | `DebugCoherenceOverride` | Python: `None_=0` → C#: `None=0` (mot réservé C#) |
 | `SimulationCommandType` | `SimulationCommandType` | Python: `None_=0` → C#: `None=0` |
 | `SimulationEventType` | `SimulationEventType` | Python: `None_=0` → C#: `None=0` |
+| `TradeRouteType` | `TradeRouteType` | `Land=0`, `Maritime=1`, `Orbital=2` — Phase 9.1 |
+| `TradeRouteActivityStatus` | `TradeRouteActivityStatus` | `Active=0`, `Suspended=1` — Phase 9.1 |
+| `ExpeditionStatus` | `ExpeditionStatus` | `InTransit=0`, `Success=1`, `Failed=2` — Phase 9.1 |
+| `TravelStatus` | `TravelStatus` | `InTransit=0`, `Arrived=1`, `Cancelled=2` — Phase 9 |
+| `AgentActionType` | `AgentActionType` | `NoOp=0`, `ProposeContract=1`, etc. — Phase 8.5 |
+| `CorpProfile` | `CorpProfile` | `Economiste=0`, `Expansionniste=1`, `Militariste=2` — Phase 11.2 |
+| `BotFSMState` | `BotFSMState` | `Idle=0`, `Expanding=1`, etc. — Phase 11.2 |
 
 ### Structs / classes
 
@@ -69,7 +76,14 @@ Toute modification d'un type partagé doit être appliquée **dans les deux fich
 | `ResourceListing` | `struct ResourceListing` | `resourceType`, `price`, `supply`, `demand` — Phase 7.3 |
 | `LocalMarketState` | `struct LocalMarketState` | `corpId`, `listings[]`, `taxRate`, `tickComputed` — Phase 7.3 |
 | `BuildingData` | `struct CorpBuilding` | `id`, `buildingType`, `tileId`, `bodyId`, `corpId`, `workerRatio`, `ticksActive`, `employmentSlots`, `level` — Phase 7.2 / 9.6 / 12 |
-| `ExpeditionUnit` | `struct CorpExpeditionUnit` | `id`, `ownerCorpId`, `fromPortTileId`, `toPortTileId`, `bodyId`, `routeType`, `ticksRemaining`, `totalTicks`, `status`, `isPhantom`, `cargoKeys[]`, `cargoValues[]` — Phase 9.1 / 9.6 |
+| `ExpeditionUnit` | `struct ExpeditionUnit` | `id`, `ownerCorpId`, `fromPortTileId`, `toPortTileId`, `bodyId`, `routeType`, `ticksRemaining`, `totalTicks`, `pathTileIds[]`, `status`, `isPhantom`, `cargo[]` — Phase 9.1 / 9.6 |
+| `TradeRoute` | `struct TradeRoute` | `id`, `routeType`, `fromTileId`, `toTileId`, `bodyId`, `pathTileIds[]`, `ownerCorpId`, `knownByEntityIds[]`, `status`, `baseEfficiency`, `currentEfficiency`, `portMalusFrom`, `portMalusTo`, `tickCreated`, `knowledgeTransferTicks` — Phase 9.1 |
+| `GlobalMarketState` | `struct GlobalMarketState` | `systemId`, `listings[]`, `tick`, `marketCount` — Phase 9.5 |
+| `AgentAction` | `struct AgentAction` | `entityId`, `actionType`, `parameters[]`, `reasoning` — Phase 8.5 |
+| `AgentMemory` | `struct AgentMemory` | `entityId`, `entityType`, `recentDecisions[]`, `relationshipNotes[]`, `lastTickActed` — Phase 8.5 |
+| `SpaceTravel` | `struct SpaceTravel` | `travelId`, `factionId`, `fromSystemId`, `toSystemId`, `routeId`, `distanceLy`, `departedAtTick`, `arrivalTick`, `status` — Phase 9 |
+| `CorpProfile` | `struct CorpProfileData` | `profile` — Phase 11.2 |
+| `BotFSMState` | `struct CorpFSMState` | `state` — Phase 11.2 |
 
 ---
 
@@ -319,6 +333,33 @@ Struct flat utilisée pour le champ `employmentSlots` de `CorpBuilding`. Clés f
 | Python | C# | Type | Notes |
 |---|---|---|---|
 | `ecologyResources` | *(non mirrored v1)* | `dict[str, float]` | ressources écologiques agrégées par tick (côté serveur) |
+
+---
+## Phase 11.6b — Bio-marché par tuile
+
+> Marché biologique **indépendant** des corporations : reflète l'état écologique d'une tuile.
+> Calculé à chaque tick d'écologie à partir de `SpeciesData.density × marketOutput`.
+
+### TileBioListing (BaseModel / C# non mirrored v1)
+
+| Python | C# | Type | Notes |
+|---|---|---|---|
+| `resource` | *(non mirrored v1)* | `string` | nom de la ressource ex. "Wood", "Biomass" |
+| `speciesId` | *(non mirrored v1)* | `string` | espèce source ex. "forest", "plankton" |
+| `abundance` | *(non mirrored v1)* | `float` | abondance courante = density × marketOutput |
+| `abundanceHistory` | *(non mirrored v1)* | `list[float]` | ring buffer 8 ticks |
+
+> Côté C# : `BioListingDto` (private) dans `GameHUDController.cs` (sérialisé JSON uniquement, pas dans `SimulationContracts.cs`).
+
+### TileBioMarketState (BaseModel / C# non mirrored v1)
+
+| Python | C# | Type | Notes |
+|---|---|---|---|
+| `tileId` | *(non mirrored v1)* | `string` | H3 index de la tuile |
+| `listings` | *(non mirrored v1)* | `list[TileBioListing]` | une entrée par (espèce × ressource) |
+| `tickComputed` | *(non mirrored v1)* | `int` | tick de calcul |
+
+> `listings=[]` si la tuile n'a aucune espèce (ocean vide, roche nue…). 404 seulement si `tileId` inconnu.
 
 ---
 ## Phase 11.3 M2 — GM narratif : nouveaux types

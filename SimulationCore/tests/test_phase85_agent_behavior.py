@@ -99,7 +99,7 @@ def test_s1_high_dominance_nationalist_reacts(fast_model, monkeypatch):
         f"Nationalist state under 90% corp dominance should NOT return NoOp.\n"
         f"Got: {action.actionType!r}\nReasoning: {action.reasoning!r}"
     )
-    print(f"\n✓ S1 Nationalist reacts: {action.actionType!r} — {action.reasoning[:80]!r}")
+    print(f"\n[OK] S1 Nationalist reacts: {action.actionType!r} - {action.reasoning[:80]!r}")
 
 
 # ── Scenario 2 : Paix absolue — NoOp est acceptable ─────────────────────────
@@ -138,7 +138,7 @@ def test_s2_peaceful_capitalist_accepts_noop(fast_model, monkeypatch):
     assert action.actionType in ALL_VALID_ACTIONS, (
         f"Expected a valid action, got {action.actionType!r}"
     )
-    print(f"\n✓ S2 Peaceful capitalist: {action.actionType!r}")
+    print(f"\n[OK] S2 Peaceful capitalist: {action.actionType!r}")
 
 
 # ── Scenario 3 : Contrats brisés récents — l'agent ne choisit pas NoOp ───────
@@ -188,7 +188,7 @@ def test_s3_recent_broken_contracts_triggers_response(fast_model, monkeypatch):
         f"3 recent broken contracts should trigger a response, not NoOp.\n"
         f"Action: {action.actionType!r}\nReasoning: {action.reasoning!r}"
     )
-    print(f"\n✓ S3 Broken contracts response: {action.actionType!r} — {action.reasoning[:80]!r}")
+    print(f"\n[OK] S3 Broken contracts response: {action.actionType!r} - {action.reasoning[:80]!r}")
 
 
 # ── Scenario 4 : Nationaliste plus réactif que Capitaliste ───────────────────
@@ -252,7 +252,7 @@ def test_s4_nationalist_more_reactive_than_capitalist(fast_model, monkeypatch):
         f"Capitalist action invalid: {action_cap.actionType!r}"
     )
     print(
-        f"\n✓ S4 Comparative: Nationalist={action_nat.actionType!r}, "
+        f"\n[OK] S4 Comparative: Nationalist={action_nat.actionType!r}, "
         f"Capitalist={action_cap.actionType!r}"
     )
     print(f"  Nationalist reasoning: {action_nat.reasoning[:80]!r}")

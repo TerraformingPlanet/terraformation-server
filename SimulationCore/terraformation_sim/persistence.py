@@ -34,9 +34,11 @@ from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from .models import (
         AnyBodyState,
+        BuildingData,
         CorporationData,
         ContractData,
         ExpeditionUnit,
+        GoldbergTileState,
         InteriorZoneState,
         LocalMarketState,
         NationalizationProcess,
@@ -98,11 +100,17 @@ class SavedState:
     states_json: list[str] = field(default_factory=list)
     nationalizations_json: list[str] = field(default_factory=list)
     reputations_raw: list[tuple[str, str, float]] = field(default_factory=list)  # (source_id, target_id, score)
+    tile_ownership_json: str = "{}"  # JSON string of dict[str, dict[str, str]]
     trade_routes_json: list[str] = field(default_factory=list)
     expeditions_json: list[str] = field(default_factory=list)
     construction_queues_json: list[str] = field(default_factory=list)
     markets_json: list[str] = field(default_factory=list)
     territories_json: list[str] = field(default_factory=list)  # Phase Colonisation
+    # Normalized table data (Phase DB normalization)
+    tile_data: dict[str, list[dict]] = field(default_factory=dict)  # body_id → tile rows
+    buildings_data: dict[str, list[dict]] = field(default_factory=dict)  # body_id → building rows
+    terrain_type_defs: list[dict] = field(default_factory=list)  # terrain type definitions (generation config)
+    biome_transition_rules: list[dict] = field(default_factory=list)  # biome transition graph (catalog)
 
     @property
     def has_data(self) -> bool:
@@ -241,6 +249,54 @@ class StateRepository(ABC):
     @abstractmethod
     def clear_territories(self) -> None: ...
 
+    # -- Normalized tile table (Phase DB normalization) --
+    @abstractmethod
+    def save_tiles_bulk(self, body_id: str, tiles: "list[GoldbergTileState]") -> None: ...
+    @abstractmethod
+    def load_tiles(self, body_id: str) -> list[dict]: ...
+    @abstractmethod
+    def update_tile_fields(self, body_id: str, tile_id: str, **kwargs: float) -> None: ...
+    @abstractmethod
+    def delete_tiles(self, body_id: str) -> None: ...
+    @abstractmethod
+    def clear_all_tiles(self) -> None: ...
+
+    # -- Normalized buildings table --
+    @abstractmethod
+    def save_building(self, building: "BuildingData") -> None: ...
+    @abstractmethod
+    def delete_building(self, building_id: str) -> None: ...
+    @abstractmethod
+    def load_buildings(self, body_id: str) -> list[dict]: ...
+    @abstractmethod
+    def clear_buildings_for_body(self, body_id: str) -> None: ...
+    @abstractmethod
+    def clear_all_buildings(self) -> None: ...
+
+    @abstractmethod
+    def load_terrain_type_defs(self) -> list[dict]: ...
+
+    @abstractmethod
+    def update_terrain_type_def(self, terrain_type_id: int, **kwargs) -> None: ...
+
+    @abstractmethod
+    def load_biome_transition_rules(self) -> list[dict]: ...
+
+    @abstractmethod
+    def upsert_biome_transition_rule(self, row: dict) -> None: ...
+
+    @abstractmethod
+    def delete_biome_transition_rule(self, rule_id: int) -> None: ...
+
+    @abstractmethod
+    def load_sub_hex_features(self) -> list[dict]: ...
+
+    @abstractmethod
+    def upsert_sub_hex_feature(self, row: dict) -> None: ...
+
+    @abstractmethod
+    def delete_sub_hex_feature(self, feature_id: int) -> None: ...
+
     @abstractmethod
     def load(self) -> SavedState: ...
 
@@ -301,6 +357,26 @@ class InMemoryRepository(StateRepository):
     def save_territory(self, territory) -> None: pass
     def delete_territory(self, territory_id) -> None: pass
     def clear_territories(self) -> None: pass
+    # Normalized tile table
+    def save_tiles_bulk(self, body_id, tiles) -> None: pass
+    def load_tiles(self, body_id) -> list[dict]: return []
+    def update_tile_fields(self, body_id, tile_id, **kwargs) -> None: pass
+    def delete_tiles(self, body_id) -> None: pass
+    def clear_all_tiles(self) -> None: pass
+    # Normalized buildings table
+    def save_building(self, building) -> None: pass
+    def delete_building(self, building_id) -> None: pass
+    def load_buildings(self, body_id) -> list[dict]: return []
+    def clear_buildings_for_body(self, body_id) -> None: pass
+    def clear_all_buildings(self) -> None: pass
+    def load_terrain_type_defs(self) -> list[dict]: return list(_TERRAIN_TYPE_DEFS_SEED)
+    def update_terrain_type_def(self, terrain_type_id: int, **kwargs) -> None: pass
+    def load_biome_transition_rules(self) -> list[dict]: return list(_BIOME_TRANSITION_RULES_SEED)
+    def upsert_biome_transition_rule(self, row: dict) -> None: pass
+    def delete_biome_transition_rule(self, rule_id: int) -> None: pass
+    def load_sub_hex_features(self) -> list[dict]: return list(_SUB_HEX_FEATURES_SEED)
+    def upsert_sub_hex_feature(self, row: dict) -> None: pass
+    def delete_sub_hex_feature(self, feature_id: int) -> None: pass
 
     def load(self) -> SavedState:
         return SavedState()
@@ -339,6 +415,48 @@ _tile_mutations_table = Table(
     Column("water_ratio", Float, nullable=False),
     Column("temperature", Float, nullable=False),
     Column("toxin_level", Float, nullable=False),
+)
+
+# Normalized full tile table (Phase DB normalization)
+_tiles_table = Table(
+    "tiles", _metadata,
+    Column("body_id", String(36), nullable=False),
+    Column("tile_id", String(20), nullable=False),
+    Column("terrain_type", String(32), nullable=False),
+    Column("water_classification", String(32), nullable=False),
+    Column("terrain_class", String(32), nullable=False),
+    Column("water_ratio", Float, nullable=False, default=0.0),
+    Column("temperature", Float, nullable=False, default=0.0),
+    Column("humidity", Float, nullable=False, default=0.0),
+    Column("toxin_level", Float, nullable=False, default=0.0),
+    Column("altitude", Float, nullable=False, default=0.0),
+    Column("albedo", Float, nullable=False, default=0.0),
+    Column("solar_irradiance", Float, nullable=False, default=0.0),
+    Column("is_habitable", Boolean, nullable=False, default=False),
+    Column("lat_deg", Float, nullable=False, default=0.0),
+    Column("lon_deg", Float, nullable=False, default=0.0),
+    Column("lat_norm", Float, nullable=False, default=0.0),
+    Column("lon_norm", Float, nullable=False, default=0.0),
+    # ── Runtime biome parameters (added for biome mutation system) ──
+    Column("vegetation_level", Float, nullable=False, default=0.0),
+    Column("tree_count", Float, nullable=False, default=0.0),
+    Column("has_river", Boolean, nullable=False, default=False),
+    Column("has_lake", Boolean, nullable=False, default=False),
+    Column("population_json", Text, nullable=False, default="[]"),
+)
+
+# Normalized buildings table (Phase DB normalization)
+_buildings_table = Table(
+    "buildings", _metadata,
+    Column("building_id", String(36), primary_key=True),
+    Column("body_id", String(36), nullable=False),
+    Column("tile_id", String(20), nullable=False),
+    Column("corp_id", String(36), nullable=False),
+    Column("building_type", String(64), nullable=False),
+    Column("worker_ratio", Float, nullable=False, default=1.0),
+    Column("ticks_active", Integer, nullable=False, default=0),
+    Column("level", Integer, nullable=False, default=1),
+    Column("employment_slots", Text, nullable=False, default="{}"),
 )
 
 _cell_mutations_table = Table(
@@ -443,6 +561,311 @@ _territories_table = Table(
     Column("territory_json", Text, nullable=False),
 )
 
+_sub_hex_features_table = Table(
+    "sub_hex_features", _metadata,
+    Column("feature_id",            Integer, primary_key=True),   # stable int ID (0=Empty, 1=River…)
+    Column("name",                  String(64), nullable=False),   # code name, e.g. "River"
+    Column("label_fr",              String(64), nullable=False, default=""),
+    Column("description",           Text, nullable=True),
+    Column("bonus_building_types",  Text, nullable=False, default="[]"),  # JSON array of BuildingId strings
+    Column("is_enabled",            Boolean, nullable=False, default=True),
+)
+
+_SUB_HEX_FEATURES_SEED = [
+    {"feature_id": 0, "name": "Empty",       "label_fr": "Vide",              "description": "Terrain nu, aucun bonus.",                                         "bonus_building_types": "[]",                           "is_enabled": True},
+    {"feature_id": 1, "name": "River",       "label_fr": "Rivière",           "description": "Eau courante. Bonus pour Ferme, Scierie, Port Maritime.",          "bonus_building_types": '["Farm","Sawmill","SeaPort"]', "is_enabled": True},
+    {"feature_id": 2, "name": "Forest",      "label_fr": "Forêt",             "description": "Couverture arborée. Bonus pour Scierie; requis pour Wood.",        "bonus_building_types": '["Sawmill"]',                  "is_enabled": True},
+    {"feature_id": 3, "name": "Mineral",     "label_fr": "Gisement minéral",  "description": "Dépôt de minerai. Bonus pour Mine.",                              "bonus_building_types": '["Mine"]',                     "is_enabled": True},
+    {"feature_id": 4, "name": "WaterSource", "label_fr": "Source d'eau",      "description": "Source naturelle ou rive de lac. Bonus pour Ferme.",               "bonus_building_types": '["Farm"]',                     "is_enabled": True},
+    {"feature_id": 5, "name": "Residential", "label_fr": "Zone résidentielle","description": "Habitat existant. Bonus pour Recherche et Centrale Énergétique.", "bonus_building_types": '["Research","EnergyPlant"]',   "is_enabled": True},
+]
+
+_terrain_type_defs_table = Table(
+    "terrain_type_defs", _metadata,
+    Column("terrain_type_id", Integer, primary_key=True),   # TerrainType enum value (0-6)
+    Column("name", String(50), nullable=False),              # code name: "Roche", "Foret"…
+    Column("label_fr", String(50), nullable=False),          # display label
+    Column("color_hex", String(7), nullable=False),          # "#RRGGBB"
+    Column("is_enabled", Boolean, nullable=False, default=True),
+    # ── Generation thresholds ──────────────────────────────────────────────
+    # NULL = not applicable to this type
+    Column("humidity_threshold", Float, nullable=True),
+    # Foret: min humidity (>= → forest). Vegetation cold-zone: base water-ratio threshold (0.40).
+    Column("humidity_clamp_min", Float, nullable=True),
+    # Vegetation cold-zone minimum clamp (0.20). Formula: max(clamp_min, base - atmo*0.16).
+    Column("noise_threshold", Float, nullable=True),
+    # Metal: scatter noise threshold (0.92). AtmosphereToxique: toxin level threshold (0.04).
+    Column("temperature_threshold", Float, nullable=True),
+    # Glace: max temperature to become ice (-20.0).
+    Column("water_ratio_min", Float, nullable=True),
+    # Glace: min water_ratio required to be ice rather than rock (0.15).
+    Column("extra_params", Text, nullable=True),
+    # JSON dict for additional zone thresholds.
+    # Vegetation: {"temperate_base":0.54,"temperate_clamp":0.26,"hot_base":0.58,"hot_clamp":0.35}
+    Column("spawn_weight", Float, nullable=False, default=1.0),
+    # Future: probability multiplier applied during generation.
+    Column("description", Text, nullable=True),
+)
+
+_biome_transition_rules_table = Table(
+    "biome_transition_rules", _metadata,
+    Column("rule_id", Integer, primary_key=True),
+    Column("name", String(64), nullable=False),
+    Column("target_terrain_type_id", Integer, nullable=False),  # TerrainType enum value
+    Column("from_terrain_type_ids", Text, nullable=False, default="[]"),  # JSON int array
+    Column("priority", Integer, nullable=False, default=10),
+    Column("is_enabled", Boolean, nullable=False, default=True),
+    # ── Conditions (NULL = not checked) ──
+    Column("temperature_min", Float, nullable=True),
+    Column("temperature_max", Float, nullable=True),
+    Column("humidity_min", Float, nullable=True),
+    Column("humidity_max", Float, nullable=True),
+    Column("vegetation_min", Float, nullable=True),
+    Column("vegetation_max", Float, nullable=True),
+    Column("tree_count_min", Float, nullable=True),
+    Column("tree_count_max", Float, nullable=True),
+    Column("has_river", Boolean, nullable=True),   # NULL=ignore
+    Column("has_lake", Boolean, nullable=True),
+    Column("water_ratio_min", Float, nullable=True),
+    Column("water_ratio_max", Float, nullable=True),
+    Column("toxin_min", Float, nullable=True),
+    Column("toxin_max", Float, nullable=True),
+    Column("description", Text, nullable=True),
+)
+
+# Default seed rows — match the current hardcoded values in logic/generation.py
+_TERRAIN_TYPE_DEFS_SEED = [
+    {
+        "terrain_type_id": 0, "name": "Roche", "label_fr": "Roche",
+        "color_hex": "#7B5E4A", "is_enabled": True,
+        "humidity_threshold": None, "humidity_clamp_min": None,
+        "noise_threshold": None, "temperature_threshold": None, "water_ratio_min": None,
+        "extra_params": None, "spawn_weight": 1.0,
+        "description": "Fallback terrain. Appears when no other biome condition matches.",
+    },
+    {
+        "terrain_type_id": 1, "name": "Glace", "label_fr": "Glace",
+        "color_hex": "#C8EEFF", "is_enabled": True,
+        "humidity_threshold": None, "humidity_clamp_min": None,
+        "noise_threshold": None,
+        "temperature_threshold": -20.0,   # max temperature to form ice
+        "water_ratio_min": 0.15,           # if below → Roche instead
+        "extra_params": None, "spawn_weight": 1.0,
+        "description": "Forms when temp < temperature_threshold. Requires water_ratio > water_ratio_min; otherwise falls back to Roche.",
+    },
+    {
+        "terrain_type_id": 2, "name": "AtmosphereToxique", "label_fr": "Atmosphère Toxique",
+        "color_hex": "#8FBC8F", "is_enabled": True,
+        "humidity_threshold": None, "humidity_clamp_min": None,
+        "noise_threshold": 0.04,           # min toxin_level to trigger
+        "temperature_threshold": None, "water_ratio_min": None,
+        "extra_params": None, "spawn_weight": 1.0,
+        "description": "Appears on land when toxin_level > noise_threshold. Increase to make toxic terrain rarer.",
+    },
+    {
+        "terrain_type_id": 3, "name": "Eau", "label_fr": "Eau",
+        "color_hex": "#1D6FA4", "is_enabled": True,
+        "humidity_threshold": None, "humidity_clamp_min": None,
+        "noise_threshold": None, "temperature_threshold": None, "water_ratio_min": None,
+        "extra_params": None, "spawn_weight": 1.0,
+        "description": "Driven by the water map (is_water flag). No configurable threshold — controlled by body waterLevel.",
+    },
+    {
+        "terrain_type_id": 4, "name": "Vegetation", "label_fr": "Végétation",
+        "color_hex": "#4A7B47", "is_enabled": True,
+        "humidity_threshold": 0.40,        # cold-zone base: max(clamp, base - atmo*0.16)
+        "humidity_clamp_min": 0.20,        # cold-zone minimum clamp
+        "noise_threshold": None, "temperature_threshold": None, "water_ratio_min": None,
+        "extra_params": '{"temperate_base": 0.54, "temperate_clamp": 0.26, "hot_base": 0.58, "hot_clamp": 0.35}',
+        "spawn_weight": 1.0,
+        "description": "Cold zone: max(humidity_clamp_min, humidity_threshold - atmo*0.16). Temperate/hot in extra_params. Higher base → rarer vegetation.",
+    },
+    {
+        "terrain_type_id": 5, "name": "Metal", "label_fr": "Métal",
+        "color_hex": "#9B9B9B", "is_enabled": True,
+        "humidity_threshold": None, "humidity_clamp_min": None,
+        "noise_threshold": 0.92,           # scatter noise threshold (higher → rarer)
+        "temperature_threshold": None, "water_ratio_min": None,
+        "extra_params": None, "spawn_weight": 1.0,
+        "description": "Appears in dry temperate zones when scatter noise > noise_threshold. Raise threshold to make Metal rarer.",
+    },
+    {
+        "terrain_type_id": 6, "name": "Foret", "label_fr": "Forêt",
+        "color_hex": "#1A4D1E", "is_enabled": True,
+        "humidity_threshold": 0.62,        # min humidity (non-coastal temperate zones)
+        "humidity_clamp_min": None,
+        "noise_threshold": None, "temperature_threshold": None, "water_ratio_min": None,
+        "extra_params": None, "spawn_weight": 1.0,
+        "description": "Dense humid temperate zones: humidity >= humidity_threshold AND NOT coastal. Lower to expand forests.",
+    },
+    {
+        "terrain_type_id": 7, "name": "Desert", "label_fr": "Désert",
+        "color_hex": "#D4AA70", "is_enabled": True,
+        "humidity_threshold": None, "humidity_clamp_min": None,
+        "noise_threshold": None, "temperature_threshold": None, "water_ratio_min": None,
+        "extra_params": None, "spawn_weight": 1.0,
+        "description": "Runtime biome — triggered by biome_transition_rules when humidity/vegetation fall below thresholds.",
+    },
+    {
+        "terrain_type_id": 8, "name": "Jungle", "label_fr": "Jungle",
+        "color_hex": "#1B4D1A", "is_enabled": True,
+        "humidity_threshold": None, "humidity_clamp_min": None,
+        "noise_threshold": None, "temperature_threshold": None, "water_ratio_min": None,
+        "extra_params": None, "spawn_weight": 1.0,
+        "description": "Runtime biome — hot + humid + dense vegetation. Triggered by biome_transition_rules.",
+    },
+    {
+        "terrain_type_id": 9, "name": "ZoneHumide", "label_fr": "Zone Humide",
+        "color_hex": "#3A7D6E", "is_enabled": True,
+        "humidity_threshold": None, "humidity_clamp_min": None,
+        "noise_threshold": None, "temperature_threshold": None, "water_ratio_min": None,
+        "extra_params": None, "spawn_weight": 1.0,
+        "description": "Runtime biome — desert reclaimed by a river + water. Triggered by biome_transition_rules.",
+    },
+]
+
+# Seed rows for biome_transition_rules — define the biome transition graph.
+# Each rule: when a tile's current terrain is in from_terrain_type_ids AND all
+# non-NULL conditions are met, the tile transitions to target_terrain_type_id.
+# Priority: higher value wins when multiple rules match the same tile.
+_BIOME_TRANSITION_RULES_SEED = [
+    # ── Desert ─────────────────────────────────────────────────────────────
+    {
+        "rule_id": 1,
+        "name": "Desert from Vegetation/Foret (dry, no water)",
+        "target_terrain_type_id": 7,  # Desert
+        "from_terrain_type_ids": "[4, 6]",  # Vegetation, Foret
+        "priority": 10,
+        "is_enabled": True,
+        "temperature_min": None, "temperature_max": None,
+        "humidity_min": None, "humidity_max": 0.05,
+        "vegetation_min": None, "vegetation_max": 2.0,
+        "tree_count_min": None, "tree_count_max": 5.0,
+        "has_river": False, "has_lake": False,
+        "water_ratio_min": None, "water_ratio_max": None,
+        "toxin_min": None, "toxin_max": None,
+        "description": "Vegetation/Forêt → Désert when humidity < 5%, vegetation < 2, trees < 5, no river, no lake.",
+    },
+    {
+        "rule_id": 2,
+        "name": "Desert from Roche (hot + dry)",
+        "target_terrain_type_id": 7,  # Desert
+        "from_terrain_type_ids": "[0]",  # Roche
+        "priority": 8,
+        "is_enabled": True,
+        "temperature_min": 30.0, "temperature_max": None,
+        "humidity_min": None, "humidity_max": 0.10,
+        "vegetation_min": None, "vegetation_max": None,
+        "tree_count_min": None, "tree_count_max": None,
+        "has_river": False, "has_lake": False,
+        "water_ratio_min": None, "water_ratio_max": 0.05,
+        "toxin_min": None, "toxin_max": None,
+        "description": "Roche → Désert lorsque la température est élevée, sec, pas d'eau.",
+    },
+    # ── Forêt ───────────────────────────────────────────────────────────────
+    {
+        "rule_id": 3,
+        "name": "Foret from Vegetation (tree density)",
+        "target_terrain_type_id": 6,  # Foret
+        "from_terrain_type_ids": "[4]",  # Vegetation
+        "priority": 15,
+        "is_enabled": True,
+        "temperature_min": None, "temperature_max": None,
+        "humidity_min": None, "humidity_max": None,
+        "vegetation_min": None, "vegetation_max": None,
+        "tree_count_min": 2000.0, "tree_count_max": None,
+        "has_river": None, "has_lake": None,
+        "water_ratio_min": None, "water_ratio_max": None,
+        "toxin_min": None, "toxin_max": None,
+        "description": "Végétation → Forêt quand la densité d'arbres dépasse 2000.",
+    },
+    # ── Jungle ─────────────────────────────────────────────────────────────
+    {
+        "rule_id": 4,
+        "name": "Jungle from Foret/Vegetation (hot + humid)",
+        "target_terrain_type_id": 8,  # Jungle
+        "from_terrain_type_ids": "[4, 6]",  # Vegetation, Foret
+        "priority": 20,
+        "is_enabled": True,
+        "temperature_min": 35.0, "temperature_max": None,
+        "humidity_min": 0.50, "humidity_max": None,
+        "vegetation_min": None, "vegetation_max": None,
+        "tree_count_min": None, "tree_count_max": None,
+        "has_river": None, "has_lake": None,
+        "water_ratio_min": None, "water_ratio_max": None,
+        "toxin_min": None, "toxin_max": None,
+        "description": "Forêt/Végétation → Jungle quand temp ≥ 35°C et humidité ≥ 50%.",
+    },
+    # ── Zone Humide ─────────────────────────────────────────────────────────
+    {
+        "rule_id": 5,
+        "name": "ZoneHumide from Desert (river + water returns)",
+        "target_terrain_type_id": 9,  # ZoneHumide
+        "from_terrain_type_ids": "[7]",  # Desert
+        "priority": 12,
+        "is_enabled": True,
+        "temperature_min": None, "temperature_max": None,
+        "humidity_min": 0.15, "humidity_max": None,
+        "vegetation_min": 5.0, "vegetation_max": None,
+        "tree_count_min": None, "tree_count_max": None,
+        "has_river": True, "has_lake": None,
+        "water_ratio_min": None, "water_ratio_max": None,
+        "toxin_min": None, "toxin_max": None,
+        "description": "Désert → Zone Humide quand une rivière apparaît, humidité ≥ 15% et végétation ≥ 5.",
+    },
+    # ── Végétation ──────────────────────────────────────────────────────────
+    {
+        "rule_id": 6,
+        "name": "Vegetation from Desert (rain returns)",
+        "target_terrain_type_id": 4,  # Vegetation
+        "from_terrain_type_ids": "[7]",  # Desert
+        "priority": 9,
+        "is_enabled": True,
+        "temperature_min": None, "temperature_max": None,
+        "humidity_min": 0.20, "humidity_max": None,
+        "vegetation_min": 5.0, "vegetation_max": None,
+        "tree_count_min": None, "tree_count_max": None,
+        "has_river": None, "has_lake": None,
+        "water_ratio_min": None, "water_ratio_max": None,
+        "toxin_min": None, "toxin_max": None,
+        "description": "Désert → Végétation quand les pluies reviennent (humidité ≥ 20%, végétation ≥ 5).",
+    },
+    # ── Glace → Eau (fonte) ─────────────────────────────────────────────────
+    {
+        "rule_id": 7,
+        "name": "Eau from Glace (thaw)",
+        "target_terrain_type_id": 3,  # Eau
+        "from_terrain_type_ids": "[1]",  # Glace
+        "priority": 25,
+        "is_enabled": True,
+        "temperature_min": 2.0, "temperature_max": None,
+        "humidity_min": None, "humidity_max": None,
+        "vegetation_min": None, "vegetation_max": None,
+        "tree_count_min": None, "tree_count_max": None,
+        "has_river": None, "has_lake": None,
+        "water_ratio_min": 0.10, "water_ratio_max": None,
+        "toxin_min": None, "toxin_max": None,
+        "description": "Glace → Eau quand la température dépasse 2°C (fonte des glaces).",
+    },
+    # ── Eau → Glace (gel) ──────────────────────────────────────────────────
+    {
+        "rule_id": 8,
+        "name": "Glace from Eau (freeze)",
+        "target_terrain_type_id": 1,  # Glace
+        "from_terrain_type_ids": "[3]",  # Eau
+        "priority": 25,
+        "is_enabled": True,
+        "temperature_min": None, "temperature_max": -5.0,
+        "humidity_min": None, "humidity_max": None,
+        "vegetation_min": None, "vegetation_max": None,
+        "tree_count_min": None, "tree_count_max": None,
+        "has_river": None, "has_lake": None,
+        "water_ratio_min": None, "water_ratio_max": None,
+        "toxin_min": None, "toxin_max": None,
+        "description": "Eau → Glace quand la température descend sous -5°C.",
+    },
+]
+
 
 # ---------------------------------------------------------------------------
 # PostgreSQL implementation
@@ -486,6 +909,73 @@ class PostgresRepository(StateRepository):
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_reputations
                 ON reputations (source_id, target_id)
             """))
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_tiles
+                ON tiles (body_id, tile_id)
+            """))
+            # ADD COLUMN IF NOT EXISTS for biome runtime fields on existing tiles tables
+            for col, col_type, default in [
+                ("vegetation_level", "FLOAT",  "0.0"),
+                ("tree_count",       "FLOAT",  "0.0"),
+                ("has_river",        "BOOLEAN", "FALSE"),
+                ("has_lake",         "BOOLEAN", "FALSE"),
+                ("population_json",  "TEXT",    "'[]'"),
+            ]:
+                conn.execute(text(
+                    f"ALTER TABLE tiles ADD COLUMN IF NOT EXISTS "
+                    f"{col} {col_type} NOT NULL DEFAULT {default}"
+                ))
+            # Seed terrain_type_defs with defaults (INSERT IF NOT EXISTS)
+            for row in _TERRAIN_TYPE_DEFS_SEED:
+                conn.execute(text("""
+                    INSERT INTO terrain_type_defs
+                        (terrain_type_id, name, label_fr, color_hex, is_enabled,
+                         humidity_threshold, humidity_clamp_min, noise_threshold,
+                         temperature_threshold, water_ratio_min, extra_params,
+                         spawn_weight, description)
+                    VALUES
+                        (:terrain_type_id, :name, :label_fr, :color_hex, :is_enabled,
+                         :humidity_threshold, :humidity_clamp_min, :noise_threshold,
+                         :temperature_threshold, :water_ratio_min, :extra_params,
+                         :spawn_weight, :description)
+                    ON CONFLICT (terrain_type_id) DO NOTHING
+                """), row)
+            # Seed sub_hex_features (INSERT IF NOT EXISTS)
+            for row in _SUB_HEX_FEATURES_SEED:
+                conn.execute(text("""
+                    INSERT INTO sub_hex_features
+                        (feature_id, name, label_fr, description, bonus_building_types, is_enabled)
+                    VALUES
+                        (:feature_id, :name, :label_fr, :description, :bonus_building_types, :is_enabled)
+                    ON CONFLICT (feature_id) DO NOTHING
+                """), row)
+            # Seed biome_transition_rules (INSERT IF NOT EXISTS)
+            for row in _BIOME_TRANSITION_RULES_SEED:
+                conn.execute(text("""
+                    INSERT INTO biome_transition_rules
+                        (rule_id, name, target_terrain_type_id, from_terrain_type_ids,
+                         priority, is_enabled,
+                         temperature_min, temperature_max,
+                         humidity_min, humidity_max,
+                         vegetation_min, vegetation_max,
+                         tree_count_min, tree_count_max,
+                         has_river, has_lake,
+                         water_ratio_min, water_ratio_max,
+                         toxin_min, toxin_max,
+                         description)
+                    VALUES
+                        (:rule_id, :name, :target_terrain_type_id, :from_terrain_type_ids,
+                         :priority, :is_enabled,
+                         :temperature_min, :temperature_max,
+                         :humidity_min, :humidity_max,
+                         :vegetation_min, :vegetation_max,
+                         :tree_count_min, :tree_count_max,
+                         :has_river, :has_lake,
+                         :water_ratio_min, :water_ratio_max,
+                         :toxin_min, :toxin_max,
+                         :description)
+                    ON CONFLICT (rule_id) DO NOTHING
+                """), row)
 
     # ------------------------------------------------------------------
     # Write methods
@@ -551,6 +1041,195 @@ class PostgresRepository(StateRepository):
         )
         with self._engine.begin() as conn:
             conn.execute(stmt)
+
+    # -- Normalized tile table methods --
+
+    def save_tiles_bulk(self, body_id: str, tiles: "list[GoldbergTileState]") -> None:
+        if not tiles:
+            return
+        rows = [
+            {
+                "body_id": body_id,
+                "tile_id": t.tileId,
+                "terrain_type": t.terrainType.name,
+                "water_classification": t.waterClassification.name,
+                "terrain_class": t.terrainClass.name,
+                "water_ratio": t.waterRatio,
+                "temperature": t.temperature,
+                "humidity": t.humidity,
+                "toxin_level": t.toxinLevel,
+                "altitude": t.altitude,
+                "albedo": t.albedo,
+                "solar_irradiance": t.solarIrradiance,
+                "is_habitable": t.isHabitable,
+                "lat_deg": t.latDeg,
+                "lon_deg": t.lonDeg,
+                "lat_norm": t.latNorm,
+                "lon_norm": t.lonNorm,
+                "vegetation_level": t.vegetationLevel,
+                "tree_count": t.treeCount,
+                "has_river": t.hasRiver,
+                "has_lake": t.hasLake,
+                "population_json": json.dumps(
+                    [{"socialClass": tier.socialClass.name, "count": tier.count, "avgIncome": tier.avgIncome}
+                     for tier in t.population]
+                ),
+            }
+            for t in tiles
+        ]
+        update_cols = [
+            "terrain_type", "water_classification", "terrain_class",
+            "water_ratio", "temperature", "humidity", "toxin_level",
+            "altitude", "albedo", "solar_irradiance", "is_habitable",
+            "lat_deg", "lon_deg", "lat_norm", "lon_norm",
+            "vegetation_level", "tree_count", "has_river", "has_lake",
+            "population_json",
+        ]
+        # Batch in chunks of 1000 to avoid hitting PostgreSQL parameter limits
+        chunk_size = 1000
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i:i + chunk_size]
+            stmt = pg_insert(_tiles_table).values(chunk).on_conflict_do_update(
+                index_elements=["body_id", "tile_id"],
+                set_={col: text(f"EXCLUDED.{col}") for col in update_cols},
+            )
+            with self._engine.begin() as conn:
+                conn.execute(stmt)
+
+    def load_tiles(self, body_id: str) -> list[dict]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                _tiles_table.select().where(_tiles_table.c.body_id == body_id)
+            ).fetchall()
+            return [dict(row._mapping) for row in rows]
+
+    def update_tile_fields(self, body_id: str, tile_id: str, **kwargs: float) -> None:
+        if not kwargs:
+            return
+        with self._engine.begin() as conn:
+            conn.execute(
+                _tiles_table.update()
+                .where(
+                    (_tiles_table.c.body_id == body_id)
+                    & (_tiles_table.c.tile_id == tile_id)
+                )
+                .values(**kwargs)
+            )
+
+    def delete_tiles(self, body_id: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                _tiles_table.delete().where(_tiles_table.c.body_id == body_id)
+            )
+
+    def clear_all_tiles(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_tiles_table.delete())
+
+    # -- Normalized buildings table methods --
+
+    def save_building(self, building: "BuildingData") -> None:
+        row = {
+            "building_id": building.id,
+            "body_id": building.bodyId,
+            "tile_id": building.tileId,
+            "corp_id": building.corpId,
+            "building_type": building.buildingType,
+            "worker_ratio": building.workerRatio,
+            "ticks_active": building.ticksActive,
+            "level": building.level,
+            "employment_slots": json.dumps(building.employmentSlots),
+        }
+        stmt = pg_insert(_buildings_table).values(row).on_conflict_do_update(
+            index_elements=["building_id"],
+            set_={k: v for k, v in row.items() if k != "building_id"},
+        )
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def delete_building(self, building_id: str) -> None:
+        self._delete_by_pk(_buildings_table, "building_id", building_id)
+
+    def load_buildings(self, body_id: str) -> list[dict]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                _buildings_table.select().where(_buildings_table.c.body_id == body_id)
+            ).fetchall()
+            return [dict(row._mapping) for row in rows]
+
+    def clear_buildings_for_body(self, body_id: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                _buildings_table.delete().where(_buildings_table.c.body_id == body_id)
+            )
+
+    def clear_all_buildings(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(_buildings_table.delete())
+
+    def load_terrain_type_defs(self) -> list[dict]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                _terrain_type_defs_table.select().order_by(_terrain_type_defs_table.c.terrain_type_id)
+            ).fetchall()
+        return [dict(r._mapping) for r in rows]
+
+    def update_terrain_type_def(self, terrain_type_id: int, **kwargs) -> None:
+        if not kwargs:
+            return
+        with self._engine.begin() as conn:
+            conn.execute(
+                _terrain_type_defs_table.update()
+                .where(_terrain_type_defs_table.c.terrain_type_id == terrain_type_id)
+                .values(**kwargs)
+            )
+
+    def load_biome_transition_rules(self) -> list[dict]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                _biome_transition_rules_table.select()
+                .order_by(_biome_transition_rules_table.c.priority.desc())
+            ).fetchall()
+        return [dict(r._mapping) for r in rows]
+
+    def upsert_biome_transition_rule(self, row: dict) -> None:
+        update_cols = [k for k in row if k != "rule_id"]
+        stmt = pg_insert(_biome_transition_rules_table).values(row).on_conflict_do_update(
+            index_elements=["rule_id"],
+            set_={col: text(f"EXCLUDED.{col}") for col in update_cols},
+        )
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def delete_biome_transition_rule(self, rule_id: int) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                _biome_transition_rules_table.delete()
+                .where(_biome_transition_rules_table.c.rule_id == rule_id)
+            )
+
+    def load_sub_hex_features(self) -> list[dict]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                _sub_hex_features_table.select().order_by(_sub_hex_features_table.c.feature_id)
+            ).fetchall()
+        return [dict(r._mapping) for r in rows]
+
+    def upsert_sub_hex_feature(self, row: dict) -> None:
+        update_cols = [k for k in row if k != "feature_id"]
+        stmt = pg_insert(_sub_hex_features_table).values(row).on_conflict_do_update(
+            index_elements=["feature_id"],
+            set_={col: text(f"EXCLUDED.{col}") for col in update_cols},
+        )
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def delete_sub_hex_feature(self, feature_id: int) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                _sub_hex_features_table.delete()
+                .where(_sub_hex_features_table.c.feature_id == feature_id)
+            )
 
     def upsert_cell_mutation(self, body_id: str, mutation: CellMutation) -> None:
         row = {
@@ -885,5 +1564,18 @@ class PostgresRepository(StateRepository):
 
             territory_rows = conn.execute(_territories_table.select()).fetchall()
             state.territories_json = [row.territory_json for row in territory_rows]
+
+            # Normalized tiles (generate-once table)
+            tile_result = conn.execute(_tiles_table.select()).fetchall()
+            for row in tile_result:
+                state.tile_data.setdefault(row.body_id, []).append(dict(row._mapping))
+
+            # Normalized buildings table
+            building_result = conn.execute(_buildings_table.select()).fetchall()
+            for row in building_result:
+                state.buildings_data.setdefault(row.body_id, []).append(dict(row._mapping))
+
+            # Terrain type definitions
+            state.terrain_type_defs = self.load_terrain_type_defs()
 
         return state

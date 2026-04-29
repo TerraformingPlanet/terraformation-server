@@ -4,6 +4,159 @@ Historique des phases et sprints complétés. Pour le backlog actif, voir [ROADM
 
 ---
 
+## ✅ Phase Sub-hex slots + Persistence population (2026-04-29)
+
+### Phase Sub-hex slots — Système de slots par tuile
+
+**Objectif** : chaque tuile possède N sous-hexagones (slots) auxquels des features terrain peuvent être assignées, et qui réservent un emplacement lors de la construction d'un bâtiment.
+
+- [x] `SubHexFeatureDef` (Pydantic) + `SubHex` dans `models.py` — constantes `SUBHEX_FEATURE_*` (int) + `SLOT_RANGES`
+- [x] `logic/subhex.py` — `init_sub_hexes(tile, features)` : initialisation déterministe par seed H3, assignment features (RIVER, FOREST, etc.)
+- [x] `logic/__init__.py` — exports mis à jour
+- [x] `runtime_bodies.py` — `get_body_tile()` : lazy init sub-hexes si `tile.subHexes == []`
+- [x] `runtime_buildings.py` — réservation/libération slot `sub_hex_index` lors construction/démolition ; `_check_eb_de_fortune_locked()` reworked (lecture `tile.population` modèle tile-centrique)
+- [x] `server.py` — param `sub_hex_index` dans `POST /game/corporations/{id}/buildings` + CRUD `/catalog/sub-hex-features`
+- [x] `persistence.py` — table `sub_hex_features` + seed + CRUD
+- [x] `runtime.py` — `list/upsert/delete_sub_hex_feature` méthodes publiques
+- [x] `SimulationContracts.cs` — `SubHexFeatureDef` struct (C# mirror)
+- [x] **7 tests** dans `SimulationCore/tests/test_sub_hexes.py` — tous passants
+
+### Fix EB de fortune — Persistence population tuiles
+
+**Problème** : après redémarrage serveur, `tile.population = []` → EB de fortune jamais activée (pop < seuil).
+
+**Cause racine** : `population` n'était pas persisté en DB (`_tiles_table` sans colonne `population_json`).
+
+- [x] `persistence.py` — colonne `population_json TEXT DEFAULT '[]'` dans `_tiles_table` + migration `_ensure_schema` (`ALTER TABLE tiles ADD COLUMN IF NOT EXISTS`)
+- [x] `persistence.py` — `save_tiles_bulk` : sérialise `tile.population` → JSON (`socialClass.name`, `count`, `avgIncome`) + `population_json` dans `update_cols`
+- [x] `runtime.py` — `_hydrate_tiles_from_db` : désérialise `population_json` → `list[PopulationTier]` via `SocialClass[name]`
+- [x] `runtime_bootstrap.py` — second `save_tiles_bulk` après `earth.tiles = list(tile_map.values())` (garantit que la population seedée au bootstrap est immédiatement persistée)
+
+| Fichier | Changement |
+|---------|------------|
+| `SimulationCore/terraformation_sim/models.py` | `SubHexFeatureDef`, `SubHex`, `SUBHEX_FEATURE_*`, `SLOT_RANGES`, `EB_FORTUNE_POP_THRESHOLD` |
+| `SimulationCore/terraformation_sim/logic/subhex.py` | Nouveau fichier — `init_sub_hexes`, `SLOT_RANGES` |
+| `SimulationCore/terraformation_sim/logic/__init__.py` | Exports sub-hex |
+| `SimulationCore/terraformation_sim/runtime_bodies.py` | Lazy init sub-hexes dans `get_body_tile` |
+| `SimulationCore/terraformation_sim/runtime_buildings.py` | Slot réservation/libération, `_check_eb_de_fortune_locked` rework |
+| `SimulationCore/terraformation_sim/runtime.py` | `list/upsert/delete_sub_hex_feature` + `_hydrate_tiles_from_db` désérialise population |
+| `SimulationCore/terraformation_sim/persistence.py` | Table `sub_hex_features`, colonne `population_json`, seed, CRUD |
+| `SimulationCore/terraformation_sim/runtime_bootstrap.py` | Re-save tiles avec population après bootstrap |
+| `DedicatedServer/app/server.py` | Param `sub_hex_index`, CRUD `/catalog/sub-hex-features` |
+| `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` | `SubHexFeatureDef` struct |
+| `SimulationCore/tests/test_sub_hexes.py` | 7 tests |
+
+---
+
+## ✅ Bugfixes serveur — Tick, WS broadcast, biome mutations (2026-04-28)
+
+### WebSocket broadcast (sync → async bridge)
+- [x] `ws_broadcast()` était un stub `pass` — appelé depuis le thread tick (sync) mais `WebSocket.send_text()` est async
+- [x] Fix : capture du `asyncio.AbstractEventLoop` au `startup` FastAPI ; `run_coroutine_threadsafe()` utilisé pour chaque envoi (`DedicatedServer/app/server.py`)
+- [x] À la connexion WS, le tick courant est immédiatement envoyé (`{"type":"tick_advanced","tick":N}`) pour synchroniser la date chez tous les nouveaux clients
+
+### Tick running — auto_resume écrasé par la persistance
+- [x] `_hydrate_from_saved()` écrasait `auto_resume=True` avec l'état sauvegardé en DB (`tick_running=False`)
+- [x] Fix : après hydration, si `auto_resume=True`, `_tick_running` est forcé à `True` (`SimulationCore/terraformation_sim/runtime.py`)
+- [x] `SERVER_AUTO_RESUME=1` dans `docker-compose.yml` est maintenant effectif après redémarrage
+
+### Biome mutations — `AttributeError: 'dict' object has no attribute 'terrainType'`
+- [x] `_repo.load_tiles()` retourne des `list[dict]` mais `evaluate_biome_transitions()` attendait des `GoldbergTileState`
+- [x] Fix : conversion `GoldbergTileState.model_validate(t)` avant passage à la fonction de mutations (`runtime.py` — `_process_biome_tick_locked`)
+
+---
+
+## ✅ Sprint Dettes Techniques A–E + Phase 12 HUD p3 partiel (2026-04-26)
+
+### Dettes résolues
+
+**Dette A — Contrats C# manquants** (`SimulationContracts.cs`) :
+- [x] `CargoDictWrapper` + `TradeRoute` (enum `TradeRouteType`, `TradeRouteActivityStatus`) + `ExpeditionUnit`
+- [x] `GlobalMarketState` (wraps `/game/global-market`)
+- [x] `AgentParamsDictWrapper` + `AgentAction` (enum `AgentActionType` 1–13) + `AgentMemory`
+- [x] `CorpProfile` + `BotFSMState` (note : déjà notés Phase 11.2 — présence confirmée)
+
+**Dette B — Endpoints REST manquants** (`DedicatedServer/app/server.py`) :
+- [x] `GET /game/territories` → `list[TerritoryData]`
+- [x] `GET /game/territories/{territory_id}` → `TerritoryData`
+- [x] `@app.websocket("/game/ws/events")` — endpoint WS désormais présent
+
+**Dette C — Port WebSocket Unity** :
+- [x] `SimulationWebSocketClient.cs` absent du projet — logique WS centralisée dans `GameHUD.cs` qui pointe déjà `http://127.0.0.1:8080` (aucun fichier erroné)
+
+**Dette D — solarIrradiance post-bootstrap** (`runtime.py`) :
+- [x] Pass 3 ajoutée dans `_bootstrap_sol_galaxy_locked()` (ligne 2672) : parcourt toutes les tuiles planétaires après calcul `planet_irradiance_wm2`, appelle `compute_tile_irradiance(tile.latDeg, planet_irradiance_wm2)` → `tile.solarIrradiance`
+- [ ] `_region_mutations` non persistées (différé)
+
+**Dette E — Scripts d'assertions** :
+- [x] 18 scripts vérifiés et passants (dont `test_p8_events`, `test_p10_multiplayer`, `test_p113_gm`, `test_p115_ecology`, `test_p94_prices`, `test_p95_global`, `test_p96_employment`, `test_p9_trade`, `test_p_leaderboard`, `test_p_travel_events`)
+
+---
+
+### Phase 12 HUD p3 — TileInspector UI Toolkit (partiel — onglets + Bâtiment + Population)
+
+**GameHUDController.cs** — `BuildTileInspector()` étendu :
+- [x] Tab switching : `_tabButtons[]` + `_tabContents[]` + `SwitchInspectorTab(int)` — CSS class `tile-inspector__tab--active` toggle ; onglet 0 actif par défaut
+- [x] `StateDto` étendu : `literacyRate`, `profileKey`, `stateType`, `tileIds[]`
+- [x] `RefreshStateRelationForTile()` étendu : renseigne `_popSummaryLabel` (taux d'alphabétisation, profil, distribution des classes, type d'État) + `_territoryLabel` (nb de tuiles)
+- [x] `GetClassDistributionText(string profileKey)` : mapper 5 profils → libellés lisibles
+- [x] `_dropdownBuildType` (7 types) + `_btnConstruct` + `OnConstructButtonClicked()` → coroutine `ConstructBuilding(corpId, tileId, buildingType)` : `POST /game/corporations/{corpId}/buildings`
+- [x] `DoDemolishBuilding(corpId, buildingId)` : `DELETE /game/corporations/{corpId}/buildings/{buildingId}`
+- [x] `RebuildBuildingList()` étendu : câble `btn-demolish`, appelle `RebuildConstructionQueue()` à la fin
+- [x] `RebuildConstructionQueue(List<ConstrItem>)` : vide et repeuple `_constructionQueueContainer`
+- [x] `BuildConstructionCardProcedural(ConstrItem ci)` : carte procédurale avec nom, barre de progression, ticks restants
+
+**TileInspector.uxml** — section Bâtiment ajoutée :
+- [x] Section `CONSTRUCTION` : `DropdownField name="dropdown-build-type"` + `Button name="btn-construct"`
+- [x] Section `BÂTIMENTS` : `building-list-container`
+- [x] Section `QUEUE DE CONSTRUCTION` : `construction-queue-container`
+
+**BuildingCard.uxml** :
+- [x] `btn-demolish` ajouté dans `level-row` (class `building-card__demolish-btn`)
+
+**En attente (p12-hud-p3 non complet)** : sections Claim/Marché/Contrats/Nationalisation/Écologie + `ConstructionCard.uxml` — conformité mockup `paneau1.png` non encore atteinte.
+
+---
+
+## ✅ Phase 12 — Polish (2026-04-21 à 2026-04-22)
+
+### Sprint UI
+
+**P1 — Tick counter + solde crédits dans le TopBar** (`GameHUD.cs`) :
+- [x] Champs : `_tickCreditsLabel` (TextMeshProUGUI), `_lastKnownTick = -1`, `_selectedCorpCredits = float.NaN`
+- [x] `BuildTopBar()` — `_tickCreditsLabel` TMP 11pt gris, `preferredWidth=180`, inséré entre `_planetLabel` et `_toggleViewBtn`
+- [x] `TickStatusDto` — classe privée sérialisable (`tickCount`, `tickRunning`) pour `JsonUtility.FromJson`
+- [x] `PollTickStatus()` — coroutine polling `GET /tick/status` toutes les 10s ; met à jour `_lastKnownTick` + appelle `UpdateTickCreditsLabel()`
+- [x] `UpdateTickCreditsLabel()` — affiche `Tick N` ou `Tick N | X cr` selon `_selectedCorpCredits`
+- [x] `RefreshCorpListForTile()` — capture `credits` depuis la corpo propriétaire de la tuile sélectionnée
+
+**P2 — Noms des EventType en français dans la popup d'événement** (`GameHUD.cs`) :
+- [x] `LocalizeEventType(EventType t)` — switch-expression 9 valeurs FR : TempêteSolaire→"Tempête solaire", DécouverteMinière→"Découverte minière", etc.
+- [x] `PollEventFeed()` — remplace `{ev0.eventType}` par `{LocalizeEventType(ev0.eventType)}` dans le texte de la popup
+
+### Backlog Polish
+
+**P3 — Équilibrage économique v1** :
+- [x] 8 constantes ajustées dans `models.py` et `logic/market.py` :
+  - `credits` départ corpo : 1000→5000
+  - `Mine` construction cost : 60→50pts
+  - `Farm` construction cost : 45→40pts
+  - `EB_FORTUNE_CAPACITY` : 5→10 (capacité file de construction)
+  - `_PRICE_MAX` : 10→50 (plafond prix marché)
+  - `BASE_NATIONALIZATION_DELAY` : 10→20 ticks
+  - `CREDIT_SCALE` : 10k→50k (échelle crédits)
+  - `BRIBE_COST_PER_TICK` : 50→100
+- [x] 172 tests passants — zéro régression
+
+**P4 — Tooltips flottants HUD** :
+- [x] `GameHUDBuildingIcons.cs` : `TooltipText` par type de bâtiment (Mine/Farm/EnergyPlant/Research)
+- [x] `GameHUD.cs` : `TooltipTrigger` nested class (`IPointerEnter/Exit/MoveHandler`)
+- [x] `BuildTooltipPanel()` — panel flottant avec TMP, fond semi-transparent
+- [x] `ShowTooltip/HideTooltip/RepositionTooltip` avec clamp écran (évite dépassement)
+- [x] `AddTooltipTrigger()` câblé sur lignes de bâtiments + boutons Rompre/Corrompre
+
+---
+
 ## ✅ Sprint DB — Persistence complète des entités gameplay (2026-04-21)
 
 **Problème résolu** : 9 entités gameplay (`_corporations`, `_contracts`, `_states`, `_nationalizations`, `_reputations`, `_trade_routes`, `_expeditions`, `_construction_queues`, `_markets`) étaient uniquement en mémoire — perdues au redémarrage serveur.

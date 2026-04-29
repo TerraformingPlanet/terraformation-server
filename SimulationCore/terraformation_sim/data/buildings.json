@@ -1,0 +1,230 @@
+[
+  {
+    "id": "Mine",
+    "display_name": "Mine",
+    "type": "Extraction",
+    "workers_required": {
+      "Poor": 50,
+      "Middle": 10,
+      "Rich": 0
+    },
+    "deposit_required": "Minerals",
+    "inputs_per_tick": {},
+    "outputs_per_tick": {
+      "Minerals": 2.0,
+      "Waste": 0.5
+    },
+    "effects_per_tick": {
+      "ecology_impact": -0.02,
+      "worker_risk_pct": 0.5,
+      "deposit_depletion": 1.5
+    }
+  },
+  {
+    "id": "WheatFarm",
+    "display_name": "Champ de BlÃ©",
+    "type": "Agriculture",
+    "workers_required": {
+      "Poor": 5,
+      "Middle": 0,
+      "Rich": 0
+    },
+    "deposit_required": null,
+    "inputs_per_tick": {},
+    "outputs_per_tick": {
+      "Wheat": 3.0
+    },
+    "effects_per_tick": {
+      "ecology_impact": 0.01,
+      "worker_risk_pct": 0.1,
+      "deposit_depletion": 0.0
+    }
+  },
+  {
+    "id": "Mill",
+    "display_name": "Moulin Ã  BlÃ©",
+    "type": "Agriculture",
+    "workers_required": {
+      "Poor": 1,
+      "Middle": 2,
+      "Rich": 0
+    },
+    "deposit_required": null,
+    "inputs_per_tick": {
+      "Wheat": 1.0
+    },
+    "outputs_per_tick": {
+      "Flour": 1.0
+    },
+    "effects_per_tick": {
+      "ecology_impact": 0.01,
+      "worker_risk_pct": 0.1,
+      "deposit_depletion": 0.0
+    }
+  },
+  {
+    "id": "Bakery",
+    "display_name": "Boulangerie",
+    "type": "Agriculture",
+    "workers_required": {
+      "Poor": 1,
+      "Middle": 2,
+      "Rich": 0
+    },
+    "deposit_required": null,
+    "inputs_per_tick": {
+      "Flour": 1.0,
+      "Water": 1.0,
+      "Egg": 1.0
+    },
+    "outputs_per_tick": {
+      "Bread": 5.0
+    },
+    "effects_per_tick": {
+      "ecology_impact": 0.01,
+      "worker_risk_pct": 0.1,
+      "deposit_depletion": 0.0
+    }
+  },
+  {
+    "id": "EnergyPlant",
+    "display_name": "Centrale Ã©nergÃ©tique",
+    "type": "Production",
+    "workers_required": {
+      "Poor": 0,
+      "Middle": 20,
+      "Rich": 5
+    },
+    "deposit_required": null,
+    "inputs_per_tick": {},
+    "outputs_per_tick": {
+      "Energy": 5.0,
+      "Waste": 1.0
+    },
+    "effects_per_tick": {
+      "ecology_impact": -0.05,
+      "worker_risk_pct": 0.2,
+      "deposit_depletion": 0.0
+    }
+  },
+  {
+    "id": "Research",
+    "display_name": "Laboratoire de recherche",
+    "type": "Recherche",
+    "workers_required": {
+      "Poor": 0,
+      "Middle": 10,
+      "Rich": 15
+    },
+    "deposit_required": null,
+    "inputs_per_tick": {
+      "Energy": 1.0
+    },
+    "outputs_per_tick": {
+      "ResearchPoints": 1.0
+    },
+    "effects_per_tick": {
+      "ecology_impact": 0.0,
+      "worker_risk_pct": 0.0,
+      "deposit_depletion": 0.0
+    }
+  },
+  {
+    "id": "Road",
+    "display_name": "Route",
+    "type": "Infrastructure",
+    "workers_required": {
+      "Poor": 0,
+      "Middle": 0,
+      "Rich": 0
+    },
+    "deposit_required": null,
+    "inputs_per_tick": {},
+    "outputs_per_tick": {},
+    "effects_per_tick": {
+      "ecology_impact": -0.01,
+      "worker_risk_pct": 0.0,
+      "deposit_depletion": 0.0
+    }
+  },
+  {
+    "id": "SeaPort",
+    "display_name": "Port maritime",
+    "type": "Infrastructure",
+    "workers_required": {
+      "Poor": 0,
+      "Middle": 0,
+      "Rich": 0
+    },
+    "deposit_required": null,
+    "inputs_per_tick": {},
+    "outputs_per_tick": {},
+    "effects_per_tick": {
+      "ecology_impact": -0.02,
+      "worker_risk_pct": 0.0,
+      "deposit_depletion": 0.0
+    }
+  },
+  {
+    "id": "Spaceport",
+    "display_name": "Port spatial",
+    "type": "Infrastructure",
+    "workers_required": {
+      "Poor": 0,
+      "Middle": 0,
+      "Rich": 0
+    },
+    "deposit_required": null,
+    "inputs_per_tick": {},
+    "outputs_per_tick": {},
+    "effects_per_tick": {
+      "ecology_impact": -0.03,
+      "worker_risk_pct": 0.0,
+      "deposit_depletion": 0.0
+    }
+  },
+  {
+    "id": "Sawmill",
+    "display_name": "Scierie",
+    "type": "Extraction",
+    "workers_required": {
+      "Poor": 30,
+      "Middle": 5,
+      "Rich": 0
+    },
+    "deposit_required": null,
+    "terrain_required": "Foret",
+    "primary_species": "forest",
+    "inputs_per_tick": {},
+    "outputs_per_tick": {
+      "Wood": 2.5
+    },
+    "effects_per_tick": {
+      "ecology_impact": -0.03,
+      "worker_risk_pct": 0.3,
+      "deposit_depletion": 0.0
+    }
+  },
+  {
+    "id": "Fishery",
+    "display_name": "Pêcherie",
+    "type": "Extraction",
+    "workers_required": {
+      "Poor": 20,
+      "Middle": 5,
+      "Rich": 0
+    },
+    "deposit_required": null,
+    "terrain_required": "Eau",
+    "primary_species": "fish",
+    "inputs_per_tick": {},
+    "outputs_per_tick": {
+      "Fish": 1.5
+    },
+    "effects_per_tick": {
+      "ecology_impact": -0.02,
+      "worker_risk_pct": 0.1,
+      "deposit_depletion": 0.0
+    }
+  }
+]

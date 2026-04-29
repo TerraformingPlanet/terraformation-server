@@ -1,0 +1,50 @@
+﻿============================= test session starts =============================
+collecting ... collected 20 items
+
+SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_json_parse[Gemma4-A4B] PASSED [  5%]
+SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_tools_call[Gemma4-A4B] PASSED [ 10%]
+SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_stable_noop[Gemma4-A4B] PASSED [ 15%]
+SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_nationalist_react[Gemma4-A4B] PASSED [ 20%]
+SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_capitalist_crisis[Gemma4-A4B] PASSED [ 25%]
+SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_mcp_advance_tick[Gemma4-A4B] PASSED [ 30%]
+SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_mcp_world_inspect[Gemma4-A4B] PASSED [ 35%]
+SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_mcp_irrigate_cell[Gemma4-A4B] PASSED [ 40%]
+SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_mcp_open_region[Gemma4-A4B] PASSED [ 45%]
+SimulationCore/tests/test_phase85_agent_benchmark.py::test_bench_mcp_coherence_check[Gemma4-A4B] PASSED [ 50%]
+SimulationCore/tests/test_phase85_agent_scenarios.py::test_scenario_set_tolerance_applies_to_runtime PASSED [ 55%]
+SimulationCore/tests/test_phase85_agent_scenarios.py::test_scenario_memory_accumulates_and_capped PASSED [ 60%]
+SimulationCore/tests/test_phase85_agent_scenarios.py::test_scenario_real_llm_memory_grows PASSED [ 65%]
+SimulationCore/tests/test_phase85_agent_scenarios.py::test_scenario_nationalist_under_pressure PASSED [ 70%]
+SimulationCore/tests/test_phase85_agent_llm.py::test_call_llm_json_returns_parseable_dict PASSED [ 75%]
+SimulationCore/tests/test_phase85_agent_llm.py::test_call_llm_tools_returns_valid_tool_name FAILED [ 80%]
+SimulationCore/tests/test_phase85_agent_llm.py::test_run_agent_json_mode_returns_valid_action PASSED [ 85%]
+SimulationCore/tests/test_phase85_agent_llm.py::test_run_agent_tools_mode_returns_valid_action PASSED [ 90%]
+SimulationCore/tests/test_phase85_agent_llm.py::test_run_agent_json_mode_reasoning_not_empty PASSED [ 95%]
+SimulationCore/tests/test_phase85_agent_llm.py::test_run_agent_high_pressure_nationalist PASSED [100%]
+
+================================== FAILURES ===================================
+E   KeyError: 'tool_calls'
+E:\terraformation\SimulationCore\terraformation_sim\logic\agent.py:291: KeyError: 'tool_calls'
+============================== warnings summary ===============================
+SimulationCore/tests/test_phase85_agent_scenarios.py::test_scenario_nationalist_under_pressure
+  E:\terraformation\SimulationCore\tests\test_phase85_agent_scenarios.py:230: UserWarning: [soft] Nationalist agent returned NoOp despite 90% corporate dominance. Reasoning: 'The state is currently stable with no corporate dominance or tolerance breaches detected.'. Consider retrying with a more capable model.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+====================== LLM Benchmark ù Comparison Table =======================
+ScÚnario              Gemma4-A4B 
+---------------------------------
+json_parse              \u2705 3.9s   
+tools_call              \u2705 4.5s   
+stable_noop            \u2705 10.8s   
+nationalist_react      \u2705 31.9s   
+capitalist_crisis      \u2705 16.5s   
+mcp_advance_tick       \u2705 11.9s   
+mcp_world_inspect       \u2705 5.8s   
+mcp_irrigate_cell    \u2705 \u26a0\ufe0f48.6s>25s
+mcp_open_region        \u2705 16.0s   
+mcp_coherence_check    \u2705 18.6s   
+--------------------------------------  ---------------------------------------
+=========================== short test summary info ===========================
+FAILED SimulationCore/tests/test_phase85_agent_llm.py::test_call_llm_tools_returns_valid_tool_name
+============= 1 failed, 19 passed, 1 warning in 524.78s (0:08:44) =============

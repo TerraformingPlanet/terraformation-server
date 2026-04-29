@@ -114,7 +114,7 @@ def test_T01_species_data_default_density():
 # ---------------------------------------------------------------------------
 
 def test_T02_registry_has_six_species():
-    assert len(SPECIES_REGISTRY) == 6
+    assert len(SPECIES_REGISTRY) == 7  # cyanobacteria, algae, grass, forest, fish, herbivore, insect
 
 
 # ---------------------------------------------------------------------------
@@ -225,9 +225,9 @@ def test_T11_seed_roche_returns_empty():
 
 def test_T12_seed_eau_returns_algae():
     result = seed_species_for_tile(TerrainType.Eau, WaterClassification.OpenOcean)
-    assert len(result) == 1
-    assert result[0].speciesId == "algae"
-    assert result[0].density == 0.1
+    ids = {sp.speciesId for sp in result}
+    assert "algae" in ids
+    assert all(sp.density == 0.1 for sp in result)
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +284,7 @@ def test_T17_process_ecology_tick_no_error():
     from terraformation_sim.models import SphericalBodyState, GoldbergTileState, SpeciesData
     import threading
     rt._lock = threading.RLock()
+    rt._bio_tile_history = {}
     sp = SpeciesData(speciesId="grass", density=0.3, minTemp=-5.0, maxTemp=50.0,
                      minO2=0.0, maxO2=1.0, growthRate=0.03, minVegetation=0.0)
     body = SphericalBodyState(bodyId="b1")
@@ -306,6 +307,7 @@ def test_T18_process_ecology_updates_resources():
     import threading
     rt = SimulationRuntime.__new__(SimulationRuntime)
     rt._lock = threading.RLock()
+    rt._bio_tile_history = {}
     sp = SpeciesData(speciesId="forest", density=0.5, minTemp=5.0, maxTemp=40.0,
                      minO2=0.0, maxO2=1.0, growthRate=0.02, minVegetation=0.0,
                      marketOutput={"Wood": 0.01})

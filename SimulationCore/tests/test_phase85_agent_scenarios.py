@@ -109,7 +109,7 @@ def test_scenario_set_tolerance_applies_to_runtime(rt):
         reasoning="mocked",
     )
 
-    with patch.object(runtime_mod, "_run_agent_llm", return_value=mocked_action):
+    with patch("terraformation_sim.logic.agent.run_agent", return_value=mocked_action):
         action = runtime.run_agent_for_state(state.id)
 
     assert action.actionType == AgentActionType.SetTolerance
@@ -137,7 +137,7 @@ def test_scenario_memory_accumulates_and_capped(rt):
     def _noop_action(*args, **kwargs):
         return AgentAction(entityId=state.id, actionType=AgentActionType.NoOp)
 
-    with patch.object(runtime_mod, "_run_agent_llm", side_effect=_noop_action):
+    with patch("terraformation_sim.logic.agent.run_agent", side_effect=_noop_action):
         for _ in range(3):
             runtime.run_agent_for_state(state.id)
         mem_after_3 = runtime.get_agent_memory(state.id)

@@ -66,7 +66,7 @@ function Assert-ServiceRunning {
     if (-not $health) {
         Write-Host ""
         Write-Host "ERREUR : Roadmap Service inaccessible sur $ServiceUrl" -ForegroundColor Red
-        Write-Host "         Demarrer avec : cd Roadmap && python run.py" -ForegroundColor Yellow
+        Write-Host "         Demarrer avec : .\.venv\Scripts\activate ; cd Roadmap ; python run.py" -ForegroundColor Yellow
         exit 1
     }
 }
@@ -197,11 +197,6 @@ Write-Host "=================================================" -ForegroundColor 
 Write-Host "  DONE : $($result.phase.name)" -ForegroundColor Green
 Write-Host "  Date : $($result.phase.completed_date)" -ForegroundColor Green
 Write-Host "=================================================" -ForegroundColor Green
-Write-Host ""
-Write-Host "Prochaines etapes manuelles :" -ForegroundColor Cyan
-Write-Host "  - Verifier que ROADMAP.md reflete bien le [x]"
-Write-Host "  - Si toute la phase parente est terminee → deplacer le bloc vers CHANGELOG.md"
-Write-Host "  - Mettre a jour la table recapitulative en bas de ROADMAP.md"
 Write-Host ""
 
 exit 0

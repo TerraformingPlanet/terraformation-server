@@ -149,9 +149,9 @@ def apply_bribe(
 
 
 def compute_scoreboard_score(corp: CorporationData) -> float:
-    """Composite score for the scoreboard: credits + territory + reputation."""
+    """Composite score for the scoreboard: credits + tiles×100 + rep×50."""
     tile_count = len(corp.claimedTiles)
-    return corp.credits + tile_count * 1_000.0 + corp.globalReputation * 100.0
+    return corp.credits + tile_count * 100.0 + corp.globalReputation * 50.0
 
 
 def build_scoreboard_entry(corp: CorporationData) -> ScoreboardEntry:

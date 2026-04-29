@@ -265,10 +265,14 @@ def complete_phase(phase_id: str, force: bool = Query(default=False)):
 
 
 @app.post("/seed", response_model=SeedResult)
-def seed(payload: SeedPayload, update: bool = Query(default=False)):
-    """Bulk-import phases. With ?update=true, refreshes metadata (tests, filter, etc.) for existing phases without overwriting status."""
+def seed(payload: SeedPayload, update: bool = Query(default=False), restore: bool = Query(default=False)):
+    """Bulk-import phases.
+    - Default: inserts new phases as 'not-started' (DB is source of truth).
+    - ?update=true: refreshes metadata for existing phases without overwriting status.
+    - ?restore=true: full upsert including status/completed_date (disaster-recovery only).
+    """
     records = [p.to_record() for p in payload.phases]
-    inserted, skipped = db.seed_phases(records, update_metadata=update)
+    inserted, skipped = db.seed_phases(records, update_metadata=update, restore=restore)
     return SeedResult(inserted=inserted, skipped=skipped, total=len(records))
 
 
@@ -715,7 +719,7 @@ def roadmap_seed(phases_json: str) -> dict:
     except Exception as exc:
         return {"error": f"Validation error: {exc}"}
     records = [p.to_record() for p in payload.phases]
-    inserted, skipped = db.seed_phases(records, update_metadata=True)
+    inserted, skipped = db.seed_phases(records, update_metadata=True, restore=False)
     return {"inserted": inserted, "skipped": skipped, "total": len(records)}
 
 

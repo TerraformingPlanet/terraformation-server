@@ -16,6 +16,13 @@ models = importlib.util.module_from_spec(spec)
 sys.modules["terraformation_sim.models"] = models
 spec.loader.exec_module(models)
 
+# Pre-load registry to avoid circular import via __init__.py
+spec_reg = importlib.util.spec_from_file_location("terraformation_sim.registry",
+    _SIM / "registry.py")
+registry_mod = importlib.util.module_from_spec(spec_reg)
+sys.modules["terraformation_sim.registry"] = registry_mod
+spec_reg.loader.exec_module(registry_mod)
+
 # Load market logic
 spec = importlib.util.spec_from_file_location("terraformation_sim.logic.market",
     _SIM / "logic" / "market.py")

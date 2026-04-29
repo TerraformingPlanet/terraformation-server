@@ -334,7 +334,7 @@ def test_T17_get_corp_agent_context_returns_dict():
     from terraformation_sim.runtime import SimulationRuntime
     rt = SimulationRuntime()
     rt.bootstrap()
-    cid = rt.register_corporation("BotCorp", profile="Expansionniste", is_ai=True)
+    cid = rt.register_corporation("BotCorp", profile="Expansionniste", is_ai=True).id
     ctx = rt.get_corp_agent_context(cid)
     assert ctx is not None
     assert ctx["corpId"] == cid
@@ -367,7 +367,7 @@ def test_T20_run_agent_for_corp_noop_without_llm_env(monkeypatch):
     from terraformation_sim.runtime import SimulationRuntime
     rt = SimulationRuntime()
     rt.bootstrap()
-    cid = rt.register_corporation("BotCorp", profile="Economiste", is_ai=True)
+    cid = rt.register_corporation("BotCorp", profile="Economiste", is_ai=True).id
     action = rt.run_agent_for_corp(cid)
     assert action.entityId == cid
     assert action.actionType == AgentActionType.NoOp

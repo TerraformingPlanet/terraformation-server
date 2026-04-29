@@ -11,7 +11,6 @@ from ..models import (
     ContractStatus,
     ContractVisibility,
     CorporationData,
-    ResourceType,
 )
 
 
@@ -107,7 +106,7 @@ def process_delivery_tick(
     if remaining <= 0:
         return contract, acceptor
 
-    resource_key = contract.resourceType.name
+    resource_key = contract.resourceType
     available = acceptor.resources.get(resource_key, 0.0)
     delivered = min(available, remaining)
 
@@ -147,7 +146,7 @@ def apply_completion(
     # Knowledge bonus → ResearchPoints in acceptor.resources
     acceptor_resources = dict(acceptor.resources)
     if contract.knowledgeBonus > 0:
-        rp_key = ResourceType.ResearchPoints.name
+        rp_key = "ResearchPoints"
         acceptor_resources[rp_key] = acceptor_resources.get(rp_key, 0.0) + contract.knowledgeBonus
 
     new_proposer = proposer.model_copy(update={"credits": max(0.0, new_proposer_credits)})

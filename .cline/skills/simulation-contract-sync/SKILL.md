@@ -1,70 +1,71 @@
 ---
 name: simulation-contract-sync
-description: Use when adding or modifying a shared Python/C# data contract: creating a new Pydantic model in models.py that needs a C# mirror struct in SimulationContracts.cs, or keeping both sides in sync after a field change. Trigger words: Pydantic model, C# contract, SimulationContracts, mirror struct, sync contract, add model, BuildingType, MarketState, ContractData, EventData, ReputationState, SIMULATION_CONTRACTS.md, models.py.
+description: 'Use when adding or modifying a shared Python/C# data contract: creating a new Pydantic model in models.py that needs a C# mirror struct in SimulationContracts.cs, or keeping both sides in sync after a field change. Trigger words: Pydantic model, C# contract, SimulationContracts, mirror struct, sync contract, add model, BuildingType, MarketState, ContractData, EventData, ReputationState, SIMULATION_CONTRACTS.md.'
+argument-hint: 'Describe the model to sync: e.g. "add MarketState Pydantic model and C# mirror", "sync BuildingData after adding a new field"'
 ---
 
 # Simulation Contract Sync — Python ↔ C#
 
+## Index des contrats existants
+
+Avant d'ajouter un nouveau contrat, consulter l'index complet :
+→ [docs/contracts-index.md](docs/contracts-index.md)
+
 ## When to Use
 
-- Ajout d'un nouveau `BaseModel` ou `IntEnum` dans `SimulationCore/terraformation_sim/models.py`
-- Ajout de champs sur un modèle existant utilisé côté serveur ET côté client
-- Vérifier que `SimulationContracts.cs` correspond à l'état actuel de `models.py`
-- Après tout changement qui modifie un type partagé entre DedicatedServer et Unity
+- Adding a new `BaseModel` or `IntEnum` in `SimulationCore/terraformation_sim/models.py`
+- Adding fields to an existing model that is used server-side AND client-side
+- Verifying that `SimulationContracts.cs` matches the current state of `models.py`
+- After any change that modifies a type shared between DedicatedServer and Unity
 
-## Fichiers impliqués
+## Files Involved
 
-| Fichier | Rôle |
-|---------|------|
-| `SimulationCore/terraformation_sim/models.py` | Source de vérité — modèles Pydantic |
-| `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` | Miroirs C# |
-| `Documentation/SIMULATION_CONTRACTS.md` | Table documentant les deux côtés |
+| File | Role |
+|------|------|
+| `SimulationCore/terraformation_sim/models.py` | Source of truth — Pydantic models |
+| `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` | C# mirror structs |
+| `Documentation/SIMULATION_CONTRACTS.md` | Table documenting both sides |
 
-## Procédure
+## Procedure
 
-### Étape 1 — Lire le modèle Python
+### Step 1 — Read the Python model
 
-```python
-# Lire la classe dans models.py via read_file ou Unity_Grep / grep côté Python
-```
+Read the full class definition from `models.py`. Note:
+- Field names (already camelCase in Pydantic for JSON compat)
+- Field types and defaults
+- Enum bases (`IntEnum` → must be `int` in C#)
+- Nested model references
 
-Noter :
-- Noms de champs (camelCase dans Pydantic pour compat JSON)
-- Types et valeurs par défaut
-- Bases Enum (`IntEnum` → doit être `int` en C#)
-- Références à d'autres modèles imbriqués
+### Step 2 — Check for name collisions in SimulationContracts.cs
 
-### Étape 2 — Vérifier les collisions de noms dans SimulationContracts.cs
+Read `Game/Assets/Scripts/Simulation/Contracts/SimulationContracts.cs` and search for existing types with the same or similar names.
 
-```
-Unity_ManageScript(action=read, name=SimulationContracts)
-```
-
-**Règle de collision** : si le nom existe déjà dans un namespace Unity global, **préfixer le miroir C# avec `Simulation`** ou un préfixe métier :
-- `BuildingType` → `CorpBuildingType`
+**Collision rule**: if the name already exists in any Unity global namespace (e.g., `BuildingType` from Unity's own types, `AtmosphericComposition` from `CelestialBodyData.cs`), **prefix the C# mirror with `Simulation`**:
+- `BuildingType` → `CorpBuildingType` (or `SimulationBuildingType`)
 - `AtmosphericComposition` → `SimulationAtmosphericComposition`
-- La désérialisation JSON dépend des **noms de champs** seulement, pas du nom de struct — le préfixage est safe.
+- JSON deserialization depends on **field names only**, not the struct name — prefixing is safe.
 
-### Étape 3 — Mapping des types
+### Step 3 — Apply the type mapping
 
-| Python | C# |
-|--------|-----|
+| Python type | C# equivalent |
+|-------------|--------------|
 | `str` | `string` |
 | `int` | `int` |
 | `float` | `float` |
 | `bool` | `bool` |
-| `str \| None` | `string` (null JSON → null ou "") |
-| `float \| None` | `float` (défaut `0f`) |
-| `int \| None` | `int` (défaut `0`) |
+| `str \| None` (nullable) | `string` (JSON null deserializes as `null` or `""`) |
+| `float \| None` (nullable) | `float` (default `0f`) |
+| `int \| None` (nullable) | `int` (default `0`) |
 | `list[T]` | `T[]` |
-| `dict[str, T]` | éviter dans les contracts — utiliser une struct list |
-| `BaseModel` | `[Serializable] public struct XxxState` |
-| `IntEnum` | `public enum XxxType : int` avec valeurs entières identiques |
-| `Field(default_factory=list)` | `T[] field = new T[0]` |
+| `dict[str, T]` | serialized as JSON object — avoid in contracts; use a struct list instead |
+| `BaseModel` subclass | `[Serializable] public struct StructName` |
+| `IntEnum` subclass | `public enum EnumName : int` with identical integer values |
+| `Field(default_factory=list)` | `T[] fieldName = new T[0]` or `Array.Empty<T>()` |
+| `Field(default_factory=SubModel)` | `SubModelStruct fieldName = default` |
 
-### Étape 4 — Écrire la struct C#
+### Step 4 — Write the C# struct
 
-Template `BaseModel` :
+Template for a `BaseModel`:
 ```csharp
 [Serializable]
 public struct XxxState
@@ -78,45 +79,56 @@ public struct XxxState
 }
 ```
 
-Template `IntEnum` :
+Template for an `IntEnum`:
 ```csharp
 public enum XxxType : int
 {
-    None = 0,
-    ValueA = 1,
-    ValueB = 2,
+    ValueA = 0,
+    ValueB = 1,
+    ValueC = 2,
 }
 ```
 
-Règles :
-- Les noms de champs **doivent correspondre exactement** (sérialisation JSON basée sur les noms)
-- `[Serializable]` sur chaque struct
-- Pas de constructeurs, propriétés, ni méthodes — plain data structs uniquement
-- Placer les enums avant les structs qui y font référence
+Rules:
+- Field names must match exactly (JSON serialization is name-based)
+- `[Serializable]` on every struct
+- No constructors, properties, or methods — plain data structs only
+- Place enums before the structs that reference them
+- Preserve declaration order to make diffs readable
 
-### Étape 5 — Valider (OBLIGATOIRE avant de cocher la phase)
+### Step 5 — Validate
 
-```
-Unity_ValidateScript('Assets/Scripts/Simulation/Contracts/SimulationContracts')
-Unity_ValidateScript('Assets/Scripts/UI/GameHUD')           # si modifié
-```
+**OBLIGATOIRE avant de marquer la phase [x] dans ROADMAP.**
 
-En cas d'erreur C# :
-- Ajouter `using System;` si `[Serializable]` n'est pas reconnu
-- Remplacer `List<T>` par `T[]`
-- Remplacer `float?` par `float` (nullable value types non safe pour le sérialiseur Unity JSON)
+1. Appliquer la struct/enum dans `SimulationContracts.cs`
+2. Appeler `Unity_ValidateScript` sur les fichiers C# modifiés — doit retourner 0 erreur :
+   ```
+   Unity_ValidateScript('Assets/Scripts/Simulation/Contracts/SimulationContracts.cs')
+   Unity_ValidateScript('Assets/Scripts/UI/GameHUD.cs')          # si modifié
+   Unity_ValidateScript('Assets/Scripts/UI/GameHUDBuildingIcons.cs')  # si modifié
+   ```
+3. Lancer la validation globale Python + rappel Unity :
+   ```powershell
+   cd e:\terraformation
+   .\Tools\Invoke-PhaseValidation.ps1
+   ```
+4. Si erreurs C# : corriger les types ou `using` manquants, re-valider
+5. Marquer `[x]` dans ROADMAP **seulement** après 0 erreur Python ET 0 erreur C#
 
-### Étape 6 — Mettre à jour SIMULATION_CONTRACTS.md
+### Step 6 — Update SIMULATION_CONTRACTS.md
 
-Ajouter une ligne :
+Add a row to the shared contracts table:
+
 ```
 | ModelName | field: Type | StructName | field: type |
 ```
 
-## Erreurs fréquentes
+Include both the Python side and the C# side in the same row.
 
-- **`using System;` manquant** — `[Serializable]` l'exige
-- **`List<T>` au lieu de `T[]`** — utiliser des arrays
-- **Types nullable `float?`** — non safe, utiliser `float` avec défaut
-- **`IntEnum` avec membre `None_`** — C# ne supporte pas `None_` → renommer en `None`
-- **Oublier `bootstrap_sol()` cleanup** — si le nouveau modèle a un registre runtime dans `runtime.py`, ajouter `self._xxx = {}` dans le bloc wipe de `bootstrap_sol()`
+## Common Mistakes
+
+- **Missing `using System;`** in `SimulationContracts.cs` — `[Serializable]` requires it
+- **`List<T>` instead of `T[]`** — use arrays; Unity JSON serializer handles arrays better
+- **Nullable value types** — C# `float?` is not JSON-safe in Unity; use `float` with a default instead
+- **IntEnum with `None_` member** — C# `None_ = 0` is invalid; rename to `None = 0` (or keep underscore in Python only, map to `None` in C#)
+- **Forgetting to add to `bootstrap_sol()` cleanup** — if the new model type has a runtime registry in `runtime.py`, add `self._xxx = {}` to the wipe block in `bootstrap_sol()`

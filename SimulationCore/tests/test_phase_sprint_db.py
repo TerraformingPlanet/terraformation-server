@@ -12,6 +12,7 @@ Pas de Docker, pas de réseau. Durée < 5 s.
 """
 import sys
 import importlib.util
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, call
 
@@ -86,6 +87,7 @@ def _snapshot_to_saved(rt: InMemorySimulationRuntime) -> SavedState:
         q.model_dump_json() for q in rt._construction_queues.values()
     ]
     saved.markets_json = [m.model_dump_json() for m in rt._markets.values()]
+    saved.tile_ownership_json = json.dumps(rt._tile_ownership)
     return saved
 
 
@@ -126,15 +128,15 @@ class TestSprintDb:
         corp = rt.register_corporation("TileCorp")
         corp_id = corp.id
 
-        # Manually insert a body and ownership (no full planet needed)
-        rt._tile_ownership.setdefault("body-earth", {})
-        # Use claim_tile directly after registering the body in tile_ownership dict
-        # (claim_tile raises if body not registered — we bypass by direct dict write)
+        # Simulate claiming a tile (add ClaimedTile to corp, which rebuilds _tile_ownership)
         from terraformation_sim.models import ClaimedTile
         from terraformation_sim.runtime import auto_init_tile_population
         tile = auto_init_tile_population(ClaimedTile(bodyId="body-earth", tileId="tile-001"))
         rt._corporations[corp_id].claimedTiles.append(tile)
-        rt._tile_ownership["body-earth"]["tile-001"] = corp_id
+        # Manually rebuild _tile_ownership from claimed tiles (simulates what claim_tile would do)
+        for c in rt._corporations.values():
+            for t in c.claimedTiles:
+                rt._tile_ownership.setdefault(t.bodyId, {})[t.tileId] = c.id
 
         saved = _snapshot_to_saved(rt)
         rt2 = _hydrate_fresh(saved)
@@ -169,6 +171,7 @@ class TestSprintDb:
     def test_T04_state_and_reputation_round_trip(self):
         """create_state + upsert_reputation → snapshot → hydrate → both restored."""
         rt = _make_rt()
+        initial_state_count = len(rt._states)  # Bootstrap creates AI states
         corp = rt.register_corporation("StateCorp")
 
         state = rt.create_state(
@@ -182,7 +185,7 @@ class TestSprintDb:
         rt._reputations[(state_id, corp.id)] = 0.75
 
         saved = _snapshot_to_saved(rt)
-        assert len(saved.states_json) == 1
+        assert len(saved.states_json) == initial_state_count + 1  # Bootstrap states + 1 created
         assert len(saved.reputations_raw) == 1
 
         rt2 = _hydrate_fresh(saved)

@@ -327,6 +327,86 @@ La vue planétaire propose deux sous-vues basculées par un toggle :
 
 ---
 
+### 8.1 Sources d'eau & Rivières (terraformation progressive)
+
+#### Sources
+
+À la **génération de la planète**, chaque tuile se voit attribuer une probabilité de source d'eau selon son type de terrain :
+
+| Terrain | Probabilité de source |
+|---|---|
+| Montagne | 75 % |
+| Hauteur / Crête | 40 % |
+| Autre | 5 % |
+
+Si une source est générée, la tuile reçoit :
+- `has_water_source: true` (permanent, fixé à la génération)
+- `source_capacity: float` (m³/tick) — capacité de débit initiale, tirée aléatoirement dans une plage selon l'altitude et le type
+
+#### Activation
+
+Une source ne s'active **pas immédiatement**. Elle attend que les conditions atmosphériques permettent l'eau liquide (température > 0 °C, pression suffisante). Dès l'activation :
+- La tuile reçoit `has_river: true`
+- Un événement narratif peut être déclenché (« Une source jaillit sur la tuile X »)
+
+#### Propagation de la rivière (tuile par tuile)
+
+La rivière se propage **progressivement au fil des ticks**, en suivant le gradient d'altitude vers la mer :
+
+```
+Tuile source active
+        ↓
+  Calcul du voisin aval (H3 voisin de plus basse altitude)
+        ↓
+  Attente N ticks  (N = base_propagation_ticks / river_flow_ratio)
+        ↓
+  Tuile suivante reçoit has_river: true, river_direction: int
+        ↓
+  Recommencer jusqu'à tuile ocean/coast ou lac
+```
+
+- `river_flow` de chaque tuile = `min(source_capacity, flow_entrant_amont)`
+- La vitesse de propagation est **proportionnelle au débit** : une rivière puissante avance vite, un filet d'eau progresse lentement
+
+#### Données par tuile (hydrologie)
+
+| Champ | Type | Description |
+|---|---|---|
+| `has_water_source` | `bool` | Source naturelle présente (fixé à la génération) |
+| `source_capacity` | `float \| None` | Débit maximal de la source (m³/tick) |
+| `has_river` | `bool` | Rivière active sur cette tuile |
+| `river_flow` | `float \| None` | Débit actuel traversant la tuile |
+| `river_direction` | `int \| None` | Index H3 (0–5) du voisin aval |
+| `river_source_tile_id` | `str \| None` | ID de la source d'origine (traçabilité) |
+
+#### Cuvettes & Lacs
+
+Quand la rivière atteint une cuvette (tuile entourée de voisins plus hauts, sans débouché vers la mer) :
+- Un **lac** se forme : la tuile passe en classe `eau_intérieure`
+- Le lac accumule le débit entrant chaque tick : `lake_volume += river_flow`
+- Quand `lake_volume >= lake_capacity` (déterminé par la géométrie du bassin) → **débordement** : on recalcule la rivière à partir du bord le plus bas du bassin
+- Pendant le remplissage, la rivière est en pause — elle ne progresse pas au-delà du lac
+
+| Champ | Type | Description |
+|---|---|---|
+| `lake_volume` | `float \| None` | Volume d'eau accumulé dans le lac |
+| `lake_capacity` | `float \| None` | Volume max avant débordement |
+
+#### Barrages — interception du débit
+
+Un bâtiment **Barrage** (à définir en §9) peut être construit sur une tuile avec rivière :
+- Il réduit le `river_flow` en aval (jusqu'à 0 → assèchement de la rivière en aval)
+- Il accumule de l'eau (réservoir) qui peut être utilisée pour l'irrigation ou l'énergie hydraulique
+- Si le barrage est détruit ou désactivé → le débit reprend, la rivière se propage à nouveau
+
+#### Impact gameplay
+
+- **Irrigation** : une tuile adjacente à une rivière reçoit un bonus d'humidité → favorise végétation et agriculture
+- **Navigation** : une rivière large (débit élevé) peut permettre le transport de ressources
+- **Événements** : une source qui s'assèche (température trop basse, barrage) génère un événement négatif pour les tuiles dépendantes
+
+---
+
 ## 9. Bâtiments
 
 ### Modèle général

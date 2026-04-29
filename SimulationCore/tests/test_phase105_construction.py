@@ -56,7 +56,7 @@ ConstructionStatus        = _models.ConstructionStatus
 TerritoryQueue            = _models.TerritoryQueue
 BUILDING_CONSTRUCTION_COST = _models.BUILDING_CONSTRUCTION_COST
 EB_FORTUNE_CAPACITY       = _models.EB_FORTUNE_CAPACITY
-EB_FORTUNE_WOOD_COST      = _models.EB_FORTUNE_WOOD_COST
+EB_FORTUNE_POP_THRESHOLD  = _models.EB_FORTUNE_POP_THRESHOLD
 PopulationTier            = _models.PopulationTier
 SocialClass               = _models.SocialClass
 CorporationData           = _models.CorporationData
@@ -216,10 +216,10 @@ def test_no_capacity_means_no_completion():
 def test_building_completes_with_eb_de_fortune():
     rt = _make_runtime()
     _add_corp(rt, CORP_A, TILE_A)
-    _add_population(rt, CORP_A, TILE_A, count=50)
+    # EB de fortune now requires population >= EB_FORTUNE_POP_THRESHOLD (no Wood cost)
+    _add_population(rt, CORP_A, TILE_A, count=EB_FORTUNE_POP_THRESHOLD)
     cost = BUILDING_CONSTRUCTION_COST[BuildingType.Mine]
     ticks_needed = math.ceil(cost / EB_FORTUNE_CAPACITY)
-    rt._corporations[CORP_A].resources["Wood"] = EB_FORTUNE_WOOD_COST * (ticks_needed + 5)
 
     rt.construct_building(CORP_A, BODY_ID, TILE_A, BuildingType.Mine)
     for _ in range(ticks_needed):
@@ -237,9 +237,9 @@ def test_overflow_completes_second_item_same_tick():
     huge = 1000.0
     rt._corporations[CORP_A].resources["Wood"] = huge * 10
 
-    import terraformation_sim.runtime as rt_mod
-    original = rt_mod.EB_FORTUNE_CAPACITY
-    rt_mod.EB_FORTUNE_CAPACITY = huge
+    import terraformation_sim.runtime_buildings as rt_buildings_mod
+    original = rt_buildings_mod.EB_FORTUNE_CAPACITY
+    rt_buildings_mod.EB_FORTUNE_CAPACITY = huge
     try:
         rt.construct_building(CORP_A, BODY_ID, TILE_A, BuildingType.Mine)
         rt.construct_building(CORP_A, BODY_ID, TILE_A, BuildingType.Road)
@@ -248,7 +248,7 @@ def test_overflow_completes_second_item_same_tick():
         assert BuildingType.Mine in live_types
         assert BuildingType.Road in live_types
     finally:
-        rt_mod.EB_FORTUNE_CAPACITY = original
+        rt_buildings_mod.EB_FORTUNE_CAPACITY = original
 
 
 @_skip_no_noise

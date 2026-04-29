@@ -28,7 +28,14 @@ models_module = importlib.util.module_from_spec(models_spec)
 sys.modules["terraformation_sim.models"] = models_module
 models_spec.loader.exec_module(models_module)
 
-# Load market.py logic (depends on models)
+# Pre-load registry so market.py's relative import resolves
+registry_path = SIM_DIR / "registry.py"
+registry_spec = importlib.util.spec_from_file_location("terraformation_sim.registry", registry_path)
+registry_module = importlib.util.module_from_spec(registry_spec)
+sys.modules["terraformation_sim.registry"] = registry_module
+registry_spec.loader.exec_module(registry_module)
+
+# Load market.py logic (depends on models and registry)
 market_path = SIM_DIR / "logic" / "market.py"
 market_spec = importlib.util.spec_from_file_location("terraformation_sim.logic.market", market_path)
 market_module = importlib.util.module_from_spec(market_spec)

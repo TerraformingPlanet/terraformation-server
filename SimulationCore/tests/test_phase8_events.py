@@ -33,7 +33,7 @@ spec2.loader.exec_module(events_logic)
 
 def test_event_type_enum():
     """EventType has 9 members, IntEnum values 0-8."""
-    assert len(list(models.EventType)) == 9
+    assert len(list(models.EventType)) == 12
     assert models.EventType.RencontreAlienne == 0
     assert models.EventType.MigrationPopulation == 6
     assert models.EventType.DecouverteMegastructure == 7

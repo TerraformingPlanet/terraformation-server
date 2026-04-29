@@ -60,7 +60,7 @@ services:
     environment:
       SERVER_MODE: ${SERVER_MODE:-postgres}
       SERVER_TICK_INTERVAL: "5.0"
-      SERVER_AUTO_RESUME: "0"
+      SERVER_AUTO_RESUME: "1"
       DATABASE_URL: postgresql+psycopg2://terra:${POSTGRES_PASSWORD:-terralocal}@postgres:5432/terraformation
       # ── Agent LLM (Phase 8.5) ──────────────────────────────────────────────
       LLM_BASE_URL: ${LLM_BASE_URL:-}
@@ -68,6 +68,15 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODE: ${LLM_MODE:-json}
       AGENT_TICK_INTERVAL: ${AGENT_TICK_INTERVAL:-10}
+      # ── LLM concurrency / 429 throttle ────────────────────────────────────
+      # LLM_CONCURRENCY: max parallel HTTP calls to the LLM backend (default 1)
+      #   Set > 1 only if your LLM server supports parallel inference (multi-slot).
+      # LLM_RETRY_429:   max retry attempts on 429 Too Many Requests (default 3)
+      # LLM_RETRY_DELAY: base delay in seconds before first retry (default 1.0)
+      #   Subsequent retries use exponential back-off: delay * 2^attempt
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-1}
+      LLM_RETRY_429: ${LLM_RETRY_429:-3}
+      LLM_RETRY_DELAY: ${LLM_RETRY_DELAY:-1.0}
     depends_on:
       postgres:
         condition: service_healthy

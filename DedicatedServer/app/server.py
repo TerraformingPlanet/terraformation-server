@@ -1,8 +1,9 @@
 import os
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket
 from pydantic import BaseModel as _BaseModel
 from jose import jwt as _jwt
 import bcrypt as _bcrypt_lib
@@ -11,9 +12,10 @@ from terraformation_sim import (
     ClaimedTile,
     CorporationData,
     BuildingData,
-    BuildingType,
     LocalMarketState,
     ContractData,
+    EcoMarketState,
+    TileBioMarketState,
     AnyBodyState,
     AtmosphericComposition,
     BodyBase,
@@ -43,15 +45,26 @@ from terraformation_sim import (
     ZoneType,
     StateType,
     StateData,
+    TerritoryData,
     NationalizationProcess,
     ScoreboardEntry,
     EventData,
     GlobalMarketState,
+    ResourceRegistry,
+    BuildingRegistry,
+    ResourceDef,
+    BuildingDef,
     AgentAction,
     SpeciesData,
     ConstructionItem,
+    TerritoryQueue,
+    BuildingType,
     StateTileColorDto,
     OwnershipTileDto,
+    BiomeTransitionRule,
+    TerrainType,
+    PopulationTier,
+    SubHexFeatureDef,
 )
 
 
@@ -78,8 +91,9 @@ class _AuthRequest(_BaseModel):
 
 class _AuthResponse(_BaseModel):
     token: str
-    player_id: str
+    playerId: str
     username: str
+    corpId: str = ""
 
 
 class StateTileColorDto(_BaseModel):
@@ -94,6 +108,14 @@ class StateTileColorDto(_BaseModel):
 
 app = FastAPI(title="terraformation-dedicated-server", version="0.2.0")
 
+# Event loop capturé au démarrage pour permettre le broadcast depuis le thread tick (sync → async)
+_main_event_loop: asyncio.AbstractEventLoop | None = None
+
+@app.on_event("startup")
+async def _capture_event_loop() -> None:
+    global _main_event_loop
+    _main_event_loop = asyncio.get_event_loop()
+
 _server_mode = os.environ.get("SERVER_MODE", "in-memory")
 _database_url = os.environ.get("DATABASE_URL", "")
 
@@ -107,6 +129,34 @@ runtime = InMemorySimulationRuntime(
     auto_resume=os.environ.get("SERVER_AUTO_RESUME", "0") == "1",
     repository=_repository,
 )
+
+# ── WebSocket connections (Phase 10) ────────────────────────────────────────
+
+_websocket_connections: set[WebSocket] = set()
+
+
+def ws_broadcast(message: dict) -> None:
+    """Broadcast a message to all connected WebSocket clients.
+    Appelé depuis le thread de tick (synchrone) — on schedule les coroutines
+    sur le loop asyncio principal via run_coroutine_threadsafe.
+    """
+    import json
+    if not _websocket_connections or _main_event_loop is None:
+        return
+    message_json = json.dumps(message)
+
+    async def _send(ws: WebSocket, payload: str) -> None:
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            _websocket_connections.discard(ws)
+
+    for ws in list(_websocket_connections):
+        asyncio.run_coroutine_threadsafe(_send(ws, message_json), _main_event_loop)
+
+
+# Set the broadcast callback on runtime
+runtime.set_ws_broadcast_callback(ws_broadcast)
 
 
 # ── Auth endpoints ──────────────────────────────────────────────────────────
@@ -125,8 +175,9 @@ def auth_register(body: _AuthRequest) -> _AuthResponse:
     _repository.create_player(player_id=player_id, username=username, password_hash=password_hash)
     return _AuthResponse(
         token=_make_token(player_id, username),
-        player_id=player_id,
+        playerId=player_id,
         username=username,
+        corpId="",
     )
 
 
@@ -137,10 +188,13 @@ def auth_login(body: _AuthRequest) -> _AuthResponse:
     player = _repository.get_player_by_username(username)
     if player is None or not _bcrypt_lib.checkpw(body.password.encode("utf-8"), player["password_hash"].encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    player_id = player["player_id"]
+    corp = runtime.find_corporation_by_owner(player_id)
     return _AuthResponse(
-        token=_make_token(player["player_id"], player["username"]),
-        player_id=player["player_id"],
+        token=_make_token(player_id, player["username"]),
+        playerId=player_id,
         username=player["username"],
+        corpId=corp.id if corp else "",
     )
 
 
@@ -231,6 +285,11 @@ def pause_tick() -> WorldState:
 @app.post("/tick/resume", response_model=WorldState)
 def resume_tick() -> WorldState:
     return runtime.resume()
+
+
+@app.post("/tick/set-speed")
+def set_tick_speed(multiplier: int = 1) -> dict:
+    return runtime.set_tick_speed(multiplier)
 
 
 @app.post("/commands/set-projection", response_model=WorldState)
@@ -325,6 +384,21 @@ def get_tile_ecology(body_id: str, tile_id: str) -> list[SpeciesData]:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.get("/bodies/{body_id}/tiles/{tile_id}/population", response_model=list[PopulationTier])
+def get_tile_population(body_id: str, tile_id: str) -> list[PopulationTier]:
+    """Return the human population tiers (Poor/Middle/Rich) for a surface tile.
+
+    Population is stored tile-centric on GoldbergTileState.population.
+    Returns an empty list for uninhabited or non-terrestrial tiles.
+    Returns 404 if the body or tile is unknown.
+    """
+    try:
+        tile = runtime.get_body_tile(body_id, tile_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return tile.population
+
+
 # ── Atmosphere endpoints ─────────────────────────────────────────────────────
 
 @app.get("/bodies/{body_id}/atmosphere")
@@ -353,6 +427,32 @@ def patch_body_atmosphere(
         raise HTTPException(status_code=404, detail=str(exc))
     except TypeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/bodies/{body_id}/eco-market", response_model=EcoMarketState)
+def get_body_eco_market(body_id: str) -> EcoMarketState:
+    """Return the eco-market state for a spherical body (Phase 11.6)."""
+    try:
+        market = runtime.get_eco_market(body_id)
+        if market is None:
+            raise HTTPException(status_code=404, detail=f"No eco-market for body {body_id}")
+        return market
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/game/tiles/{tile_id}/bio-market", response_model=TileBioMarketState)
+def get_tile_bio_market(tile_id: str) -> TileBioMarketState:
+    """Return the biological market state for a single tile (Phase 11.6b).
+
+    Reports per-species resource abundance (density × marketOutput) with history.
+    Returns listings=[] for tiles with no species (ocean, barren rock…).
+    Returns 404 only if the tile_id is unknown.
+    """
+    result = runtime.get_tile_bio_market(tile_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Tile '{tile_id}' not found")
+    return result
 
 
 @app.post("/bodies/{body_id}/tiles/{tile_id}/atmosphere-delta", response_model=GoldbergTileState)
@@ -835,6 +935,7 @@ def debug_validate() -> dict:
 class _CreateCorporationRequest(_BaseModel):
     name: str
     is_ai: bool = False
+    owner_id: str = ""
 
 
 @app.get("/game/corporations", response_model=list[CorporationData])
@@ -855,7 +956,7 @@ def get_corporation(corp_id: str) -> CorporationData:
 @app.post("/game/corporations", response_model=CorporationData, status_code=201)
 def create_corporation(body: _CreateCorporationRequest) -> CorporationData:
     """Register a new corporation with 1 000 starting credits."""
-    return runtime.register_corporation(name=body.name, is_ai=body.is_ai)
+    return runtime.register_corporation(name=body.name, is_ai=body.is_ai, owner_id=body.owner_id)
 
 
 @app.get("/game/states/{state_id}/dependence/{corp_id}")
@@ -904,13 +1005,25 @@ def set_loyalty(state_id: str, corp_id: str, delta: float) -> dict:
 # ── Game layer — Buildings (Phase 7.2) ────────────────────────────────────────
 
 @app.post("/game/corporations/{corp_id}/buildings", response_model=ConstructionItem, status_code=201)
-def construct_building(corp_id: str, body_id: str, tile_id: str, building_type: int) -> ConstructionItem:
+def construct_building(
+    corp_id: str,
+    body_id: str,
+    tile_id: str,
+    building_type: int,
+    sub_hex_index: int = -1,
+) -> ConstructionItem:
     """Enqueue a building for multi-tick construction (Phase 10.5).
     Returns the ConstructionItem added to the territory queue.
     Returns 404 if corp not found, 409 if building already queued on this tile.
+    building_type is an integer index into BuildingType._all (0=Mine, 1=Farm, …).
+    sub_hex_index: -1 = auto-assign first free slot.
     """
     try:
-        return runtime.construct_building(corp_id, body_id, tile_id, BuildingType(building_type))
+        bt = BuildingType._all[building_type]
+    except IndexError:
+        raise HTTPException(status_code=422, detail=f"Invalid building_type index: {building_type}")
+    try:
+        return runtime.construct_building(corp_id, body_id, tile_id, bt, sub_hex_index)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -923,10 +1036,22 @@ def list_construction_queue(corp_id: str) -> list[ConstructionItem]:
     return runtime.list_construction_items(corp_id)
 
 
+@app.get("/game/corporations/{corp_id}/territory-queue", response_model=TerritoryQueue)
+def get_territory_queue(corp_id: str, body_id: str, tile_id: str) -> TerritoryQueue:
+    """Return the TerritoryQueue for the territory that contains tile_id.
+
+    Returns 404 if no construction queue exists for this corp/body/tile combination.
+    """
+    q = runtime.get_territory_queue(corp_id, body_id, tile_id)
+    if q is None:
+        raise HTTPException(status_code=404, detail=f"No construction queue for tile '{tile_id}'")
+    return q
+
+
 @app.get("/game/corporations/{corp_id}/buildings", response_model=list[BuildingData])
 def list_buildings(corp_id: str) -> list[BuildingData]:
     """List all buildings owned by a corporation."""
-    return runtime.list_buildings(corp_id)
+    return runtime.list_corp_buildings(corp_id)
 
 
 @app.delete("/game/corporations/{corp_id}/buildings/{building_id}", status_code=204)
@@ -987,6 +1112,15 @@ def get_market_state(corp_id: str) -> LocalMarketState:
     result = runtime.get_market_state(corp_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No market state for corporation '{corp_id}'")
+    return result
+
+
+@app.get("/game/market/by-tile/{tile_id}", response_model=LocalMarketState)
+def get_market_state_by_tile(tile_id: str) -> LocalMarketState:
+    """Return the local market state for the territory that contains this tile (includes priceHistory per listing)."""
+    result = runtime.get_market_state_by_tile(tile_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No market territory found for tile '{tile_id}'")
     return result
 
 
@@ -1157,6 +1291,21 @@ def get_state(state_id: str) -> StateData:
     return state
 
 
+@app.get("/game/territories", response_model=list[TerritoryData])
+def list_territories(body_id: str | None = None) -> list[TerritoryData]:
+    """Return all TerritoryData, optionally filtered by bodyId."""
+    return runtime.list_territories(body_id)
+
+
+@app.get("/game/territories/{territory_id}", response_model=TerritoryData)
+def get_territory(territory_id: str) -> TerritoryData:
+    """Return a single Territory by ID."""
+    try:
+        return runtime.get_territory(territory_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Territory '{territory_id}' not found")
+
+
 @app.get("/game/reputation/{source_id}/{target_id}", response_model=float)
 def get_bilateral_reputation(source_id: str, target_id: str) -> float:
     """Bilateral reputation score from source toward target."""
@@ -1201,6 +1350,13 @@ def cancel_nationalization_via_contract(
 def get_scoreboard() -> list[ScoreboardEntry]:
     """Return all corporations sorted by composite score descending."""
     return runtime.get_scoreboard()
+
+
+@app.get("/game/leaderboard", response_model=list[ScoreboardEntry])
+def get_leaderboard() -> list[ScoreboardEntry]:
+    """Return top 10 corporations sorted by composite score descending."""
+    all_entries = runtime.get_scoreboard()
+    return all_entries[:10]
 
 
 @app.get("/game/events", response_model=list[EventData])
@@ -1249,3 +1405,200 @@ def run_agent_for_state(state_id: str) -> AgentAction:
         return runtime.run_agent_for_state(state_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ── WebSocket endpoint (Phase 10) ───────────────────────────────────────────
+
+@app.websocket("/game/ws/events")
+async def websocket_events(websocket: WebSocket):
+    """WebSocket endpoint for real-time simulation events (ticks, etc.)."""
+    import json
+    await websocket.accept()
+    _websocket_connections.add(websocket)
+    # Envoyer le tick actuel immédiatement à la connexion pour synchroniser la date
+    try:
+        current_tick = runtime.world_state().tickCount
+        await websocket.send_text(json.dumps({"type": "tick_advanced", "tick": current_tick}))
+    except Exception:
+        pass
+    try:
+        while True:
+            # Keep the connection alive; messages are pushed from the server
+            data = await websocket.receive_text()
+            # For now, ignore incoming messages; could handle ping/pong or commands later
+    except:
+        pass
+    finally:
+        _websocket_connections.discard(websocket)
+
+
+# ── Admin endpoints — Data-driven resources/buildings (Phase 9.7) ───────────
+
+@app.get("/admin/resources", response_model=list[ResourceDef])
+def list_resources() -> list[ResourceDef]:
+    """List all permanent resources."""
+    return runtime.list_resources()
+
+
+@app.get("/admin/resources/pending", response_model=list[ResourceDef])
+def list_pending_resources() -> list[ResourceDef]:
+    """List all pending resources awaiting validation."""
+    return runtime.list_pending_resources()
+
+
+@app.post("/admin/resources", response_model=ResourceDef, status_code=201)
+def propose_resource(body: ResourceDef) -> ResourceDef:
+    """Propose a new resource (adds to pending list)."""
+    return runtime.propose_resource(body)
+
+
+@app.post("/admin/resources/{resource_id}/approve", response_model=ResourceDef)
+def approve_resource(resource_id: str) -> ResourceDef:
+    """Approve a pending resource (moves to permanent)."""
+    try:
+        return runtime.approve_resource(resource_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Pending resource '{resource_id}' not found")
+
+
+@app.delete("/admin/resources/{resource_id}/reject")
+def reject_resource(resource_id: str) -> dict:
+    """Reject a pending resource (removes from pending)."""
+    try:
+        runtime.reject_resource(resource_id)
+        return {"message": f"Resource '{resource_id}' rejected"}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Pending resource '{resource_id}' not found")
+
+
+@app.get("/admin/buildings", response_model=list[BuildingDef])
+def list_buildings() -> list[BuildingDef]:
+    """List all permanent buildings."""
+    return runtime.list_buildings()
+
+
+@app.get("/admin/buildings/pending", response_model=list[BuildingDef])
+def list_pending_buildings() -> list[BuildingDef]:
+    """List all pending buildings awaiting validation."""
+    return runtime.list_pending_buildings()
+
+
+@app.post("/admin/buildings", response_model=BuildingDef, status_code=201)
+def propose_building(body: BuildingDef) -> BuildingDef:
+    """Propose a new building (adds to pending list)."""
+    return runtime.propose_building(body)
+
+
+@app.post("/admin/buildings/{building_id}/approve", response_model=BuildingDef)
+def approve_building(building_id: str) -> BuildingDef:
+    """Approve a pending building (moves to permanent)."""
+    try:
+        return runtime.approve_building(building_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Pending building '{building_id}' not found")
+
+
+@app.delete("/admin/buildings/{building_id}/reject")
+def reject_building(building_id: str) -> dict:
+    """Reject a pending building (removes from pending)."""
+    try:
+        runtime.reject_building(building_id)
+        return {"message": f"Building '{building_id}' rejected"}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Pending building '{building_id}' not found")
+
+
+# ── Catalog — Biome Transition Rules ────────────────────────────────────
+
+@app.get("/catalog/biome-rules", response_model=list[BiomeTransitionRule])
+def list_biome_rules() -> list[BiomeTransitionRule]:
+    """List all biome transition rules from the DB catalog."""
+    return runtime.list_biome_transition_rules()
+
+
+@app.get("/catalog/biome-rules/{rule_id}", response_model=BiomeTransitionRule)
+def get_biome_rule(rule_id: int) -> BiomeTransitionRule:
+    """Get a single biome transition rule by ID."""
+    rule = runtime.get_biome_transition_rule(rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail=f"Biome rule {rule_id} not found")
+    return rule
+
+
+@app.post("/catalog/biome-rules", response_model=BiomeTransitionRule, status_code=201)
+def create_biome_rule(body: BiomeTransitionRule) -> BiomeTransitionRule:
+    """Create or replace a biome transition rule in the DB catalog."""
+    return runtime.upsert_biome_transition_rule(body)
+
+
+@app.patch("/catalog/biome-rules/{rule_id}", response_model=BiomeTransitionRule)
+def update_biome_rule(rule_id: int, body: BiomeTransitionRule) -> BiomeTransitionRule:
+    """Update an existing biome transition rule (all fields in body applied)."""
+    rule = body.model_copy(update={"rule_id": rule_id})
+    return runtime.upsert_biome_transition_rule(rule)
+
+
+@app.delete("/catalog/biome-rules/{rule_id}")
+def delete_biome_rule(rule_id: int) -> dict:
+    """Delete a biome transition rule from the catalog."""
+    runtime.delete_biome_transition_rule(rule_id)
+    return {"message": f"Biome rule {rule_id} deleted"}
+
+
+# ── Catalog — Sub-hex feature definitions ────────────────────────────────────
+
+@app.get("/catalog/sub-hex-features")
+def list_sub_hex_features() -> list[dict]:
+    """List all sub-hex environmental feature definitions."""
+    return runtime.list_sub_hex_features()
+
+
+@app.post("/catalog/sub-hex-features", status_code=201)
+def create_sub_hex_feature(body: SubHexFeatureDef) -> dict:
+    """Create or replace a sub-hex feature definition."""
+    return runtime.upsert_sub_hex_feature(body)
+
+
+@app.put("/catalog/sub-hex-features/{feature_id}")
+def update_sub_hex_feature(feature_id: int, body: SubHexFeatureDef) -> dict:
+    """Update an existing sub-hex feature definition (full replace)."""
+    updated = body.model_copy(update={"id": feature_id})
+    return runtime.upsert_sub_hex_feature(updated)
+
+
+@app.delete("/catalog/sub-hex-features/{feature_id}")
+def delete_sub_hex_feature(feature_id: int) -> dict:
+    """Delete a sub-hex feature definition from the catalog."""
+    runtime.delete_sub_hex_feature(feature_id)
+    return {"message": f"Sub-hex feature {feature_id} deleted"}
+
+
+# ── Catalog — Terrain Type Defs ───────────────────────────────────────
+
+@app.get("/catalog/terrain-types")
+def list_terrain_type_defs() -> list[dict]:
+    """List all terrain type definitions (color, label, generation thresholds)."""
+    return runtime.list_terrain_type_defs()
+
+
+_TERRAIN_TYPE_UPDATABLE_FIELDS = {
+    "label_fr", "color_hex", "humidity_threshold", "humidity_clamp_min",
+    "noise_threshold", "temperature_threshold", "water_ratio_min",
+    "extra_params", "spawn_weight", "description", "is_enabled",
+}
+
+
+@app.patch("/catalog/terrain-types/{terrain_type_id}")
+def update_terrain_type_def(terrain_type_id: int, body: dict) -> dict:
+    """Partially update a terrain type definition.
+    Editable fields: label_fr, color_hex, humidity_threshold, humidity_clamp_min,
+    noise_threshold, temperature_threshold, water_ratio_min, extra_params,
+    spawn_weight, description, is_enabled.
+    """
+    updates = {k: v for k, v in body.items() if k in _TERRAIN_TYPE_UPDATABLE_FIELDS}
+    if not updates:
+        raise HTTPException(status_code=422, detail="No valid fields provided")
+    result = runtime.update_terrain_type_def(terrain_type_id, **updates)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Terrain type {terrain_type_id} not found")
+    return result

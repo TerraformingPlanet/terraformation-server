@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 import h3 as _h3
 from noise import snoise3 as _snoise3
 
@@ -146,6 +147,7 @@ def _assign_spherical_tile(
     seed: int,
     height: float,                    # pre-computed (smoothed) height — do NOT recompute
     atmosphere_density: float = 0.5,  # body's atmosphere density [0,1]; affects water retention
+    terrain_defs: "dict[int, dict] | None" = None,  # loaded from terrain_type_defs table
 ) -> tuple[TerrainType, WaterClassification, TerrainClass, float, float, float]:
     """Return (terrain_type, water_class, terrain_class, water_ratio, temperature, toxin_level).
 
@@ -202,9 +204,27 @@ def _assign_spherical_tile(
 
     # ── Humidity (snoise3, spatially coherent) ───────────────────────────
     humidity = (_snoise(x, y, z, 1.5, seed + 300, octaves=3) + 1.0) * 0.5  # [0, 1]
-    cold_veg_threshold = max(0.20, 0.40 - atmosphere_density * 0.16)
-    temperate_veg_threshold = max(0.26, 0.54 - atmosphere_density * 0.20)
-    hot_veg_threshold = max(0.35, 0.58 - atmosphere_density * 0.12)
+
+    # ── Load terrain thresholds (from DB defs if available, else hardcoded defaults) ──
+    _d = terrain_defs or {}
+    _veg = _d.get(4, {})
+    import json as _json
+    _veg_extra: dict = _json.loads(_veg.get("extra_params") or "{}") if isinstance(_veg.get("extra_params"), str) else {}
+    _cold_base  = float(_veg.get("humidity_threshold") or 0.40)
+    _cold_clamp = float(_veg.get("humidity_clamp_min") or 0.20)
+    _temp_base  = float(_veg_extra.get("temperate_base", 0.54))
+    _temp_clamp = float(_veg_extra.get("temperate_clamp", 0.26))
+    _hot_base   = float(_veg_extra.get("hot_base", 0.58))
+    _hot_clamp  = float(_veg_extra.get("hot_clamp", 0.35))
+    _forest_hum    = float(_d.get(6, {}).get("humidity_threshold") or 0.62)
+    _metal_noise   = float(_d.get(5, {}).get("noise_threshold") or 0.92)
+    _ice_temp      = float(_d.get(1, {}).get("temperature_threshold") or -20.0)
+    _ice_water_min = float(_d.get(1, {}).get("water_ratio_min") or 0.15)
+    _toxin_thresh  = float(_d.get(2, {}).get("noise_threshold") or 0.04)
+
+    cold_veg_threshold     = max(_cold_clamp, _cold_base - atmosphere_density * 0.16)
+    temperate_veg_threshold = max(_temp_clamp, _temp_base - atmosphere_density * 0.20)
+    hot_veg_threshold      = max(_hot_clamp,  _hot_base  - atmosphere_density * 0.12)
 
     # ── Water ratio — physical model ─────────────────────────────────────
     # Base from depth / coastal humidity
@@ -239,20 +259,31 @@ def _assign_spherical_tile(
     # ── Biome tree — MapGeneration_rule.md decision order ────────────────
     if is_mountain:
         terrain_type = TerrainType.Roche
-    elif toxin_level > 0.04 and not is_water:
+    elif toxin_level > _toxin_thresh and not is_water:
         terrain_type = TerrainType.AtmosphereToxique
     elif is_water:
         terrain_type = TerrainType.Eau
-    elif temperature < -20.0:
-        terrain_type = TerrainType.Glace if water_ratio > 0.15 else TerrainType.Roche
-    elif is_polar and height_above_sea < 0.15:
+    elif temperature < _ice_temp:
+        terrain_type = TerrainType.Glace if water_ratio > _ice_water_min else TerrainType.Roche
+    elif is_polar and height_above_sea < 0.50:
         terrain_type = TerrainType.Glace
     elif temperature < 10.0:
-        terrain_type = TerrainType.Vegetation if water_ratio > cold_veg_threshold else TerrainType.Roche
+        # Cold zone: boreal forest possible in subarctic (not arctic/polar) if very humid
+        if water_ratio > cold_veg_threshold:
+            if (not is_polar) and humidity > _forest_hum:
+                terrain_type = TerrainType.Foret
+            else:
+                terrain_type = TerrainType.Vegetation
+        else:
+            terrain_type = TerrainType.Roche
     elif temperature <= 50.0:
         if water_ratio > temperate_veg_threshold:
-            terrain_type = TerrainType.Vegetation
-        elif noise_r > 0.92:
+            # Dense humid temperate zones → Forest
+            if humidity > _forest_hum:
+                terrain_type = TerrainType.Foret
+            else:
+                terrain_type = TerrainType.Vegetation
+        elif noise_r > _metal_noise:
             terrain_type = TerrainType.Metal
         else:
             terrain_type = TerrainType.Roche
@@ -281,7 +312,7 @@ def _assign_spherical_tile(
     else:
         terrain_class = TerrainClass.Slope
 
-    return terrain_type, water_class, terrain_class, water_ratio, temperature, toxin_level
+    return terrain_type, water_class, terrain_class, water_ratio, temperature, toxin_level, humidity
 
 
 def _is_water_like_tile(tile: GoldbergTileState) -> bool:
@@ -354,6 +385,11 @@ def _apply_spherical_hydrology(
         downhill_target[tile.tileId] = target
         upstream_count[target] += 1
 
+    # Store downhill direction on each tile (used by river propagation at tick-time)
+    for tile in tiles:
+        if tile.tileId in downhill_target:
+            tile.riverDirection = downhill_target[tile.tileId]
+
     for tile in tiles:
         current_height = cell_heights[tile.tileId]
         neighbors = [tile_by_id[neighbor_id] for neighbor_id in tile.neighborIds if neighbor_id in tile_by_id]
@@ -424,6 +460,42 @@ def _apply_spherical_hydrology(
         tile.isHabitable = is_tile_habitable(tile.terrainType, tile.temperature, tile.waterRatio)
 
 
+def _seed_water_sources(tiles: list[GoldbergTileState], seed: int) -> None:
+    """Assign hasWaterSource and sourceCapacity probabilistically at generation time.
+
+    Probabilities by altitude + terrainClass:
+    - altitude > 0.5 AND TerrainClass.Ridge  → 75 %  (mountain peak)
+    - altitude > 0.3 OR  TerrainClass.Ridge  → 40 %  (highland / crest)
+    - other land tiles                        →  5 %
+    - water / ocean tiles                     →  0 %  (no spring)
+
+    sourceCapacity is scaled by altitude [0.5–3.0] m³/tick.
+    """
+    rng = random.Random(seed ^ 0xDEADBEEF)
+    for tile in tiles:
+        if tile.waterClassification in (
+            WaterClassification.OpenOcean,
+            WaterClassification.InlandWater,
+            WaterClassification.FrozenWater,
+        ):
+            tile.hasWaterSource = False
+            tile.sourceCapacity = None
+            continue
+
+        if tile.altitude > 0.5 and tile.terrainClass == TerrainClass.Ridge:
+            prob = 0.75
+        elif tile.altitude > 0.3 or tile.terrainClass == TerrainClass.Ridge:
+            prob = 0.40
+        else:
+            prob = 0.05
+
+        if rng.random() < prob:
+            altitude_factor = max(0.1, tile.altitude)
+            base_flow = rng.uniform(0.5, 3.0)
+            tile.hasWaterSource = True
+            tile.sourceCapacity = round(base_flow * altitude_factor, 3)
+
+
 def summarize_spherical_hydrology(tiles: list[GoldbergTileState]) -> dict:
     components, ocean_component, _ = _find_water_components(tiles)
     water_tile_count = sum(1 for tile in tiles if _is_water_like_tile(tile))
@@ -458,6 +530,7 @@ def generate_spherical_tiles(
     seed: int,
     atmosphere_density: float = 0.5,
     planet_irradiance_wm2: float = 0.0,
+    terrain_defs: "dict[int, dict] | None" = None,
 ) -> list[GoldbergTileState]:
     """Generate tiles for a spherical body using H3 hexagonal hierarchical indexing.
     Each tile corresponds to one H3 cell at the given resolution (0, 1 or 2).
@@ -507,10 +580,11 @@ def generate_spherical_tiles(
         lat_norm = (lat + 90.0) / 180.0
         lon_norm = (lng + 180.0) / 360.0
 
-        t_type, w_class, t_class, water_ratio, temperature, toxin_level = _assign_spherical_tile(
+        t_type, w_class, t_class, water_ratio, temperature, toxin_level, humidity = _assign_spherical_tile(
             lat_norm, lon_norm, cell, coherence_override, sea_level, seed,
             height=cell_heights[cell],
             atmosphere_density=atmosphere_density,
+            terrain_defs=terrain_defs,
         )
         habitable = is_tile_habitable(t_type, temperature, water_ratio)
 
@@ -542,16 +616,20 @@ def generate_spherical_tiles(
             altitude=altitude,
             albedo=albedo,
             solarIrradiance=irradiance,
+            humidity=humidity,
             species=seed_species_for_tile(t_type, w_class),
         ))
 
     _apply_spherical_hydrology(tiles, cell_heights, sea_level)
+    _seed_water_sources(tiles, seed)
 
     return tiles
 
 
 def is_tile_habitable(terrain_type: TerrainType, temperature: float, water_ratio: float) -> bool:
     if terrain_type == TerrainType.Vegetation:
+        return True
+    if terrain_type == TerrainType.Foret:
         return True
     if terrain_type == TerrainType.Eau:
         return True
@@ -594,3 +672,41 @@ def summarize_spherical_tiles(tiles: list[GoldbergTileState]) -> ProjectionDebug
     summary.averageWaterRatio = total_water / len(tiles)
     summary.averageTemperature = total_temp / len(tiles)
     return summary
+
+
+def _hydrate_tiles_from_db(tile_rows: list[dict]) -> list[GoldbergTileState]:
+    """Reconstruct GoldbergTileState objects from normalised DB rows.
+
+    neighborIds and boundaryLatLons are recomputed from H3 (deterministic).
+    species are re-seeded from terrain/water classification (deterministic).
+    """
+    tiles: list[GoldbergTileState] = []
+    for row in tile_rows:
+        tile_id = row["tile_id"]
+        neighbors = sorted(set(_h3.grid_disk(tile_id, 1)) - {tile_id})
+        boundary = [[lat_v, lng_v] for lat_v, lng_v in _h3.cell_to_boundary(tile_id)]
+        t_type = TerrainType[row["terrain_type"]]
+        w_class = WaterClassification[row["water_classification"]]
+        t_class = TerrainClass[row["terrain_class"]]
+        tiles.append(GoldbergTileState(
+            tileId=tile_id,
+            latNorm=row["lat_norm"],
+            lonNorm=row["lon_norm"],
+            latDeg=row["lat_deg"],
+            lonDeg=row["lon_deg"],
+            terrainType=t_type,
+            waterClassification=w_class,
+            terrainClass=t_class,
+            waterRatio=row["water_ratio"],
+            temperature=row["temperature"],
+            humidity=row["humidity"],
+            toxinLevel=row["toxin_level"],
+            isHabitable=bool(row["is_habitable"]),
+            neighborIds=neighbors,
+            boundaryLatLons=boundary,
+            altitude=row["altitude"],
+            albedo=row["albedo"],
+            solarIrradiance=row["solar_irradiance"],
+            species=seed_species_for_tile(t_type, w_class),
+        ))
+    return tiles

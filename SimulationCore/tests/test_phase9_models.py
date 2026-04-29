@@ -50,11 +50,10 @@ def fail(label: str, detail: str):
 # ── Tests BuildingType ─────────────────────────────────────────────────────────
 
 def test_building_type_extended():
-    expected = {0: "Mine", 1: "Farm", 2: "EnergyPlant", 3: "Research",
-                4: "Road", 5: "SeaPort", 6: "Spaceport"}
-    for val, name in expected.items():
-        if BuildingType(val).name != name:
-            fail("BuildingType", f"BuildingType({val}) → {BuildingType(val).name} ≠ {name}")
+    expected = ["Mine", "Farm", "EnergyPlant", "Research", "Road", "SeaPort", "Spaceport"]
+    for name in expected:
+        if getattr(BuildingType, name) != name:
+            fail("BuildingType", f"BuildingType.{name} → {getattr(BuildingType, name)} ≠ {name}")
     ok("BuildingType values (0..6 correct)")
 
 

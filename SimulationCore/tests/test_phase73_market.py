@@ -29,9 +29,12 @@ def _load(name: str, rel: str):
 
 
 _models = _load("models", "models.py")
-# market.py imports h3 — we mock it before loading
+# market.py imports h3 and registry — mock/preload before loading
 import unittest.mock as _mock
 sys.modules.setdefault("h3", _mock.MagicMock())
+# Preload registry so market.py's relative import resolves
+_registry = _load("registry", "registry.py")
+sys.modules.setdefault("terraformation_sim.registry", _registry)
 _market = _load("logic.market", "logic/market.py")
 
 LocalMarketState    = _models.LocalMarketState

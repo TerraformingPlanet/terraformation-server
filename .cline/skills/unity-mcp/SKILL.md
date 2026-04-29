@@ -1,128 +1,128 @@
 ---
 name: unity-mcp
-description: Use when interacting with Unity Editor via MCP tools: create, edit, read, or delete C# scripts; manage scene hierarchy; find assets; capture screenshots; read console logs; manage GameObjects, shaders, packages; profile performance; run editor menu actions. Trigger words: Unity script, create script, edit .cs, scene, prefab, GameHUD, console errors, shader, TMP, GameObject, Unity MCP, ValidateScript, ManageScene, ManageGameObject, ReadConsole, FindProjectAssets, Unity Editor.
+description: 'Use when interacting with the Unity Editor via MCP tools. Trigger words: create script, edit script, read script, manage scene, find asset, capture screenshot, console errors, validate C#, shader, import model, manage GameObject, profiler, packages. Covers all Unity MCP operations: scripts, scenes, assets, GameObjects, shaders, visual capture, console, menu, profiling, packages. Requires Unity Editor to be open (not necessarily in Play Mode, unless visual capture is needed).'
+argument-hint: 'Describe the Unity operation: e.g. "read RuntimeDebugHttpServer.cs", "add a field to PlayerController", "capture current scene view"'
 ---
 
 # Unity MCP — Terraformation
 
-## Préconditions
+## When to Use
 
-| Opération | Requis |
-|-----------|--------|
-| Scripts, Assets, Scene (lecture/écriture) | Unity Editor ouvert (n'importe quel mode) |
-| Capture visuelle (`Camera_Capture`, `SceneView_Capture*`) | Unity en Play Mode ou scène avec caméra |
-| Console logs | Unity Editor ouvert |
+- Creating, reading, editing, or deleting C# scripts in `Game/Assets/Scripts/`
+- Navigating or modifying the Unity scene hierarchy
+- Finding assets or searching code inside the Unity project
+- Capturing screenshots or multi-angle scene views
+- Reading Unity console logs (errors, warnings)
+- Managing shaders, materials, GameObjects
+- Running editor menu actions, managing packages
+- Profiling Unity runtime performance
 
-## Workflow obligatoire (create / edit)
+## Preconditions
 
-### 1. Charger les guidelines projet
-```
-Unity_GetUserGuidelines
-```
-Toujours appeler avant toute création ou modification. Donne conventions de dossiers, naming, style C#, règles Terraformation.
-Peut être omis pour les opérations purement en lecture.
+| Tool family | Requirement |
+|-------------|-------------|
+| Script/Asset CRUD, scene ops | Unity Editor open (any mode) |
+| Visual capture (`Camera_Capture`, `SceneView_Capture*`) | Unity in Play Mode or scene loaded with camera |
+| Console logs (`ReadConsole`, `GetConsoleLogs`) | Unity Editor open |
 
-### 2. Lire avant d'écrire
-| Objectif | Outil |
-|---------|-------|
-| Chercher du texte | `Unity_Grep` ou `Unity_FindInFile` |
-| Trouver un asset par nom/type | `Unity_FindProjectAssets` |
-| Lire un script | `Unity_ManageScript(action=read, name=...)` |
-| Lire la hiérarchie scène | `Unity_ManageScene(Action=GetHierarchy)` |
-| SHA pour sécurité | `Unity_GetSha(Uri=...)` |
+## Procedure
 
-### 3. Choisir le bon outil
+### Step 1 — Load project context (mandatory before create/edit)
 
-| Intention | Outil préféré |
-|-----------|--------------|
-| Créer un script C# | `Unity_CreateScript` |
-| Lire un script | `Unity_ManageScript(action=read)` |
-| Edits ciblés (lignes) | `Unity_ScriptApplyEdits` ou `Unity_ApplyTextEdits` ← **préférer** |
-| Réécriture complète | `Unity_ManageScript(action=update)` — seulement si structure entière change |
-| Supprimer un script | `Unity_DeleteScript` |
-| Valider la syntaxe | `Unity_ValidateScript` |
-| Shader | `Unity_ManageShader` |
-| Scène | `Unity_ManageScene` |
-| GameObject | `Unity_ManageGameObject` |
-| Menu editor | `Unity_ManageMenuItem` |
-| Assets (move/import/delete) | `Unity_ManageAsset` |
-| Import modèle 3D | `Unity_ImportExternalModel` |
+Always call `Unity_GetUserGuidelines` before any create or edit operation.
+This returns project conventions: folder structure, naming, C# style, ScriptableObject patterns, Terraformation-specific rules.
+Skip only for pure read or search operations where no file is being modified.
+
+### Step 2 — Read before write
+
+Before creating or modifying anything, read the relevant existing state:
+
+| Goal | Tool |
+|------|------|
+| Search code text | `Unity_Grep` or `Unity_FindInFile` |
+| Find assets by name or type | `Unity_FindProjectAssets` |
+| Read a specific script | `Unity_ManageScript(action=read, name=...)` |
+| Read scene hierarchy | `Unity_ManageScene(Action=GetHierarchy)` |
+| Get script SHA (conflict safety) | `Unity_GetSha(Uri=...)` |
+
+### Step 3 — Choose the right tool by intent
+
+| Intent | Preferred tool |
+|--------|----------------|
+| Create a new C# script | `Unity_CreateScript` |
+| Read an existing script | `Unity_ManageScript(action=read)` |
+| Apply targeted line edits | `Unity_ScriptApplyEdits` or `Unity_ApplyTextEdits` ← prefer over full rewrite |
+| Full script rewrite | `Unity_ManageScript(action=update)` — only when structure changes completely |
+| Delete a script | `Unity_DeleteScript` |
+| Validate a script for errors | `Unity_ValidateScript` |
+| Create / update a shader | `Unity_ManageShader` |
+| Manage a scene (load/save/hierarchy) | `Unity_ManageScene` |
+| Manage GameObjects (add/remove/modify) | `Unity_ManageGameObject` |
+| Run a menu item | `Unity_ManageMenuItem` |
+| Manage assets (move/import/delete) | `Unity_ManageAsset` |
+| Import a 3D model | `Unity_ImportExternalModel` |
+| Generate an AI asset (sprite, mesh, material) | `Unity_AssetGeneration_GenerateAsset` |
 | Capture game/scene view | `Unity_Camera_Capture` |
-| Vue multi-angle | `Unity_SceneView_CaptureMultiAngleSceneView` |
-| Console messages | `Unity_ReadConsole(Types=[Error], Count=10)` |
-| Console avec stack traces | `Unity_GetConsoleLogs(includeStackTrace=true)` |
-| Packages | `Unity_PackageManager_GetData` / `ExecuteAction` |
-| Profiling | `Unity_Profiler_GetFrameTopTimeSam_*` |
-| Commande editor | `Unity_RunCommand` |
+| Capture multi-angle scene view | `Unity_SceneView_CaptureMultiAngleSceneView` |
+| Read console messages | `Unity_ReadConsole` (with `Types` and `FilterText`) |
+| Get console logs with stack traces | `Unity_GetConsoleLogs(includeStackTrace=true)` |
+| Query packages | `Unity_PackageManager_GetData` |
+| Modify packages | `Unity_PackageManager_ExecuteAction` |
+| Profile performance | `Unity_Profiler_GetFrameTopTimeSam_*`, `Unity_Profiler_GetOverallGcAlloca_*`, etc. |
+| Run editor command | `Unity_RunCommand` |
 
-### 4. Après chaque create / edit script
+### Step 4 — After every script create or edit
 
-1. `Unity_ValidateScript(name=..., level=standard)` — vérifier syntaxe
-2. `Unity_ReadConsole(Types=[Error], Count=10)` — confirmer pas de nouvelles erreurs compile
+1. Call `Unity_ValidateScript(name=..., level=standard)` — verify no syntax errors
+2. Call `Unity_ReadConsole(Types=[Error], Count=10)` — confirm no new compile errors appeared
+3. If the script is a known file already tracked, call `Unity_GetSha` and compare with precondition SHA
 
-## Règle de sécurité (conflits)
+### Conflict safety rule
 
-Si le fichier peut avoir été modifié par un autre système :
-1. `Unity_GetSha(Uri=...)` **avant** l'édition
-2. Passer le SHA retourné comme `precondition_sha256` à `Unity_ManageScript` ou `Unity_ApplyTextEdits`
+If patching a file that another system may have modified (e.g., generated scripts, auto-imported assets):
+- Call `Unity_GetSha(Uri=...)` before applying edits
+- Pass the returned SHA as `precondition_sha256` to `Unity_ManageScript` or `Unity_ApplyTextEdits`
 
-## Limitations connues — Unity_ManageGameObject
+## Known Limitations — Unity_ManageGameObject
 
-### component_properties : types primitifs seulement
+### component_properties : types primitifs uniquement
 
-`Unity_ManageGameObject` avec `action=modify` et `component_properties` fonctionne **uniquement pour les types primitifs** : `string`, `bool`, `int`, `float`.
+`Unity_ManageGameObject` avec `action=modify` et `component_properties` fonctionne **uniquement pour les types primitifs** (string, bool, int, float).
 
-**Ne fonctionne PAS** pour assigner des références composant (`TMP_InputField`, `Button`, `TextMeshProUGUI`, etc. vers un `SerializeField`).
+**Ne fonctionne PAS** pour assigner des références composant (`TMP_InputField`, `Button`, `TextMeshProUGUI`, etc.) à un SerializeField.
 
-Le message d'erreur est **trompeur** : `"Property 'X' not found. Did you mean: X?"` alors que le champ existe — c'est le type qui n'est pas supporté.
+Le message d'erreur est **trompeur** : `"Property 'X' not found. Did you mean: X?"` — le champ existe bien mais le type n'est pas supporté.
 
-**Workaround** : écrire un script Editor `[MenuItem]` qui câble les références en code, exécuter via `Unity_ManageMenuItem`.
+**Workaround** : écrire un `Editor` script `[MenuItem]` ou un `[ExecuteInEditMode]` MonoBehaviour qui câble les références en code, puis l'exécuter via `Unity_ManageMenuItem` ou `Unity_RunCommand`.
 
+Exemple :
 ```csharp
-// Assets/Editor/WireSomething.cs
-using UnityEditor;
-[InitializeOnLoad]
-public class WireSomething
-{
-    [MenuItem("Terraformation/Wire SomethingPanel")]
-    static void Wire() {
-        var panel = GameObject.Find("SomethingPanel").GetComponent<SomethingPanel>();
-        panel.inputField = GameObject.Find("InputField").GetComponent<TMP_InputField>();
-        EditorUtility.SetDirty(panel);
-        UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(panel.gameObject.scene);
-    }
+// Assets/Editor/WireLoginPanel.cs
+[MenuItem("Terraformation/Wire LoginPanel")]
+static void WireLoginPanel() {
+    var panel = GameObject.Find("LoginPanel").GetComponent<LoginPanel>();
+    panel.usernameField = GameObject.Find("UsernameInput").GetComponent<TMP_InputField>();
+    // ...
+    UnityEditor.EditorUtility.SetDirty(panel);
+    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(panel.gameObject.scene);
 }
 ```
 
-### instanceIDs stale
+### instanceIDs stale après redémarrage
 
-Les `instanceID` retournés par MCP **deviennent invalides après un redémarrage Unity**.
-Toujours utiliser le **nom string** (`parent="Canvas"`) plutôt que l'ID numérique.
+Les `instanceID` renvoyés par MCP **deviennent invalides après un redémarrage Unity**. Toujours utiliser le **nom string** (`parent="Canvas"`) plutôt que l'ID numérique dans les appels inter-sessions.
 
-## Structure du projet Terraformation
+## Terraformation Project Conventions
 
-Scripts : `Game/Assets/Scripts/`
+Scripts live in `Game/Assets/Scripts/`. Key folders:
+- `Debug/` — runtime debug bridge (`RuntimeDebugHttpServer.cs`, `RuntimeDebugFacade.cs`)
+- `Simulation/` — client-side simulation consumers
+- `UI/` — HUD, debug panels (`TerraformHUD`, `DebugHydrologyPanel`)
+- `Views/` — view management (`ViewManager`)
+- `Generation/` — terrain gen client components (`PlanetaryHexGrid`, `PlanetTextureGenerator`)
+- `Water/` — hydrology client (`WaterSystem`, `HydrologySystem`, `WaterClassificationSystem`, `RiverSystem`)
+- `AI/Skills/` — local Unity AI Assistant SKILL.md files (separate skill format for the Unity AI Assistant package)
 
-| Dossier | Contenu |
-|---------|---------|
-| `Debug/` | `RuntimeDebugHttpServer.cs`, `RuntimeDebugFacade.cs` |
-| `Simulation/` | Consommateurs simulation côté client |
-| `Simulation/Contracts/` | `SimulationContracts.cs` — miroirs C# des modèles Python |
-| `UI/` | HUD, panneaux debug (`GameHUD.cs`, `GameHUDController.cs`) |
-| `Economy/` | `BuildingData.cs` ScriptableObjects |
-| `Editor/` | Scripts editor (wire-ups, helpers build-time) |
-
-Prefabs, matériaux et textures : `Game/Assets/Resources/`
-Fonts TMP : `Game/Assets/Resources/Fonts/`
-USS (styles UI Toolkit) : `Game/Assets/UI/Styles/`
-
-## Dossier Game vs terraformation
-
-Le client Unity est dans `E:\terraformation\Game\`.
-Les scripts sont dans `Game/Assets/Scripts/` (chemin relatif au workspace terraformation).
-Le dossier racine du projet Unity est `Game/`.
-
-## Erreur `FindFirstObjectByType` obsolète
-
-Dans `RuntimeDebugHttpServer.cs` (ligne ~43) :
-- Remplacer `FindFirstObjectByType<T>()` → `FindAnyObjectByType<T>()`
+When editing `RuntimeDebugHttpServer.cs`:
+- Do NOT use `FindFirstObjectByType<T>()` → use `FindAnyObjectByType<T>()` (obsolete warning)
+- The bridge is on port 48621 and sets `Application.runInBackground = true` for its full lifecycle

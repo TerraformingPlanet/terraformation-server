@@ -6,6 +6,11 @@ argument-hint: 'Describe the model to sync: e.g. "add MarketState Pydantic model
 
 # Simulation Contract Sync — Python ↔ C#
 
+## Index des contrats existants
+
+Avant d'ajouter un nouveau contrat, consulter l'index complet :
+→ [docs/contracts-index.md](docs/contracts-index.md)
+
 ## When to Use
 
 - Adding a new `BaseModel` or `IntEnum` in `SimulationCore/terraformation_sim/models.py`

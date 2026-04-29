@@ -61,6 +61,13 @@ def _server_patch(path: str, **params) -> dict:
         return response.json()
 
 
+def _server_delete(path: str) -> dict:
+    with httpx.Client(timeout=10) as client:
+        response = client.delete(f"{SIMULATION_SERVER_URL}{path}")
+        response.raise_for_status()
+        return response.json()
+
+
 @mcp.tool
 def get_view_state() -> dict:
     """
@@ -2300,11 +2307,11 @@ def corrupt_nationalization(process_id: str, corp_id: str, bribe_amount: float) 
 @mcp.tool
 def get_scoreboard() -> dict:
     """
-    Return all corporations sorted by composite score descending.
-    Score = credits + tileCount*1000 + globalReputation*100.
+    Return top 10 corporations sorted by composite score descending.
+    Score = credits + tileCount*100 + globalReputation*50.
     Does not require Unity in Play Mode.
     """
-    return _server_get("/game/scoreboard")
+    return _server_get("/game/leaderboard")
 
 
 @mcp.tool
@@ -2384,6 +2391,187 @@ def cancel_nationalization_contract(process_id: str) -> dict:
         process_id: UUID of the NationalizationProcess to cancel.
     """
     return _server_post(f"/game/nationalizations/{process_id}/cancel-contract")
+
+
+# ── Catalog — Biome Transition Rules ──────────────────────────────────────────
+
+
+@mcp.tool
+def list_biome_rules() -> dict:
+    """
+    List all biome transition rules from the catalog.
+    Does not require Unity. Wraps GET /catalog/biome-rules on the DedicatedServer.
+    """
+    return _server_get("/catalog/biome-rules")
+
+
+@mcp.tool
+def get_biome_rule(rule_id: int) -> dict:
+    """
+    Get a single biome transition rule by ID.
+    Does not require Unity. Wraps GET /catalog/biome-rules/{rule_id} on the DedicatedServer.
+
+    Args:
+        rule_id: Integer ID of the rule.
+    """
+    return _server_get(f"/catalog/biome-rules/{rule_id}")
+
+
+@mcp.tool
+def update_biome_rule(
+    rule_id: int,
+    name: str | None = None,
+    target_terrain_type: int | None = None,
+    from_terrain_types: list[int] | None = None,
+    priority: int | None = None,
+    is_enabled: bool | None = None,
+    temperature_min: float | None = None,
+    temperature_max: float | None = None,
+    humidity_min: float | None = None,
+    humidity_max: float | None = None,
+    vegetation_min: float | None = None,
+    vegetation_max: float | None = None,
+    tree_count_min: float | None = None,
+    tree_count_max: float | None = None,
+    has_river: bool | None = None,
+    has_lake: bool | None = None,
+    water_ratio_min: float | None = None,
+    water_ratio_max: float | None = None,
+    toxin_min: float | None = None,
+    toxin_max: float | None = None,
+    description: str | None = None,
+) -> dict:
+    """
+    Update fields of an existing biome transition rule.
+    Only provided (non-None) fields are updated.
+    Does not require Unity. Wraps PATCH /catalog/biome-rules/{rule_id} on the DedicatedServer.
+
+    Args:
+        rule_id: Integer ID of the rule to update.
+        name: Display name of the rule.
+        target_terrain_type: TerrainType int value (0=Roche,1=Glace,2=AtmosphereToxique,3=Eau,4=Vegetation,5=Metal,6=Foret,7=Desert,8=Jungle,9=ZoneHumide).
+        from_terrain_types: List of source TerrainType int values (empty = any).
+        priority: Higher priority rules are evaluated first.
+        is_enabled: Whether the rule is active in the tick loop.
+        temperature_min: Minimum tile temperature (°C) required.
+        temperature_max: Maximum tile temperature (°C) required.
+        humidity_min: Minimum humidity (0–100) required.
+        humidity_max: Maximum humidity (0–100) required.
+        vegetation_min: Minimum vegetation level required.
+        vegetation_max: Maximum vegetation level required.
+        tree_count_min: Minimum tree count required (Forêt threshold ≈ 2000).
+        tree_count_max: Maximum tree count required.
+        has_river: If True, tile must have a river; if False, must not.
+        has_lake: If True, tile must have a lake; if False, must not.
+        water_ratio_min: Minimum water ratio of neighboring tiles.
+        water_ratio_max: Maximum water ratio of neighboring tiles.
+        toxin_min: Minimum toxin level required.
+        toxin_max: Maximum toxin level required.
+        description: Human-readable description of the rule logic.
+    """
+    payload = {k: v for k, v in {
+        "name": name, "target_terrain_type": target_terrain_type,
+        "from_terrain_types": from_terrain_types, "priority": priority,
+        "is_enabled": is_enabled, "temperature_min": temperature_min,
+        "temperature_max": temperature_max, "humidity_min": humidity_min,
+        "humidity_max": humidity_max, "vegetation_min": vegetation_min,
+        "vegetation_max": vegetation_max, "tree_count_min": tree_count_min,
+        "tree_count_max": tree_count_max, "has_river": has_river,
+        "has_lake": has_lake, "water_ratio_min": water_ratio_min,
+        "water_ratio_max": water_ratio_max, "toxin_min": toxin_min,
+        "toxin_max": toxin_max, "description": description,
+    }.items() if v is not None}
+    return _server_post(f"/catalog/biome-rules/{rule_id}", **payload)
+
+
+@mcp.tool
+def create_biome_rule(
+    rule_id: int,
+    target_terrain_type: int,
+    name: str = "",
+    priority: int = 10,
+    description: str = "",
+) -> dict:
+    """
+    Create a new biome transition rule (or replace an existing one with the same rule_id).
+    Use update_biome_rule afterwards to set specific conditions.
+    Does not require Unity. Wraps POST /catalog/biome-rules on the DedicatedServer.
+
+    Args:
+        rule_id: Integer ID for the new rule (must be unique).
+        target_terrain_type: TerrainType int value the tile should transition to.
+        name: Display name of the rule.
+        priority: Evaluation priority (higher = checked first).
+        description: Human-readable description.
+    """
+    return _server_post("/catalog/biome-rules", rule_id=rule_id,
+                        target_terrain_type=target_terrain_type,
+                        name=name, priority=priority, description=description)
+
+
+@mcp.tool
+def delete_biome_rule(rule_id: int) -> dict:
+    """
+    Delete a biome transition rule from the catalog.
+    Does not require Unity. Wraps DELETE /catalog/biome-rules/{rule_id} on the DedicatedServer.
+
+    Args:
+        rule_id: Integer ID of the rule to delete.
+    """
+    return _server_delete(f"/catalog/biome-rules/{rule_id}")
+
+
+# ── Catalog — Terrain Type Defs ────────────────────────────────────────────────
+
+
+@mcp.tool
+def list_terrain_types() -> dict:
+    """
+    List all terrain type definitions from the catalog (label, color, thresholds).
+    Does not require Unity. Wraps GET /catalog/terrain-types on the DedicatedServer.
+    """
+    return _server_get("/catalog/terrain-types")
+
+
+@mcp.tool
+def update_terrain_type(
+    terrain_type_id: int,
+    label_fr: str | None = None,
+    color_hex: str | None = None,
+    humidity_threshold: float | None = None,
+    humidity_clamp_min: float | None = None,
+    noise_threshold: float | None = None,
+    temperature_threshold: float | None = None,
+    water_ratio_min: float | None = None,
+    spawn_weight: float | None = None,
+    description: str | None = None,
+    is_enabled: bool | None = None,
+) -> dict:
+    """
+    Update display properties or generation thresholds of a terrain type.
+    Does not require Unity. Wraps PATCH /catalog/terrain-types/{terrain_type_id} on the DedicatedServer.
+
+    Args:
+        terrain_type_id: TerrainType int value (0=Roche, 1=Glace, ..., 9=ZoneHumide).
+        label_fr: French display name.
+        color_hex: HTML hex color code (e.g. '#D4AA70').
+        humidity_threshold: Generation humidity threshold.
+        humidity_clamp_min: Minimum clamped humidity value.
+        noise_threshold: Noise map threshold for this terrain.
+        temperature_threshold: Generation temperature threshold.
+        water_ratio_min: Minimum water ratio for generation.
+        spawn_weight: Relative spawn weight for procedural generation.
+        description: Human-readable description.
+        is_enabled: Whether this terrain type is active in generation.
+    """
+    payload = {k: v for k, v in {
+        "label_fr": label_fr, "color_hex": color_hex,
+        "humidity_threshold": humidity_threshold, "humidity_clamp_min": humidity_clamp_min,
+        "noise_threshold": noise_threshold, "temperature_threshold": temperature_threshold,
+        "water_ratio_min": water_ratio_min, "spawn_weight": spawn_weight,
+        "description": description, "is_enabled": is_enabled,
+    }.items() if v is not None}
+    return _server_post(f"/catalog/terrain-types/{terrain_type_id}", **payload)
 
 
 if __name__ == "__main__":

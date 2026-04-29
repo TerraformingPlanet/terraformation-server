@@ -45,6 +45,7 @@ TERRAIN_POP_MULTIPLIERS: dict[TerrainType, float] = {
     TerrainType.AtmosphereToxique:  0.1,
     TerrainType.Eau:                0.0,   # never claimable as terrestrial
     TerrainType.Glace:              0.0,   # excluded from colonisation
+    TerrainType.Foret:              1.2,   # forest terrain bonus
 }
 
 #: Water classification → population multiplier (coastal bonus)

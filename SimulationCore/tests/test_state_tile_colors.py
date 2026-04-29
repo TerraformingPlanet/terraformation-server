@@ -62,8 +62,9 @@ def test_get_body_state_tile_colors():
 
     # All items should have the same structure
     for item in colors:
-        assert set(item.keys()) == {'tileId', 'stateId', 'stateName', 'profileKey'}
-        assert all(isinstance(v, str) and v for v in item.values())
+        expected_keys = {'tileId', 'stateId', 'stateName', 'profileKey', 'colorR', 'colorG', 'colorB'}
+        assert set(item.keys()) == expected_keys
+        assert all(isinstance(v, str) and v for v in [item['tileId'], item['stateId'], item['stateName'], item['profileKey']])
 
 
 def test_get_body_state_tile_colors_unknown_body():

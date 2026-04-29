@@ -1,7 +1,7 @@
 {
   "_comment": "Source de vérité machine du backlog actif + historique. Toujours synchronisé avec ROADMAP.md. Ne jamais cocher ROADMAP.md à la main — utiliser le skill roadmap-phase-complete.",
   "version": "2.0",
-  "lastUpdated": "2026-04-22",
+  "lastUpdated": "2026-04-29",
   "phases": [
     {
       "id": "p0-early",
@@ -129,7 +129,8 @@
       ],
       "validationFilter": "phase8",
       "exitCriteria": "9 EventType, popup Unity, /game/events — 8 tests passants",
-      "roadmapAnchor": null
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p8_events.py"
     },
     {
       "id": "p85-agents",
@@ -171,7 +172,8 @@
       ],
       "validationFilter": "phase94",
       "exitCriteria": "priceVelocity + priceHistory(10) dans ResourceListing — 4 tests passants",
-      "roadmapAnchor": null
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p94_prices.py"
     },
     {
       "id": "p95-global",
@@ -212,7 +214,8 @@
       ],
       "validationFilter": "phase10",
       "exitCriteria": "Auth JWT, WebSocket push, NativeWebSocket Unity, caravane colonisation — 3 tests passants",
-      "roadmapAnchor": null
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p10_multiplayer.py"
     },
     {
       "id": "p105-construction",
@@ -224,7 +227,8 @@
       ],
       "validationFilter": "phase105",
       "exitCriteria": "TerritoryQueue, EB Fortune, constructionCapacity — 16 tests passants",
-      "roadmapAnchor": null
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p105_construction.py"
     },
     {
       "id": "p112-corp-ai",
@@ -249,7 +253,8 @@
       ],
       "validationFilter": "phase113",
       "exitCriteria": "Leviers GM, cooldown, scoring par levier — 25 tests passants",
-      "roadmapAnchor": null
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p113_gm.py"
     },
     {
       "id": "p115-ecology",
@@ -261,7 +266,8 @@
       ],
       "validationFilter": "phase115",
       "exitCriteria": "SpeciesData, logic/ecology.py, _process_ecology_tick_locked, get_tile_ecology — 18 tests passants",
-      "roadmapAnchor": null
+      "roadmapAnchor": null,
+      "assertionScript": "SimulationCore/tests/assertions/test_p115_ecology.py"
     },
     {
       "id": "p12-sprint-db",
@@ -321,7 +327,34 @@
       "notes": "PopDistribution injectable (jamais hardcoded) — profils: Standard/RicheUtopique/EnDeveloppement/Pauvre/Autoritaire. BFS flood-fill pour contiguïté territoires."
     },
     {
-      "id": "p12-polish-ux",
+      "id": "p12-tick-controls",
+      "name": "Phase Tick Auto-Start + Speed Controls",
+      "status": "done",
+      "completedDate": "2026-04-27",
+      "tests": [],
+      "validationFilter": null,
+      "exitCriteria": "SERVER_AUTO_RESUME=1 tick démarre au boot. POST /tick/set-speed accepte {1,2,10,50,100}. GET /tick/status retourne speedMultiplier. HUD Unity affiche barre Tick N progress avec 5 boutons vitesse.",
+      "designRef": null,
+      "roadmapAnchor": "Phase Tick Auto-Start + Speed Controls",
+      "assertionScript": null,
+      "notes": "2026-04-27: runtime.py set_tick_speed + speedMultiplier, server.py POST /tick/set-speed, docker-compose SERVER_AUTO_RESUME=1, GameHUDController.cs BuildTimeControls + PollTickStatus, variables.uss + base.uss + DESIGN.md tokens."
+    },
+    {
+      "id": "p_biome_mutation",
+      "name": "Phase Biome Mutation — Transitions biomes DB-driven",
+      "status": "done",
+      "completedDate": "2026-04-27",
+      "tests": [
+        "test_p_biome_mutation.py"
+      ],
+      "validationFilter": "biome_mutation",
+      "exitCriteria": "TerrainType enum extended Desert/Jungle/ZoneHumide (Python+C#), BiomeTransitionRule model 14 conditions, DB schema+seed 8 rules, mutations logic evaluate_biome_transitions, runtime catalog 6 endpoints, MCP 7 tools, tick integration _process_biome_tick_locked every 5 ticks, cache invalidation upsert/delete — 9 tests passants",
+      "designRef": "Description_du_jeu.md §biomes",
+      "roadmapAnchor": "Phase Biome Mutation",
+      "assertionScript": "SimulationCore/tests/assertions/test_p_biome_mutation.py",
+      "notes": "Transitions automatiques tuiles basées conditions environnementales. Persisté DB. Cache règles avec invalidation."
+    },
+    {
       "name": "Phase 12 Polish — UI/UX complet",
       "status": "done",
       "completedDate": "2026-04-22",
@@ -458,6 +491,66 @@
       "exitCriteria": "wasteAccumulated sur ClaimedTile, malus habitabilityScore, WasteTreatmentPlant, 6+ tests",
       "designRef": "Description_du_jeu.md §9",
       "roadmapAnchor": "Phase Déchets",
+      "notes": null
+    },
+    {
+      "id": "p-hydro-1",
+      "name": "Phase p-hydro-1 — Sources d'eau & génération",
+      "status": "done",
+      "completedDate": "2026-04-29",
+      "tests": [
+        "test_phase_hydro1.py"
+      ],
+      "validationFilter": "hydro",
+      "exitCriteria": "hasWaterSource + sourceCapacity sur GoldbergTileState, _seed_water_sources() probabiliste, riverDirection stocké, contrat C# miroir, 6+ tests",
+      "designRef": "Description_du_jeu.md §8.1",
+      "roadmapAnchor": "Phase p-hydro-1",
+      "assertion_script": "SimulationCore/tests/test_phase_hydro1.py",
+      "notes": "16/16 tests passants (hydro1 + hydro2)"
+    },
+    {
+      "id": "p-hydro-2",
+      "name": "Phase p-hydro-2 — Propagation rivières tick-by-tick",
+      "status": "done",
+      "completedDate": "2026-04-29",
+      "tests": [
+        "test_phase_hydro2.py"
+      ],
+      "validationFilter": "hydro",
+      "exitCriteria": "logic/rivers.py (activate_sources, propagate_river_step, fill_lake_step), RiversMixin dans runtime, _river_arrival_ticks, 10+ tests",
+      "designRef": "Description_du_jeu.md §8.1",
+      "roadmapAnchor": "Phase p-hydro-2",
+      "assertion_script": "SimulationCore/tests/test_phase_hydro2.py",
+      "notes": null
+    },
+    {
+      "id": "p-hydro-3",
+      "name": "Phase p-hydro-3 — Cuvettes, lacs & débordement",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_hydro3.py"
+      ],
+      "validationFilter": "hydro",
+      "exitCriteria": "lakeVolume/lakeCapacity accumulés tick, InlandWater, overflow vers voisin le plus bas, 4+ tests",
+      "designRef": "Description_du_jeu.md §8.1",
+      "roadmapAnchor": "Phase p-hydro-3",
+      "assertion_script": "SimulationCore/tests/assertions/test_p_hydro3.py",
+      "notes": null
+    },
+    {
+      "id": "p-hydro-4",
+      "name": "Phase p-hydro-4 — Irrigation & Barrages",
+      "status": "not-started",
+      "completedDate": null,
+      "tests": [
+        "test_phase_hydro4.py"
+      ],
+      "validationFilter": "hydro",
+      "exitCriteria": "bâtiment Dam coupe riverDirection, IrrigationSystem boost végétation/humidité, riverFlow dans HUD, 6+ tests",
+      "designRef": "Description_du_jeu.md §8.1",
+      "roadmapAnchor": "Phase p-hydro-4",
+      "assertion_script": "SimulationCore/tests/assertions/test_p_hydro4.py",
       "notes": null
     },
     {
